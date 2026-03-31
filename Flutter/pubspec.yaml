@@ -1,0 +1,39 @@
+name: election_duty
+description: A new Flutter project.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: ">=3.3.0 <4.0.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  cupertino_icons: ^1.0.8
+
+  # 🔹 File handling
+  file_picker: ^10.3.10 
+  excel: ^4.0.6
+
+  # 🔹 PDF
+  pdf: ^3.10.0
+  printing: ^5.11.0
+  shared_preferences: ^2.2.2
+  # 🔹 HTTP (for backend later)
+  http: ^1.2.0
+
+  # 🔹 State management (recommended)
+  provider: ^6.1.2
+
+  # 🔹 Maps (future use)
+  google_maps_flutter: ^2.5.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+  flutter_lints: ^6.0.0
+
+flutter:
+  uses-material-design: true

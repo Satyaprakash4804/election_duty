@@ -1,0 +1,105 @@
+# ============================================
+
+# 🔥 FLUTTER (inside /flutter)
+
+# ============================================
+
+flutter/.dart_tool/
+flutter/.packages
+flutter/.pub/
+flutter/build/
+flutter/.flutter-plugins
+flutter/.flutter-plugins-dependencies
+flutter/.metadata
+
+# IDE
+
+flutter/.idea/
+flutter/.vscode/
+flutter/*.iml
+
+# Android
+
+flutter/android/.gradle/
+flutter/android/app/build/
+flutter/android/local.properties
+
+# iOS
+
+flutter/ios/Pods/
+flutter/ios/.symlinks/
+flutter/ios/Flutter/Flutter.framework
+flutter/ios/Flutter/Flutter.podspec
+
+# Desktop
+
+flutter/linux/build/
+flutter/macos/build/
+flutter/windows/build/
+
+# Logs
+
+flutter/*.log
+
+# ============================================
+
+# 🔥 BACKEND (Flask inside /backend)
+
+# ============================================
+
+backend/**pycache**/
+backend/*.pyc
+backend/*.pyo
+backend/*.pyd
+backend/__pycache__/
+# Virtual environment
+
+backend/venv/
+
+backend/.venv/
+backend/config.py
+backend/*.log
+backend/app/__pycache__/
+# Uploads (Excel, files)
+backend/app/__init__.py
+backend/uploads/
+backend/media/
+backend/tmp/
+
+
+backend/app/routes/__pycache__/
+# Database
+
+backend/*.db
+backend/*.sqlite
+backend/*.sql
+backend/dump.sql
+
+# Secrets
+
+backend/config.json
+backend/credentials.json
+backend/secrets.json
+
+# ============================================
+
+# 🔥 GLOBAL (ROOT LEVEL)
+
+# ============================================
+
+.DS_Store
+Thumbs.db
+
+# Node (if used)
+
+node_modules/
+npm-debug.log
+yarn-error.log
+
+# Misc
+
+coverage/
+dist/
+
+venv
+.venv
