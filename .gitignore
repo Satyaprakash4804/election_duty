@@ -57,7 +57,7 @@ backend/__pycache__/
 backend/venv/
 
 backend/.venv/
-backend/config.py
+backend/.env
 backend/*.log
 backend/app/__pycache__/
 # Uploads (Excel, files)
