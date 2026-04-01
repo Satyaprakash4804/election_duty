@@ -1,12 +1,12 @@
 from flask import Blueprint, request, jsonify
 from functools import wraps
 from datetime import datetime
-from app.db import get_db
+from db import get_db
 from config import Config
 import jwt
 import time
 
-master_bp = Blueprint("master", __name__, url_prefix="/master")
+master_bp = Blueprint("master", __name__, url_prefix="/api/master")
 
 
 # ─── Helpers ──────────────────────────────────────────────────────────────────

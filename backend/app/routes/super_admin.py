@@ -1,35 +1,211 @@
-from flask import Blueprint, render_template, request, session, redirect
+import time
+from flask import Blueprint, request
 from werkzeug.security import generate_password_hash
-from app.db import get_db
+from db import get_db
+from app.routes import ok, err, write_log, super_admin_required
+import jwt
+from config import Config
 
-super_admin = Blueprint('super_admin', __name__)
-
-# 🔥 Dashboard
-@super_admin.route('/super_admin_dashboard')
-def super_admin_dashboard():
-    if session.get('role') != 'super_admin':
-        return redirect('/')
-
-    return render_template('super_admin_dashboard.html')
+super_admin_bp = Blueprint("super_admin", __name__, url_prefix="/api/super")
 
 
-# 🔥 Create Admin
-@super_admin.route('/create_admin', methods=['POST'])
+# ══════════════════════════════════════════════════════════════
+#  1. GET ALL ADMINS    GET /super/admins
+# ══════════════════════════════════════════════════════════════
+@super_admin_bp.route("/admins", methods=["GET"])
+@super_admin_required
+def get_admins():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    u.id, u.name, u.username, u.district,
+                    u.is_active, u.created_at,
+                    (SELECT COUNT(*) FROM matdan_sthal ms
+                     JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                     JOIN sectors s ON s.id = gp.sector_id
+                     JOIN zones z ON z.id = s.zone_id
+                     JOIN super_zones sz ON sz.id = z.super_zone_id
+                     WHERE sz.admin_id = u.id
+                    ) AS total_booths,
+                    (SELECT COUNT(*) FROM duty_assignments da
+                     JOIN matdan_sthal ms2 ON ms2.id = da.sthal_id
+                     JOIN gram_panchayats gp2 ON gp2.id = ms2.gram_panchayat_id
+                     JOIN sectors s2 ON s2.id = gp2.sector_id
+                     JOIN zones z2 ON z2.id = s2.zone_id
+                     JOIN super_zones sz2 ON sz2.id = z2.super_zone_id
+                     WHERE sz2.admin_id = u.id
+                    ) AS assigned_staff
+                FROM users u
+                WHERE u.role = 'admin'
+                ORDER BY u.created_at DESC
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return ok([{
+        "id":           r["id"],
+        "name":         r["name"],
+        "username":     r["username"],
+        "district":     r["district"],
+        "isActive":     bool(r["is_active"]),
+        "createdAt":    r["created_at"].isoformat() if r["created_at"] else None,
+        "totalBooths":  r["total_booths"]  or 0,
+        "assignedStaff":r["assigned_staff"] or 0,
+    } for r in rows])
+
+
+# ══════════════════════════════════════════════════════════════
+#  2. CREATE ADMIN      POST /super/admins
+# ══════════════════════════════════════════════════════════════
+@super_admin_bp.route("/admins", methods=["POST"])
+@super_admin_required
 def create_admin():
-    if session.get('role') != 'super_admin':
-        return "Unauthorized"
+    body     = request.get_json() or {}
+    name     = body.get("name", "").strip()
+    username = body.get("username", "").strip()
+    district = body.get("district", "").strip()
+    password = body.get("password", "")
 
-    name = request.form['name']
-    mobile = request.form['mobile']
-    password = generate_password_hash(request.form['password'])
+    if not name or not username or not district or not password:
+        return err("name, username, district, password are all required")
+    if len(password) < 6:
+        return err("Password must be at least 6 characters")
 
     conn = get_db()
-    with conn.cursor() as cursor:
-        cursor.execute("""
-            INSERT INTO users (name, mobile, password, role, created_by)
-            VALUES (%s, %s, %s, 'admin', %s)
-        """, (name, mobile, password, session.get('user_id')))
-        conn.commit()
-    conn.close()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE username = %s", (username,))
+            if cur.fetchone():
+                return err("Username already taken", 409)
 
-    return "✅ Admin Created"
+            cur.execute("""
+                INSERT INTO users (name, username, password, role, district, is_active, created_by)
+                VALUES (%s, %s, %s, 'admin', %s, 1, %s)
+            """, (name, username, generate_password_hash(password),
+                  district, request.user["id"]))
+            new_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+
+    write_log("INFO",
+              f"Admin '{name}' created for district '{district}' by super admin ID:{request.user['id']}",
+              "Auth")
+    return ok({"id": new_id, "name": name, "username": username, "district": district},
+              "Admin created successfully", 201)
+
+
+# ══════════════════════════════════════════════════════════════
+#  3. DELETE ADMIN      DELETE /super/admins/<id>
+# ══════════════════════════════════════════════════════════════
+@super_admin_bp.route("/admins/<int:admin_id>", methods=["DELETE"])
+@super_admin_required
+def delete_admin(admin_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT name FROM users WHERE id = %s AND role = 'admin'", (admin_id,))
+            row = cur.fetchone()
+            if not row:
+                return err("Admin not found", 404)
+            cur.execute("DELETE FROM users WHERE id = %s", (admin_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    write_log("WARN", f"Admin '{row['name']}' (ID:{admin_id}) deleted", "Auth")
+    return ok(None, f"Admin '{row['name']}' deleted")
+
+
+# ══════════════════════════════════════════════════════════════
+#  4. OVERVIEW STATS    GET /super/overview
+# ══════════════════════════════════════════════════════════════
+@super_admin_bp.route("/overview", methods=["GET"])
+@super_admin_required
+def overview():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='admin'")
+            admins = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM matdan_sthal")
+            booths = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM duty_assignments")
+            duties = cur.fetchone()["cnt"]
+
+            cur.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff'")
+            staff = cur.fetchone()["cnt"]
+    finally:
+        conn.close()
+
+    return ok({
+        "totalAdmins":  admins,
+        "totalBooths":  booths,
+        "assignedDuties": duties,
+        "totalStaff":   staff,
+    })
+
+
+# ══════════════════════════════════════════════════════════════
+#  5. FORM DATA (structure filled by admins)
+#     GET /super/form-data
+# ══════════════════════════════════════════════════════════════
+@super_admin_bp.route("/form-data", methods=["GET"])
+@super_admin_required
+def form_data():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT
+                    u.id AS admin_id,
+                    u.name AS admin_name,
+                    u.district,
+                    (SELECT COUNT(*) FROM super_zones sz WHERE sz.admin_id = u.id) AS super_zones,
+                    (SELECT COUNT(*) FROM zones z
+                     JOIN super_zones sz ON sz.id = z.super_zone_id
+                     WHERE sz.admin_id = u.id) AS zones,
+                    (SELECT COUNT(*) FROM sectors s
+                     JOIN zones z ON z.id = s.zone_id
+                     JOIN super_zones sz ON sz.id = z.super_zone_id
+                     WHERE sz.admin_id = u.id) AS sectors,
+                    (SELECT COUNT(*) FROM gram_panchayats gp
+                     JOIN sectors s ON s.id = gp.sector_id
+                     JOIN zones z ON z.id = s.zone_id
+                     JOIN super_zones sz ON sz.id = z.super_zone_id
+                     WHERE sz.admin_id = u.id) AS gram_panchayats,
+                    (SELECT COUNT(*) FROM matdan_sthal ms
+                     JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                     JOIN sectors s ON s.id = gp.sector_id
+                     JOIN zones z ON z.id = s.zone_id
+                     JOIN super_zones sz ON sz.id = z.super_zone_id
+                     WHERE sz.admin_id = u.id) AS centers,
+                    (SELECT MAX(ms2.created_at) FROM matdan_sthal ms2
+                     JOIN gram_panchayats gp2 ON gp2.id = ms2.gram_panchayat_id
+                     JOIN sectors s2 ON s2.id = gp2.sector_id
+                     JOIN zones z2 ON z2.id = s2.zone_id
+                     JOIN super_zones sz2 ON sz2.id = z2.super_zone_id
+                     WHERE sz2.admin_id = u.id) AS last_updated
+                FROM users u
+                WHERE u.role = 'admin'
+                ORDER BY u.district
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return ok([{
+        "adminId":       r["admin_id"],
+        "adminName":     r["admin_name"],
+        "district":      r["district"],
+        "superZones":    r["super_zones"]     or 0,
+        "zones":         r["zones"]           or 0,
+        "sectors":       r["sectors"]         or 0,
+        "gramPanchayats":r["gram_panchayats"] or 0,
+        "centers":       r["centers"]         or 0,
+        "lastUpdated":   r["last_updated"].isoformat() if r["last_updated"] else None,
+    } for r in rows])

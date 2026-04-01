@@ -9,8 +9,8 @@ class AppConstants {
   static const String tokenKey = "AUTH_TOKEN";
 
   // 👤 ROLES
-  static const String roleMaster = "master";
-  static const String roleSuperAdmin = "super_admin";
-  static const String roleAdmin = "admin";
-  static const String roleUser = "user";
+  static const String roleMaster = "MASTER";
+  static const String roleSuperAdmin = "SUPER_ADMIN";
+  static const String roleAdmin = "ADMIN";
+  static const String roleUser = "STAFF";  
 }

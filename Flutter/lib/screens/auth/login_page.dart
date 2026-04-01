@@ -299,8 +299,8 @@ class _LoginPageState extends State<LoginPage>
       //   roleMaster = "MASTER"  | roleSuperAdmin = "SUPER_ADMIN"
       //   roleAdmin  = "ADMIN"   | roleUser       = "STAFF"
       final String rawRole =
-          (response['user']?['role'] as String? ?? '').toUpperCase().trim();
-
+          (response['data']?['user']?['role'] as String? ?? '').toUpperCase().trim();
+            
       if (!mounted) return;
 
       // Step 4: Navigate by role — no manual hardcoding needed

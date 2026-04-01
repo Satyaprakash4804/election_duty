@@ -19,7 +19,7 @@ class AuthService {
     // 🔥 SAVE TOKEN
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
-        AppConstants.tokenKey, response["token"]);
+        AppConstants.tokenKey, response["data"]["token"]);
 
     return response;
   }
