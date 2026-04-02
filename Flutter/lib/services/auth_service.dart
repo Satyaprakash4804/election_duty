@@ -16,10 +16,19 @@ class AuthService {
       },
     );
 
-    // 🔥 SAVE TOKEN
     final prefs = await SharedPreferences.getInstance();
+
+    // ✅ SAVE TOKEN
     await prefs.setString(
-        AppConstants.tokenKey, response["data"]["token"]);
+      AppConstants.tokenKey,
+      response["data"]["token"],
+    );
+
+    // 🔥 SAVE ROLE (VERY IMPORTANT)
+    await prefs.setString(
+      "role",
+      response["data"]["user"]["role"],
+    );
 
     return response;
   }
@@ -30,10 +39,16 @@ class AuthService {
     return prefs.getString(AppConstants.tokenKey);
   }
 
+  // 🔹 GET ROLE
+  static Future<String?> getRole() async {
+    final prefs = await SharedPreferences.getInstance();
+    return prefs.getString("role");
+  }
+
   // 🔹 LOGOUT
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(AppConstants.tokenKey);
+    await prefs.clear(); // 🔥 clear everything
   }
 
   // 🔹 CHECK LOGIN

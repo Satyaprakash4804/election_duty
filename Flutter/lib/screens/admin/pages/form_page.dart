@@ -24,7 +24,7 @@ class _FormPageState extends State<FormPage> {
       setState(() { _superZones = res['data'] ?? []; _loading = false; });
     } catch (e) {
       setState(() => _loading = false);
-      if (mounted) showSnack(context, 'Failed to load: $e', error: true);
+      if (mounted) showSnack(context, 'Failed: $e', error: true);
     }
   }
 
@@ -32,423 +32,587 @@ class _FormPageState extends State<FormPage> {
     final ctrl = TextEditingController();
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Super Zone'),
-        content: AppTextField(label: 'Super Zone Name', controller: ctrl),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (ctrl.text.isEmpty) return;
-              final token = await AuthService.getToken();
-              await ApiService.post('/admin/super-zones', {'name': ctrl.text}, token: token);
-              Navigator.pop(ctx);
-              _load();
-            },
-            child: const Text('Add'),
-          ),
-        ],
+      builder: (ctx) => _SimpleDialog(
+        title: 'Add Super Zone',
+        icon: Icons.layers_outlined,
+        child: AppTextField(label: 'Super Zone Name *', controller: ctrl,
+            prefixIcon: Icons.layers_outlined),
+        onSave: () async {
+          if (ctrl.text.isEmpty) return;
+          final token = await AuthService.getToken();
+          await ApiService.post('/admin/super-zones', {'name': ctrl.text},
+              token: token);
+          Navigator.pop(ctx);
+          _load();
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(children: [
-            const Text('Election Structure', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
-            const Spacer(),
-            FilledButton.icon(
-              onPressed: _addSuperZone,
-              icon: const Icon(Icons.add, size: 18),
-              label: const Text('Super Zone'),
+    return Column(children: [
+      // Header bar
+      Container(
+        color: kSurface,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+        child: Row(children: [
+          const SectionHeader('Election Structure'),
+          const Spacer(),
+          GestureDetector(
+            onTap: _addSuperZone,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+              decoration: BoxDecoration(
+                color: kPrimary, borderRadius: BorderRadius.circular(10)),
+              child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                Icon(Icons.add, color: Colors.white, size: 16),
+                SizedBox(width: 4),
+                Text('Super Zone', style: TextStyle(
+                    color: Colors.white, fontSize: 12,
+                    fontWeight: FontWeight.w700)),
+              ]),
+            ),
+          ),
+        ]),
+      ),
+
+      if (_loading)
+        const Expanded(child: Center(child: CircularProgressIndicator(color: kPrimary)))
+      else if (_superZones.isEmpty)
+        Expanded(child: emptyState(
+            'No super zones yet.\nTap + Super Zone to start.',
+            Icons.layers_outlined))
+      else
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: _load,
+            color: kPrimary,
+            child: ListView.builder(
+              padding: const EdgeInsets.all(12),
+              itemCount: _superZones.length,
+              itemBuilder: (ctx, i) => _SuperZoneTile(
+                data: _superZones[i], onChanged: _load),
+            ),
+          ),
+        ),
+    ]);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Reusable Simple Dialog
+// ─────────────────────────────────────────────────────────────────────────────
+class _SimpleDialog extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Widget child;
+  final Future<void> Function() onSave;
+
+  const _SimpleDialog({
+    required this.title, required this.icon,
+    required this.child,  required this.onSave,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Container(
+          decoration: BoxDecoration(
+            color: kBg, borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kBorder, width: 1.2),
+          ),
+          child: Column(mainAxisSize: MainAxisSize.min, children: [
+            dlgHeader(title, icon, context),
+            Padding(
+              padding: const EdgeInsets.all(20),
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                child,
+                const SizedBox(height: 4),
+                Row(children: [
+                  Expanded(child: OutlinedButton(
+                    onPressed: () => Navigator.pop(context),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: kSubtle,
+                      side: const BorderSide(color: kBorder),
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Cancel'),
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: ElevatedButton(
+                    onPressed: onSave,
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: kPrimary, foregroundColor: Colors.white,
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10)),
+                    ),
+                    child: const Text('Save'),
+                  )),
+                ]),
+              ]),
             ),
           ]),
         ),
-        if (_loading)
-          const Expanded(child: Center(child: CircularProgressIndicator()))
-        else if (_superZones.isEmpty)
-          const Expanded(child: Center(child: Text('No super zones yet. Add one to start.')))
-        else
-          Expanded(
-            child: RefreshIndicator(
-              onRefresh: _load,
-              child: ListView.builder(
-                padding: const EdgeInsets.all(12),
-                itemCount: _superZones.length,
-                itemBuilder: (ctx, i) => _SuperZoneTile(
-                  data: _superZones[i],
-                  onDeleted: _load,
-                ),
-              ),
-            ),
-          ),
-      ],
+      ),
     );
   }
 }
 
-// ─── Super Zone Tile ──────────────────────────────────────────────────────────
+// ─────────────────────────────────────────────────────────────────────────────
+//  Level tiles — colour-coded by level
+// ─────────────────────────────────────────────────────────────────────────────
+const _levelColors = [kPrimary, kAccent, kSuccess, kInfo];
+const _levelBg     = [kSurface, Color(0xFFFFF8E1), Color(0xFFE8F5E9), Color(0xFFE3F2FD)];
 
-class _SuperZoneTile extends StatefulWidget {
-  final Map data;
-  final VoidCallback onDeleted;
-  const _SuperZoneTile({required this.data, required this.onDeleted});
-  @override
-  State<_SuperZoneTile> createState() => _SuperZoneTileState();
+Widget _levelHeader(int level, String label, String sub,
+    VoidCallback onExpand, bool open, VoidCallback onDelete) {
+  final color = _levelColors[level.clamp(0, 3)];
+  final bg    = _levelBg[level.clamp(0, 3)];
+  return Container(
+    margin: const EdgeInsets.only(bottom: 6),
+    decoration: BoxDecoration(
+      color: bg, borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: color.withOpacity(0.4)),
+    ),
+    child: ListTile(
+      dense: true,
+      leading: Container(
+        width: 6, height: 30,
+        decoration: BoxDecoration(
+            color: color, borderRadius: BorderRadius.circular(3)),
+      ),
+      title: Text(label, style: TextStyle(
+          color: kDark, fontWeight: FontWeight.w700, fontSize: 13)),
+      subtitle: Text(sub, style: const TextStyle(color: kSubtle, fontSize: 11)),
+      trailing: Row(mainAxisSize: MainAxisSize.min, children: [
+        IconButton(
+          icon: Icon(open ? Icons.expand_less : Icons.expand_more,
+              size: 20, color: color),
+          onPressed: onExpand,
+          padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+        ),
+        const SizedBox(width: 4),
+        IconButton(
+          icon: const Icon(Icons.delete_outline, size: 18, color: kError),
+          onPressed: onDelete,
+          padding: EdgeInsets.zero, constraints: const BoxConstraints(),
+        ),
+      ]),
+    ),
+  );
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+//  SUPER ZONE
+// ─────────────────────────────────────────────────────────────────────────────
+class _SuperZoneTile extends StatefulWidget {
+  final Map data; final VoidCallback onChanged;
+  const _SuperZoneTile({required this.data, required this.onChanged});
+  @override State<_SuperZoneTile> createState() => _SuperZoneTileState();
+}
 class _SuperZoneTileState extends State<_SuperZoneTile> {
-  List _zones = [];
-  bool _open = false, _loading = false;
+  List _zones = []; bool _open = false, _busy = false;
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() => _busy = true);
     try {
-      final token = await AuthService.getToken();
-      final res = await ApiService.get('/admin/super-zones/${widget.data['id']}/zones', token: token);
-      setState(() { _zones = res['data'] ?? []; _loading = false; });
-    } catch (_) { setState(() => _loading = false); }
+      final t = await AuthService.getToken();
+      final r = await ApiService.get(
+          '/admin/super-zones/${widget.data['id']}/zones', token: t);
+      setState(() { _zones = r['data'] ?? []; _busy = false; });
+    } catch (_) { setState(() => _busy = false); }
   }
 
-  Future<void> _addZone() async {
+  Future<void> _add() async {
     final name = TextEditingController(), hq = TextEditingController(),
-        oName = TextEditingController(), oPno = TextEditingController(),
-        oMobile = TextEditingController();
+        on = TextEditingController(), op = TextEditingController(),
+        om = TextEditingController();
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Zone'),
-        content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-          AppTextField(label: 'Zone Name *', controller: name),
-          AppTextField(label: 'HQ Address', controller: hq),
-          const Divider(),
-          const Text('Zonal Officer', style: TextStyle(fontWeight: FontWeight.bold)),
-          const SizedBox(height: 8),
-          AppTextField(label: 'Officer Name', controller: oName),
-          AppTextField(label: 'PNO', controller: oPno),
-          AppTextField(label: 'Mobile', controller: oMobile),
-        ])),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (name.text.isEmpty) return;
-              final token = await AuthService.getToken();
-              await ApiService.post('/admin/super-zones/${widget.data['id']}/zones', {
-                'name': name.text, 'hqAddress': hq.text,
-                'officerName': oName.text, 'officerPno': oPno.text, 'officerMobile': oMobile.text,
-              }, token: token);
-              Navigator.pop(ctx);
-              _load();
-            },
-            child: const Text('Add'),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Container(
+            decoration: BoxDecoration(
+              color: kBg, borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: kBorder, width: 1.2),
+            ),
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              dlgHeader('Add Zone', Icons.grid_view_outlined, ctx),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  AppTextField(label: 'Zone Name *', controller: name,
+                      prefixIcon: Icons.grid_view_outlined),
+                  AppTextField(label: 'HQ Address', controller: hq,
+                      prefixIcon: Icons.home_outlined),
+                  const Padding(
+                    padding: EdgeInsets.only(bottom: 8),
+                    child: Row(children: [
+                      Icon(Icons.manage_accounts_outlined,
+                          size: 14, color: kSubtle),
+                      SizedBox(width: 6),
+                      Text('Zonal Officer', style: TextStyle(
+                          color: kSubtle, fontSize: 12,
+                          fontWeight: FontWeight.w600)),
+                    ]),
+                  ),
+                  AppTextField(label: 'Officer Name', controller: on,
+                      prefixIcon: Icons.person_outline),
+                  AppTextField(label: 'PNO', controller: op,
+                      prefixIcon: Icons.badge_outlined),
+                  AppTextField(label: 'Mobile', controller: om,
+                      prefixIcon: Icons.phone_outlined,
+                      keyboardType: TextInputType.phone),
+                  const SizedBox(height: 4),
+                  Row(children: [
+                    Expanded(child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kSubtle,
+                        side: const BorderSide(color: kBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text('Cancel'),
+                    )),
+                    const SizedBox(width: 12),
+                    Expanded(child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kPrimary, foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () async {
+                        if (name.text.isEmpty) return;
+                        final t = await AuthService.getToken();
+                        await ApiService.post(
+                            '/admin/super-zones/${widget.data['id']}/zones', {
+                          'name': name.text, 'hqAddress': hq.text,
+                          'officerName': on.text, 'officerPno': op.text,
+                          'officerMobile': om.text,
+                        }, token: t);
+                        Navigator.pop(ctx); _load();
+                      },
+                      child: const Text('Save'),
+                    )),
+                  ]),
+                ]),
+              ),
+            ]),
           ),
-        ],
+        ),
       ),
     );
   }
 
   Future<void> _delete() async {
-    final ok = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Delete Super Zone?'),
-        content: const Text('This will delete all nested zones, sectors, GPs and centers.'),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx, false), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
-            child: const Text('Delete', style: TextStyle(color: Colors.white)),
-          ),
-        ],
-      ),
-    );
-    if (ok == true) {
-      final token = await AuthService.getToken();
-      await ApiService.delete('/admin/super-zones/${widget.data['id']}', token: token);
-      widget.onDeleted();
-    }
+    final t = await AuthService.getToken();
+    await ApiService.delete('/admin/super-zones/${widget.data['id']}', token: t);
+    widget.onChanged();
   }
 
   @override
   Widget build(BuildContext context) {
     return Card(
-      margin: const EdgeInsets.only(bottom: 8),
+      margin: const EdgeInsets.only(bottom: 10),
+      elevation: 0,
+      color: Colors.transparent,
       child: Column(children: [
-        ListTile(
-          leading: Container(
-            width: 36, height: 36,
-            decoration: BoxDecoration(color: Colors.blue.shade700, borderRadius: BorderRadius.circular(8)),
-            child: Center(child: Text('${widget.data['id']}', style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold))),
-          ),
-          title: Text(widget.data['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('${widget.data['zoneCount'] ?? 0} zones • ${widget.data['district'] ?? ''}'),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(icon: Icon(_open ? Icons.expand_less : Icons.expand_more), onPressed: () {
-              setState(() => _open = !_open);
-              if (_open && _zones.isEmpty) _load();
-            }),
-            IconButton(icon: const Icon(Icons.delete_outline, color: Colors.red), onPressed: _delete),
-          ]),
-        ),
-        if (_open) ...[
-          const Divider(height: 1),
-          _loading
-              ? const Padding(padding: EdgeInsets.all(16), child: CircularProgressIndicator())
+        _levelHeader(0,
+            '${widget.data['name']}',
+            '${widget.data['zoneCount'] ?? 0} zones • ${widget.data['district'] ?? ''}',
+            () { setState(() => _open = !_open); if (_open && _zones.isEmpty) _load(); },
+            _open, _delete),
+        if (_open)
+          _busy
+              ? const Padding(padding: EdgeInsets.all(8),
+                  child: CircularProgressIndicator(color: kPrimary))
               : Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding: const EdgeInsets.only(left: 14),
                   child: Column(children: [
-                    ..._zones.map((z) => _ZoneTile(data: z, onDeleted: _load)),
-                    TextButton.icon(onPressed: _addZone, icon: const Icon(Icons.add, size: 16), label: const Text('Add Zone')),
+                    ..._zones.map((z) => _ZoneTile(data: z, onChanged: _load)),
+                    _AddButton('Add Zone', Icons.grid_view_outlined, _add),
                   ]),
                 ),
-        ],
       ]),
     );
   }
 }
 
-// ─── Zone Tile ────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+//  ZONE
+// ─────────────────────────────────────────────────────────────────────────────
 class _ZoneTile extends StatefulWidget {
-  final Map data;
-  final VoidCallback onDeleted;
-  const _ZoneTile({required this.data, required this.onDeleted});
-  @override
-  State<_ZoneTile> createState() => _ZoneTileState();
+  final Map data; final VoidCallback onChanged;
+  const _ZoneTile({required this.data, required this.onChanged});
+  @override State<_ZoneTile> createState() => _ZoneTileState();
 }
-
 class _ZoneTileState extends State<_ZoneTile> {
-  List _sectors = [];
-  bool _open = false, _loading = false;
+  List _sectors = []; bool _open = false, _busy = false;
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() => _busy = true);
     try {
-      final token = await AuthService.getToken();
-      final res = await ApiService.get('/admin/zones/${widget.data['id']}/sectors', token: token);
-      setState(() { _sectors = res['data'] ?? []; _loading = false; });
-    } catch (_) { setState(() => _loading = false); }
+      final t = await AuthService.getToken();
+      final r = await ApiService.get(
+          '/admin/zones/${widget.data['id']}/sectors', token: t);
+      setState(() { _sectors = r['data'] ?? []; _busy = false; });
+    } catch (_) { setState(() => _busy = false); }
   }
 
-  Future<void> _addSector() async {
+  Future<void> _delete() async {
+    final t = await AuthService.getToken();
+    await ApiService.delete('/admin/zones/${widget.data['id']}', token: t);
+    widget.onChanged();
+  }
+
+  Future<void> _add() async {
     final name = TextEditingController();
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Sector'),
-        content: AppTextField(label: 'Sector Name *', controller: name),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (name.text.isEmpty) return;
-              final token = await AuthService.getToken();
-              await ApiService.post('/admin/zones/${widget.data['id']}/sectors', {'name': name.text}, token: token);
-              Navigator.pop(ctx);
-              _load();
-            },
-            child: const Text('Add'),
-          ),
-        ],
+      builder: (ctx) => _SimpleDialog(
+        title: 'Add Sector', icon: Icons.view_module_outlined,
+        child: AppTextField(label: 'Sector Name *', controller: name,
+            prefixIcon: Icons.view_module_outlined),
+        onSave: () async {
+          if (name.text.isEmpty) return;
+          final t = await AuthService.getToken();
+          await ApiService.post('/admin/zones/${widget.data['id']}/sectors',
+              {'name': name.text}, token: t);
+          Navigator.pop(ctx); _load();
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 6),
-      color: Colors.blue.shade50,
-      child: Column(children: [
-        ListTile(
-          dense: true,
-          leading: const Icon(Icons.circle, size: 10, color: Colors.blue),
-          title: Text(widget.data['name'] ?? '', style: const TextStyle(fontWeight: FontWeight.w600)),
-          subtitle: Text('${widget.data['sectorCount'] ?? 0} sectors • ${widget.data['officerName'] ?? ''}'),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(icon: Icon(_open ? Icons.expand_less : Icons.expand_more, size: 20), onPressed: () {
-              setState(() => _open = !_open);
-              if (_open && _sectors.isEmpty) _load();
-            }),
-            IconButton(icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red), onPressed: () async {
-              final token = await AuthService.getToken();
-              await ApiService.delete('/admin/zones/${widget.data['id']}', token: token);
-              widget.onDeleted();
-            }),
-          ]),
-        ),
-        if (_open)
-          _loading
-              ? const Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator())
-              : Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  child: Column(children: [
-                    ..._sectors.map((s) => _SectorTile(data: s, onDeleted: _load)),
-                    TextButton.icon(onPressed: _addSector, icon: const Icon(Icons.add, size: 16), label: const Text('Add Sector')),
-                  ]),
-                ),
-      ]),
-    );
+    return Column(children: [
+      _levelHeader(1, '${widget.data['name']}',
+          '${widget.data['sectorCount'] ?? 0} sectors • ${widget.data['officerName'] ?? ''}',
+          () { setState(() => _open = !_open); if (_open && _sectors.isEmpty) _load(); },
+          _open, _delete),
+      if (_open)
+        _busy
+            ? const Padding(padding: EdgeInsets.all(8),
+                child: CircularProgressIndicator(color: kPrimary))
+            : Padding(
+                padding: const EdgeInsets.only(left: 14),
+                child: Column(children: [
+                  ..._sectors.map((s) => _SectorTile(data: s, onChanged: _load)),
+                  _AddButton('Add Sector', Icons.view_module_outlined, _add),
+                ]),
+              ),
+    ]);
   }
 }
 
-// ─── Sector Tile ──────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+//  SECTOR
+// ─────────────────────────────────────────────────────────────────────────────
 class _SectorTile extends StatefulWidget {
-  final Map data;
-  final VoidCallback onDeleted;
-  const _SectorTile({required this.data, required this.onDeleted});
-  @override
-  State<_SectorTile> createState() => _SectorTileState();
+  final Map data; final VoidCallback onChanged;
+  const _SectorTile({required this.data, required this.onChanged});
+  @override State<_SectorTile> createState() => _SectorTileState();
 }
-
 class _SectorTileState extends State<_SectorTile> {
-  List _gps = [];
-  bool _open = false, _loading = false;
+  List _gps = []; bool _open = false, _busy = false;
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() => _busy = true);
     try {
-      final token = await AuthService.getToken();
-      final res = await ApiService.get('/admin/sectors/${widget.data['id']}/gram-panchayats', token: token);
-      setState(() { _gps = res['data'] ?? []; _loading = false; });
-    } catch (_) { setState(() => _loading = false); }
+      final t = await AuthService.getToken();
+      final r = await ApiService.get(
+          '/admin/sectors/${widget.data['id']}/gram-panchayats', token: t);
+      setState(() { _gps = r['data'] ?? []; _busy = false; });
+    } catch (_) { setState(() => _busy = false); }
   }
 
-  Future<void> _addGP() async {
+  Future<void> _delete() async {
+    final t = await AuthService.getToken();
+    await ApiService.delete('/admin/sectors/${widget.data['id']}', token: t);
+    widget.onChanged();
+  }
+
+  Future<void> _add() async {
     final name = TextEditingController(), addr = TextEditingController();
     await showDialog(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Add Gram Panchayat'),
-        content: Column(mainAxisSize: MainAxisSize.min, children: [
-          AppTextField(label: 'GP Name *', controller: name),
-          AppTextField(label: 'Address', controller: addr),
+      builder: (ctx) => _SimpleDialog(
+        title: 'Add Gram Panchayat', icon: Icons.account_balance_outlined,
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          AppTextField(label: 'GP Name *', controller: name,
+              prefixIcon: Icons.account_balance_outlined),
+          AppTextField(label: 'Address', controller: addr,
+              prefixIcon: Icons.map_outlined),
         ]),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-          ElevatedButton(
-            onPressed: () async {
-              if (name.text.isEmpty) return;
-              final token = await AuthService.getToken();
-              await ApiService.post('/admin/sectors/${widget.data['id']}/gram-panchayats',
-                  {'name': name.text, 'address': addr.text}, token: token);
-              Navigator.pop(ctx);
-              _load();
-            },
-            child: const Text('Add'),
-          ),
-        ],
+        onSave: () async {
+          if (name.text.isEmpty) return;
+          final t = await AuthService.getToken();
+          await ApiService.post(
+              '/admin/sectors/${widget.data['id']}/gram-panchayats',
+              {'name': name.text, 'address': addr.text}, token: t);
+          Navigator.pop(ctx); _load();
+        },
       ),
     );
   }
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 4),
-      color: Colors.green.shade50,
-      child: Column(children: [
-        ListTile(
-          dense: true,
-          leading: const Icon(Icons.circle, size: 8, color: Colors.green),
-          title: Text(widget.data['name'] ?? ''),
-          subtitle: Text('${widget.data['gpCount'] ?? 0} GPs'),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(icon: Icon(_open ? Icons.expand_less : Icons.expand_more, size: 18), onPressed: () {
-              setState(() => _open = !_open);
-              if (_open && _gps.isEmpty) _load();
-            }),
-            IconButton(icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red), onPressed: () async {
-              final token = await AuthService.getToken();
-              await ApiService.delete('/admin/sectors/${widget.data['id']}', token: token);
-              widget.onDeleted();
-            }),
-          ]),
-        ),
-        if (_open)
-          _loading
-              ? const Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator())
-              : Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  child: Column(children: [
-                    ..._gps.map((g) => _GPTile(data: g, onDeleted: _load)),
-                    TextButton.icon(onPressed: _addGP, icon: const Icon(Icons.add, size: 16), label: const Text('Add GP')),
-                  ]),
-                ),
-      ]),
-    );
+    return Column(children: [
+      _levelHeader(2, '${widget.data['name']}',
+          '${widget.data['gpCount'] ?? 0} gram panchayats',
+          () { setState(() => _open = !_open); if (_open && _gps.isEmpty) _load(); },
+          _open, _delete),
+      if (_open)
+        _busy
+            ? const Padding(padding: EdgeInsets.all(8),
+                child: CircularProgressIndicator(color: kPrimary))
+            : Padding(
+                padding: const EdgeInsets.only(left: 14),
+                child: Column(children: [
+                  ..._gps.map((g) => _GPTile(data: g, onChanged: _load)),
+                  _AddButton('Add Gram Panchayat',
+                      Icons.account_balance_outlined, _add),
+                ]),
+              ),
+    ]);
   }
 }
 
-// ─── GP Tile ──────────────────────────────────────────────────────────────────
-
+// ─────────────────────────────────────────────────────────────────────────────
+//  GRAM PANCHAYAT
+// ─────────────────────────────────────────────────────────────────────────────
 class _GPTile extends StatefulWidget {
-  final Map data;
-  final VoidCallback onDeleted;
-  const _GPTile({required this.data, required this.onDeleted});
-  @override
-  State<_GPTile> createState() => _GPTileState();
+  final Map data; final VoidCallback onChanged;
+  const _GPTile({required this.data, required this.onChanged});
+  @override State<_GPTile> createState() => _GPTileState();
 }
-
 class _GPTileState extends State<_GPTile> {
-  List _centers = [];
-  bool _open = false, _loading = false;
+  List _centers = []; bool _open = false, _busy = false;
 
   Future<void> _load() async {
-    setState(() => _loading = true);
+    setState(() => _busy = true);
     try {
-      final token = await AuthService.getToken();
-      final res = await ApiService.get('/admin/gram-panchayats/${widget.data['id']}/centers', token: token);
-      setState(() { _centers = res['data'] ?? []; _loading = false; });
-    } catch (_) { setState(() => _loading = false); }
+      final t = await AuthService.getToken();
+      final r = await ApiService.get(
+          '/admin/gram-panchayats/${widget.data['id']}/centers', token: t);
+      setState(() { _centers = r['data'] ?? []; _busy = false; });
+    } catch (_) { setState(() => _busy = false); }
   }
 
-  Future<void> _addCenter() async {
+  Future<void> _delete() async {
+    final t = await AuthService.getToken();
+    await ApiService.delete('/admin/gram-panchayats/${widget.data['id']}', token: t);
+    widget.onChanged();
+  }
+
+  Future<void> _add() async {
     final name = TextEditingController(), addr = TextEditingController(),
         thana = TextEditingController(), bus = TextEditingController();
     String type = 'C';
-
     await showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(
-        builder: (ctx, ss) => AlertDialog(
-          title: const Text('Add Election Center'),
-          content: SingleChildScrollView(child: Column(mainAxisSize: MainAxisSize.min, children: [
-            AppTextField(label: 'Center Name *', controller: name),
-            AppTextField(label: 'Address', controller: addr),
-            AppTextField(label: 'Thana', controller: thana),
-            AppTextField(label: 'Bus No', controller: bus),
-            DropdownButtonFormField<String>(
-              value: type,
-              decoration: const InputDecoration(labelText: 'Center Type', border: OutlineInputBorder(),
-                  isDense: true, contentPadding: EdgeInsets.symmetric(horizontal: 12, vertical: 10)),
-              items: ['A', 'B', 'C'].map((e) => DropdownMenuItem(value: e, child: Text('Type $e'))).toList(),
-              onChanged: (v) => ss(() => type = v!),
+      builder: (ctx) => Dialog(
+        backgroundColor: Colors.transparent,
+        child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 460),
+          child: Container(
+            decoration: BoxDecoration(
+              color: kBg, borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: kBorder, width: 1.2),
             ),
-          ])),
-          actions: [
-            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
-            ElevatedButton(
-              onPressed: () async {
-                if (name.text.isEmpty) return;
-                final token = await AuthService.getToken();
-                await ApiService.post('/admin/gram-panchayats/${widget.data['id']}/centers', {
-                  'name': name.text, 'address': addr.text,
-                  'thana': thana.text, 'busNo': bus.text, 'centerType': type,
-                }, token: token);
-                Navigator.pop(ctx);
-                _load();
-              },
-              child: const Text('Add'),
-            ),
-          ],
+            child: Column(mainAxisSize: MainAxisSize.min, children: [
+              dlgHeader('Add Election Center',
+                  Icons.location_on_outlined, ctx),
+              Padding(
+                padding: const EdgeInsets.all(20),
+                child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  AppTextField(label: 'Center Name *', controller: name,
+                      prefixIcon: Icons.location_on_outlined),
+                  AppTextField(label: 'Address', controller: addr,
+                      prefixIcon: Icons.map_outlined),
+                  AppTextField(label: 'Thana', controller: thana,
+                      prefixIcon: Icons.local_police_outlined),
+                  AppTextField(label: 'Bus No', controller: bus,
+                      prefixIcon: Icons.directions_bus_outlined),
+                  StatefulBuilder(builder: (ctx, ss) =>
+                      DropdownButtonFormField<String>(
+                        value: type,
+                        dropdownColor: kBg,
+                        decoration: InputDecoration(
+                          labelText: 'Center Type',
+                          labelStyle: const TextStyle(color: kSubtle),
+                          prefixIcon: const Icon(Icons.category_outlined,
+                              size: 18, color: kPrimary),
+                          filled: true, fillColor: Colors.white,
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: const BorderSide(color: kBorder)),
+                          enabledBorder: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(10),
+                              borderSide: const BorderSide(color: kBorder)),
+                          isDense: true,
+                          contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                        ),
+                        items: ['A', 'B', 'C'].map((e) =>
+                            DropdownMenuItem(value: e,
+                                child: Text('Type $e'))).toList(),
+                        onChanged: (v) => ss(() => type = v!),
+                      )),
+                  const SizedBox(height: 12),
+                  Row(children: [
+                    Expanded(child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: kSubtle,
+                        side: const BorderSide(color: kBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      child: const Text('Cancel'),
+                    )),
+                    const SizedBox(width: 12),
+                    Expanded(child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: kPrimary, foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10)),
+                      ),
+                      onPressed: () async {
+                        if (name.text.isEmpty) return;
+                        final t = await AuthService.getToken();
+                        await ApiService.post(
+                            '/admin/gram-panchayats/${widget.data['id']}/centers',
+                            {
+                              'name': name.text, 'address': addr.text,
+                              'thana': thana.text, 'busNo': bus.text,
+                              'centerType': type,
+                            }, token: t);
+                        Navigator.pop(ctx); _load();
+                      },
+                      child: const Text('Save'),
+                    )),
+                  ]),
+                ]),
+              ),
+            ]),
+          ),
         ),
       ),
     );
@@ -456,56 +620,93 @@ class _GPTileState extends State<_GPTile> {
 
   @override
   Widget build(BuildContext context) {
-    return Card(
-      margin: const EdgeInsets.only(bottom: 4),
-      color: Colors.orange.shade50,
-      child: Column(children: [
-        ListTile(
-          dense: true,
-          leading: const Icon(Icons.location_on, size: 16, color: Colors.orange),
-          title: Text(widget.data['name'] ?? ''),
-          subtitle: Text('${widget.data['centerCount'] ?? 0} centers'),
-          trailing: Row(mainAxisSize: MainAxisSize.min, children: [
-            IconButton(icon: Icon(_open ? Icons.expand_less : Icons.expand_more, size: 18), onPressed: () {
-              setState(() => _open = !_open);
-              if (_open && _centers.isEmpty) _load();
-            }),
-            IconButton(icon: const Icon(Icons.delete_outline, size: 18, color: Colors.red), onPressed: () async {
-              final token = await AuthService.getToken();
-              await ApiService.delete('/admin/gram-panchayats/${widget.data['id']}', token: token);
-              widget.onDeleted();
-            }),
-          ]),
-        ),
-        if (_open)
-          _loading
-              ? const Padding(padding: EdgeInsets.all(8), child: CircularProgressIndicator())
-              : Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                  child: Column(children: [
-                    ..._centers.map((c) {
-                      final t = '${c['centerType'] ?? 'C'}';
-                      final tColor = t == 'A' ? Colors.red : t == 'B' ? Colors.orange : Colors.blue;
-                      return ListTile(
-                        dense: true,
-                        leading: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(color: tColor.withOpacity(0.15), borderRadius: BorderRadius.circular(4)),
-                          child: Text(t, style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: tColor)),
+    return Column(children: [
+      _levelHeader(3, '${widget.data['name']}',
+          '${widget.data['centerCount'] ?? 0} centers • ${widget.data['address'] ?? ''}',
+          () { setState(() => _open = !_open); if (_open && _centers.isEmpty) _load(); },
+          _open, _delete),
+      if (_open)
+        _busy
+            ? const Padding(padding: EdgeInsets.all(8),
+                child: CircularProgressIndicator(color: kPrimary))
+            : Padding(
+                padding: const EdgeInsets.only(left: 14),
+                child: Column(children: [
+                  ..._centers.map((c) {
+                    final t = '${c['centerType'] ?? 'C'}';
+                    final tColor = t == 'A' ? kError : t == 'B' ? kAccent : kInfo;
+                    return Container(
+                      margin: const EdgeInsets.only(bottom: 6),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: tColor.withOpacity(0.05),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: tColor.withOpacity(0.3)),
+                      ),
+                      child: Row(children: [
+                        TypeBadge(type: t),
+                        const SizedBox(width: 10),
+                        Expanded(child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('${c['name']}', style: const TextStyle(
+                                color: kDark, fontWeight: FontWeight.w600,
+                                fontSize: 12)),
+                            Text('${c['thana']} • Bus: ${c['busNo'] ?? '-'}',
+                                style: const TextStyle(
+                                    color: kSubtle, fontSize: 11)),
+                          ],
+                        )),
+                        IconButton(
+                          icon: const Icon(Icons.delete_outline,
+                              size: 16, color: kError),
+                          onPressed: () async {
+                            final tok = await AuthService.getToken();
+                            await ApiService.delete(
+                                '/admin/centers/${c['id']}', token: tok);
+                            _load();
+                          },
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
                         ),
-                        title: Text('${c['name']}', style: const TextStyle(fontSize: 13)),
-                        subtitle: Text('${c['thana']} • Bus: ${c['busNo'] ?? '-'}', style: const TextStyle(fontSize: 11)),
-                        trailing: IconButton(icon: const Icon(Icons.delete_outline, size: 16, color: Colors.red), onPressed: () async {
-                          final token = await AuthService.getToken();
-                          await ApiService.delete('/admin/centers/${c['id']}', token: token);
-                          _load();
-                        }),
-                      );
-                    }),
-                    TextButton.icon(onPressed: _addCenter, icon: const Icon(Icons.add, size: 16), label: const Text('Add Center')),
-                  ]),
-                ),
-      ]),
+                      ]),
+                    );
+                  }),
+                  _AddButton('Add Center', Icons.add_location_alt_outlined, _add),
+                ]),
+              ),
+    ]);
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+//  Add Button
+// ─────────────────────────────────────────────────────────────────────────────
+class _AddButton extends StatelessWidget {
+  final String label; final IconData icon; final VoidCallback onTap;
+  const _AddButton(this.label, this.icon, this.onTap);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+        decoration: BoxDecoration(
+          color: kPrimary.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: kPrimary.withOpacity(0.25),
+              style: BorderStyle.solid),
+        ),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 14, color: kPrimary),
+          const SizedBox(width: 6),
+          Text('+ $label', style: const TextStyle(
+              color: kPrimary, fontSize: 12, fontWeight: FontWeight.w700)),
+        ]),
+      ),
     );
   }
 }

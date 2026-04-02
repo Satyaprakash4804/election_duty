@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/constants.dart';
+import 'auth_service.dart'; // 🔥 IMPORTANT
 
 class ApiService {
   static Map<String, String> _headers({String? token}) {
@@ -54,14 +55,22 @@ class ApiService {
     return _handleResponse(response);
   }
 
-  // 🔥 COMMON RESPONSE HANDLER
+  // 🔥 COMMON RESPONSE HANDLER (UPDATED)
   static dynamic _handleResponse(http.Response response) {
     final body = jsonDecode(response.body);
 
+    // ✅ SUCCESS
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return body;
-    } else {
-      throw Exception(body["message"] ?? "API Error");
     }
+
+    // 🔥 AUTO LOGOUT ON 401
+    if (response.statusCode == 401) {
+      AuthService.logout(); // clear token
+      throw Exception("Session expired");
+    }
+
+    // ❌ OTHER ERRORS
+    throw Exception(body["message"] ?? "API Error");
   }
 }

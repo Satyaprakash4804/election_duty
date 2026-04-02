@@ -1,18 +1,26 @@
 import 'package:flutter/material.dart';
-import 'screens/admin/pages/dashboard_page.dart';
-import 'screens/admin/pages/staff_page.dart';
-import 'screens/admin/pages/form_page.dart';
-import 'screens/admin/pages/duty_card_page.dart';
-import 'screens/admin/pages/booth_page.dart';
-void main() => runApp(const MyApp());
+import 'services/auth_service.dart';
+
+// 🔹 ADMIN PAGES
+import 'screens/admin/admin_dashboard.dart';
+
+// 🔹 LOGIN PAGE (CREATE THIS FILE IF NOT EXISTS)
+import 'screens/auth/login_page.dart';
+import 'screens/master_admin/master_dashboard.dart';
+import 'screens/super_admin/super_dashboard.dart';
+void main() {
+  runApp(const MyApp());
+}
 
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
+
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'Election Admin',
       debugShowCheckedModeBanner: false,
+
       theme: ThemeData(
         colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1565C0)),
         useMaterial3: true,
@@ -22,56 +30,67 @@ class MyApp extends StatelessWidget {
           elevation: 2,
         ),
       ),
-      home: const AdminDashboard(),
+
+      // ✅ ROUTES (VERY IMPORTANT)
+      routes: {
+        '/login': (context) => const LoginPage(),
+        '/admin': (context) => const AdminDashboard(),
+        '/master': (context) => const MasterDashboard(),
+        '/super': (context) => const SuperDashboard(),
+      
+      },
+
+      // ✅ AUTO LOGIN CHECK
+      home: const AuthCheck(),
     );
   }
 }
 
-class AdminDashboard extends StatefulWidget {
-  const AdminDashboard({super.key});
-  @override
-  State<AdminDashboard> createState() => _AdminDashboardState();
-}
-
-class _AdminDashboardState extends State<AdminDashboard> {
-  int _idx = 0;
-
-  final _pages = const [
-    DashboardPage(),
-    StaffPage(),
-    FormPage(),
-    DutyCardPage(),
-    BoothPage(),
-  ];
-
-  final _labels = ['Dashboard', 'Staff', 'Structure', 'Duty Cards', 'Booths'];
-  final _icons = [Icons.dashboard, Icons.people, Icons.account_tree, Icons.badge, Icons.location_on];
+//
+// 🔥 AUTH CHECK (DECIDES WHERE TO GO)
+//
+class AuthCheck extends StatelessWidget {
+  const AuthCheck({super.key});
 
   @override
   Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: Text(_labels[_idx]),
-        actions: [
-          IconButton(icon: const Icon(Icons.notifications_outlined), onPressed: () {}),
-          const Padding(
-            padding: EdgeInsets.only(right: 12),
-            child: CircleAvatar(
-              backgroundColor: Colors.white24,
-              child: Icon(Icons.person, color: Colors.white, size: 20),
-            ),
-          ),
-        ],
-      ),
-      body: _pages[_idx],
-      bottomNavigationBar: NavigationBar(
-        selectedIndex: _idx,
-        onDestinationSelected: (i) => setState(() => _idx = i),
-        destinations: List.generate(
-          5,
-          (i) => NavigationDestination(icon: Icon(_icons[i]), label: _labels[i]),
-        ),
-      ),
+    return FutureBuilder(
+      future: Future.wait([
+        AuthService.isLoggedIn(),
+        AuthService.getRole(),
+      ]),
+      builder: (context, snapshot) {
+
+        if (!snapshot.hasData) {
+          return const Scaffold(
+            body: Center(child: CircularProgressIndicator()),
+          );
+        }
+
+        final isLoggedIn = snapshot.data![0] as bool;
+        final role = snapshot.data![1] as String?;
+
+        if (!isLoggedIn) {
+          return const LoginPage();
+        }
+
+        // 🔥 ROLE BASED REDIRECT
+        switch (role) {
+          case "MASTER":
+            return const MasterDashboard();
+
+          case "SUPER_ADMIN":
+            return const SuperDashboard();
+
+          case "ADMIN":
+            return const AdminDashboard();
+
+          
+
+          default:
+            return const LoginPage();
+        }
+      },
     );
   }
 }
