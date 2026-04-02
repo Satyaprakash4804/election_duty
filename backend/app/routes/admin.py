@@ -360,12 +360,10 @@ def delete_center(c_id):
     return ok(None, "Deleted")
 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAFF
+# ══════════════════════════════════════════════════════════════════════════════
 
-
-
-
-
-# ─── STAFF ────────────────────────────────────────────────────────────────────
 @admin_bp.route("/staff", methods=["GET"])
 @admin_required
 def get_staff():
@@ -374,107 +372,106 @@ def get_staff():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-
-            query = """
-                SELECT u.id,u.name,u.pno,u.mobile,u.thana,u.district,
-                       da.sthal_id, ms.name AS center_name
-                FROM users u
-                LEFT JOIN duty_assignments da ON da.staff_id=u.id
-                LEFT JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                WHERE u.role='staff'
-            """
-
-            params = []
-
             if search:
-                query += """ AND (
-                    u.name LIKE %s OR
-                    u.pno LIKE %s OR
-                    u.mobile LIKE %s OR
-                    u.thana LIKE %s
-                )"""
-                like = f"%{search}%"
-                params.extend([like, like, like, like])
-
-            query += " ORDER BY u.name"
-
-            cur.execute(query, tuple(params))
+                cur.execute("""
+                    SELECT u.*, da.sthal_id, ms.name AS center_name
+                    FROM users u
+                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                    LEFT JOIN matdan_sthal ms ON ms.id = da.sthal_id
+                    WHERE u.role = 'staff'
+                    AND (u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s)
+                    ORDER BY u.name
+                """, (f"%{search}%", f"%{search}%", f"%{search}%"))
+            else:
+                cur.execute("""
+                    SELECT u.*, da.sthal_id, ms.name AS center_name
+                    FROM users u
+                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                    LEFT JOIN matdan_sthal ms ON ms.id = da.sthal_id
+                    WHERE u.role = 'staff'
+                    ORDER BY u.name
+                """)
             rows = cur.fetchall()
-
     finally:
         conn.close()
 
     return ok([{
         "id": r["id"],
-        "name": r["name"] or "",
-        "pno": r["pno"] or "",
-        "mobile": r["mobile"] or "",
-        "thana": r["thana"] or "",
-        "district": r["district"] or "",
+        "name": r["name"],
+        "pno": r["pno"],
+        "mobile": r["mobile"],
+        "thana": r["thana"],
+        "district": r["district"],
         "isAssigned": r["sthal_id"] is not None,
-        "centerName": r["center_name"] or ""
+        "centerName": r["center_name"],
     } for r in rows])
 
 @admin_bp.route("/staff", methods=["POST"])
 @admin_required
 def add_staff():
     body = request.get_json() or {}
-    name = body.get("name","").strip()
-    pno  = body.get("pno","").strip()
-    if not name or not pno: return err("name and pno are required")
+    name = body.get("name", "").strip()
+    pno  = body.get("pno",  "").strip()
+    if not name or not pno:
+        return err("name and pno are required")
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
-            if cur.fetchone(): return err(f"PNO {pno} already registered", 409)
-            cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
-            username = pno if not cur.fetchone() else f"{pno}_{_admin_id()}"
-            district = (body.get("district") or "").strip() or request.user.get("district") or ""
-            cur.execute("""INSERT INTO users
-                        (name,pno,username,password,mobile,thana,district,role,is_active,created_by)
-                        VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)""",
-                        (name, pno, username, generate_password_hash(pno),
-                         body.get("mobile",""), body.get("thana",""), district, _admin_id()))
+            cur.execute("SELECT id FROM users WHERE pno = %s", (pno,))
+            if cur.fetchone():
+                return err(f"PNO {pno} already registered", 409)
+            cur.execute("""
+                INSERT INTO users
+                    (name, pno, username, password, mobile, thana, district, role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+            """, (name, pno, pno, generate_password_hash(pno),
+                  body.get("mobile"), body.get("thana"),
+                  body.get("district", request.user.get("district")),
+                  _admin_id()))
             new_id = cur.lastrowid
         conn.commit()
-    finally: conn.close()
-    write_log("INFO", f"Staff '{name}' PNO:{pno} added by admin {_admin_id()}", "Staff")
-    return ok({"id":new_id,"name":name,"pno":pno}, "Staff added", 201)
+    finally:
+        conn.close()
+    return ok({"id": new_id, "name": name, "pno": pno}, "Staff added", 201)
 
 
 @admin_bp.route("/staff/bulk", methods=["POST"])
 @admin_required
 def add_staff_bulk():
-    body  = request.get_json() or {}
-    items = body.get("staff", [])
-    if not items: return err("staff list is empty")
+    body    = request.get_json() or {}
+    items   = body.get("staff", [])
+    if not items:
+        return err("staff list is empty")
     added, skipped = 0, []
     conn = get_db()
     try:
         with conn.cursor() as cur:
             for s in items:
-                pno  = str(s.get("pno","") or "").strip()
-                name = str(s.get("name","") or "").strip()
+                pno  = str(s.get("pno",  "")).strip()
+                name = str(s.get("name", "")).strip()
                 if not pno or not name:
-                    skipped.append(pno or "(empty)"); continue
-                cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
+                    continue
+                cur.execute("SELECT id FROM users WHERE pno = %s", (pno,))
                 if cur.fetchone():
-                    skipped.append(pno); continue
-                cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
-                username = pno if not cur.fetchone() else f"{pno}_{added}"
-                district = str(s.get("district") or "").strip() or request.user.get("district") or ""
-                cur.execute("""INSERT INTO users
-                            (name,pno,username,password,mobile,thana,district,role,is_active,created_by)
-                            VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)""",
-                            (name, pno, username, generate_password_hash(pno),
-                             str(s.get("mobile") or ""), str(s.get("thana") or ""), district, _admin_id()))
+                    skipped.append(pno)
+                    continue
+                cur.execute("""
+                    INSERT INTO users
+                        (name, pno, username, password, mobile, thana, district, role, is_active, created_by)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                """, (name, pno, pno, generate_password_hash(pno),
+                      s.get("mobile"), s.get("thana"),
+                      s.get("district", request.user.get("district")),
+                      _admin_id()))
                 added += 1
         conn.commit()
-    finally: conn.close()
-    write_log("INFO", f"Bulk: {added} added, {len(skipped)} skipped (admin {_admin_id()})", "Import")
-    return ok({"added":added,"skipped":skipped,"total":len(items)}, f"{added} staff added")
-
-
+    finally:
+        conn.close()
+    write_log("INFO",
+              f"Bulk staff: {added} added, {len(skipped)} skipped (admin {_admin_id()})",
+              "Import")
+    return ok({"added": added, "skipped": skipped, "total": len(items)},
+              f"{added} staff added")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -486,6 +483,7 @@ def add_staff_bulk():
 @admin_required
 def get_duties():
     sthal_id = request.args.get("center_id")
+    staff_id  = request.args.get("staff_id")   # NEW: filter by staff for remove-duty
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -513,7 +511,10 @@ def get_duties():
                 JOIN zones            z  ON z.id  = s.zone_id
                 JOIN super_zones      sz ON sz.id = z.super_zone_id
             """
-            if sthal_id:
+            if staff_id:
+                cur.execute(base_select + " WHERE da.staff_id = %s ORDER BY ms.name",
+                            (staff_id,))
+            elif sthal_id:
                 cur.execute(base_select + " WHERE da.sthal_id = %s ORDER BY u.name",
                             (sthal_id,))
             else:
@@ -677,8 +678,3 @@ def admin_overview():
         "totalStaff":     staff,
         "assignedDuties": assigned,
     })
-
-
-
-
-
