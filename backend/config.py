@@ -26,7 +26,7 @@ class Config:
 
     # Base URL — used by health checker and any internal calls
     BASE_URL = os.getenv("BASE_URL", "http://192.168.1.14:5000")
-
+    MYSQLDUMP_PATH = os.getenv("MYSQLDUMP_PATH")
 
 # ─────────────────────────────────────────────
 #  DATABASE CONNECTION

@@ -257,19 +257,46 @@ def system_stats():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) AS size_mb FROM information_schema.tables WHERE table_schema=DATABASE()")
+
+            # 📊 DB SIZE
+            cur.execute("""
+                SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) AS size_mb
+                FROM information_schema.tables
+                WHERE table_schema=DATABASE()
+            """)
             size_row = cur.fetchone()
             db_size  = f"{size_row['size_mb']} MB" if size_row and size_row["size_mb"] else "N/A"
 
+            # 📊 TOTAL RECORDS (FIXED TABLE NAMES)
             total = 0
-            for t in ["users","staff","duties","matdan_kendra","matdan_sthal","sectors","zones"]:
-                cur.execute(f"SELECT COUNT(*) AS cnt FROM {t}")
-                total += cur.fetchone()["cnt"]
+            tables = [
+                "users",
+                "duty_assignments",   # ✅ FIXED
+                "matdan_kendra",
+                "matdan_sthal",
+                "sectors",
+                "zones",
+                "super_zones",
+                "gram_panchayats"
+            ]
 
-            cur.execute("SELECT time FROM system_logs WHERE module='DB' AND message LIKE 'Database backup%' ORDER BY time DESC LIMIT 1")
-            br  = cur.fetchone()
+            for t in tables:
+                try:
+                    cur.execute(f"SELECT COUNT(*) AS cnt FROM {t}")
+                    total += cur.fetchone()["cnt"]
+                except Exception:
+                    pass  # ✅ skip missing tables safely
+
+            # 📊 LAST BACKUP
+            cur.execute("""
+                SELECT time FROM system_logs
+                WHERE module='DB' AND message LIKE 'Database backup%'
+                ORDER BY time DESC LIMIT 1
+            """)
+            br = cur.fetchone()
             last_backup = br["time"].strftime("%d %b %Y %H:%M") if br else "Never"
 
+            # 📊 UPTIME
             cur.execute("SELECT MIN(time) AS first FROM system_logs")
             fr = cur.fetchone()
             if fr and fr["first"]:
@@ -277,11 +304,18 @@ def system_stats():
                 uptime = f"{d.days}d {d.seconds//3600}h {(d.seconds%3600)//60}m"
             else:
                 uptime = "N/A"
+
     finally:
         conn.close()
-    return ok({"dbSize": db_size, "totalRecords": total, "uptime": uptime,
-               "lastBackup": last_backup, "flutterBuild": "v1.0.0+1", "backend": "Flask 3.0"})
 
+    return ok({
+        "dbSize": db_size,
+        "totalRecords": total,
+        "uptime": uptime,
+        "lastBackup": last_backup,
+        "flutterBuild": "v1.0.0+1",
+        "backend": "Flask 3.0"
+    })
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  9. DB TOOLS
@@ -291,18 +325,48 @@ def system_stats():
 def db_backup():
     import subprocess
     from pathlib import Path
-    backup_dir = Path("backups"); backup_dir.mkdir(exist_ok=True)
-    ts       = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
+
+    backup_dir = Path("backups")
+    backup_dir.mkdir(exist_ok=True)
+
+    ts = datetime.utcnow().strftime("%Y%m%d_%H%M%S")
     filename = backup_dir / f"election_db_{ts}.sql"
+
+    # 🔥 SAFE PATH HANDLING
+    mysqldump_path = Config.MYSQLDUMP_PATH
+
+    # 🔥 CLEAN BAD VALUE (VERY IMPORTANT FIX)
+    if mysqldump_path:
+        mysqldump_path = mysqldump_path.replace('r"', '').replace('"', '').strip()
+    
+    # fallback
+    if not mysqldump_path:
+        mysqldump_path = r"C:\Program Files\MySQL\MySQL Server 8.0\bin\mysqldump.exe"
+    
+    print("👉 USING MYSQLDUMP:", mysqldump_path)    
+    
     try:
-        subprocess.run(["mysqldump", f"-u{Config.DB_USER}", f"-p{Config.DB_PASS}",
-                        Config.DB_NAME, f"--result-file={filename}"],
-                       check=True, capture_output=True)
+        subprocess.run(
+            [
+                mysqldump_path,
+                f"-u{Config.DB_USER}",
+                f"-p{Config.DB_PASS}",
+                Config.DB_NAME,
+                f"--result-file={filename}"
+            ],
+            check=True,
+            capture_output=True
+        )
+
         write_log("INFO", f"Database backup created: {filename.name}", "DB")
         return ok({"file": filename.name}, "Backup completed")
+
+    except FileNotFoundError:
+        return err("mysqldump not found. Check MYSQLDUMP_PATH", 500)
+
     except subprocess.CalledProcessError as e:
-        write_log("ERROR", "Database backup failed", "DB")
         return err(f"Backup failed: {e.stderr.decode()}", 500)
+    
 
 @master_bp.route("/db/flush-cache", methods=["POST"])
 @master_required

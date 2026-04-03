@@ -10,8 +10,50 @@ def _admin_id():
     return request.user["id"]
 
 
+# ─── shared officer row serialiser ────────────────────────────────────────────
+def _o(r):
+    return {
+        "id":     r["id"],
+        "userId": r["user_id"],
+        "name":   r["name"]      or "",
+        "pno":    r["pno"]       or "",
+        "mobile": r["mobile"]    or "",
+        "rank":   r["user_rank"] or "",
+    }
+
+
+# ─── fetch staff list for picker ─────────────────────────────────────────────
+# ✅ FIXED: was using r["rank"] which caused KeyError — column is user_rank
+def _staff_list(cur, district=None):
+    if district:
+        cur.execute(
+            """SELECT id, name, pno, mobile, thana, user_rank
+               FROM users
+               WHERE role='staff' AND district=%s AND is_active=1
+               ORDER BY name""",
+            (district,)
+        )
+    else:
+        cur.execute(
+            """SELECT id, name, pno, mobile, thana, user_rank
+               FROM users
+               WHERE role='staff' AND is_active=1
+               ORDER BY name"""
+        )
+    return [
+        {
+            "id":     r["id"],
+            "name":   r["name"]      or "",
+            "pno":    r["pno"]       or "",
+            "mobile": r["mobile"]    or "",
+            "rank":   r["user_rank"] or "",   # ✅ fixed key
+        }
+        for r in cur.fetchall()
+    ]
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  STRUCTURE — Super Zones
+#  SUPER ZONES
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/super-zones", methods=["GET"])
@@ -27,13 +69,24 @@ def get_super_zones():
                 WHERE sz.admin_id = %s
                 GROUP BY sz.id ORDER BY sz.id
             """, (_admin_id(),))
-            rows = cur.fetchall()
+            zones = cur.fetchall()
+            result = []
+            for sz in zones:
+                cur.execute(
+                    "SELECT * FROM kshetra_officers WHERE super_zone_id=%s ORDER BY id",
+                    (sz["id"],)
+                )
+                result.append({
+                    "id":        sz["id"],
+                    "name":      sz["name"]     or "",
+                    "district":  sz["district"] or "",
+                    "block":     sz["block"]    or "",
+                    "zoneCount": sz["zone_count"],
+                    "officers":  [_o(r) for r in cur.fetchall()],
+                })
     finally:
         conn.close()
-    return ok([{
-        "id": r["id"], "name": r["name"],
-        "district": r["district"], "zoneCount": r["zone_count"],
-    } for r in rows])
+    return ok(result)
 
 
 @admin_bp.route("/super-zones", methods=["POST"])
@@ -47,13 +100,42 @@ def add_super_zone():
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO super_zones (name, district, admin_id) VALUES (%s,%s,%s)",
-                (name, request.user.get("district"), _admin_id()))
-            new_id = cur.lastrowid
+                "INSERT INTO super_zones (name,district,block,admin_id) VALUES (%s,%s,%s,%s)",
+                (
+                    name,
+                    body.get("district", request.user.get("district") or ""),
+                    body.get("block", ""),
+                    _admin_id(),
+                )
+            )
+            sz_id = cur.lastrowid
+            for o in body.get("officers", []):
+                _insert_officer(cur, "kshetra_officers", "super_zone_id", sz_id, o)
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id, "name": name}, "Super Zone added", 201)
+    return ok({"id": sz_id, "name": name}, "Super Zone added", 201)
+
+
+@admin_bp.route("/super-zones/<int:sz_id>", methods=["PUT"])
+@admin_required
+def update_super_zone(sz_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE super_zones SET name=%s,district=%s,block=%s WHERE id=%s AND admin_id=%s",
+                (body.get("name", ""), body.get("district", ""), body.get("block", ""),
+                 sz_id, _admin_id())
+            )
+            cur.execute("DELETE FROM kshetra_officers WHERE super_zone_id=%s", (sz_id,))
+            for o in body.get("officers", []):
+                _insert_officer(cur, "kshetra_officers", "super_zone_id", sz_id, o)
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
 
 
 @admin_bp.route("/super-zones/<int:sz_id>", methods=["DELETE"])
@@ -62,8 +144,74 @@ def delete_super_zone(sz_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("DELETE FROM super_zones WHERE id=%s AND admin_id=%s",
-                        (sz_id, _admin_id()))
+            cur.execute(
+                "DELETE FROM super_zones WHERE id=%s AND admin_id=%s",
+                (sz_id, _admin_id())
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Deleted")
+
+
+# ── Kshetra officers sub-resource ─────────────────────────────────────────────
+
+@admin_bp.route("/super-zones/<int:sz_id>/officers", methods=["GET"])
+@admin_required
+def get_kshetra_officers(sz_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM kshetra_officers WHERE super_zone_id=%s ORDER BY id",
+                (sz_id,)
+            )
+            rows = cur.fetchall()
+            staff = _staff_list(cur, request.user.get("district"))
+    finally:
+        conn.close()
+    return ok({"officers": [_o(r) for r in rows], "availableStaff": staff})
+
+
+@admin_bp.route("/super-zones/<int:sz_id>/officers", methods=["POST"])
+@admin_required
+def add_kshetra_officer(sz_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            new_id = _insert_officer(cur, "kshetra_officers", "super_zone_id", sz_id, body)
+        conn.commit()
+    finally:
+        conn.close()
+    return ok({"id": new_id}, "Officer added", 201)
+
+
+@admin_bp.route("/kshetra-officers/<int:o_id>", methods=["PUT"])
+@admin_required
+def update_kshetra_officer(o_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE kshetra_officers SET name=%s,pno=%s,mobile=%s,user_rank=%s,user_id=%s WHERE id=%s",
+                (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
+                 body.get("rank", ""), body.get("userId") or None, o_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
+
+
+@admin_bp.route("/kshetra-officers/<int:o_id>", methods=["DELETE"])
+@admin_required
+def delete_kshetra_officer(o_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM kshetra_officers WHERE id=%s", (o_id,))
         conn.commit()
     finally:
         conn.close()
@@ -71,7 +219,7 @@ def delete_super_zone(sz_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STRUCTURE — Zones
+#  ZONES
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/super-zones/<int:sz_id>/zones", methods=["GET"])
@@ -82,20 +230,26 @@ def get_zones(sz_id):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT z.*, COUNT(DISTINCT s.id) AS sector_count
-                FROM zones z
-                LEFT JOIN sectors s ON s.zone_id = z.id
-                WHERE z.super_zone_id = %s
-                GROUP BY z.id ORDER BY z.id
+                FROM zones z LEFT JOIN sectors s ON s.zone_id=z.id
+                WHERE z.super_zone_id=%s GROUP BY z.id ORDER BY z.id
             """, (sz_id,))
-            rows = cur.fetchall()
+            zones = cur.fetchall()
+            result = []
+            for z in zones:
+                cur.execute(
+                    "SELECT * FROM zonal_officers WHERE zone_id=%s ORDER BY id",
+                    (z["id"],)
+                )
+                result.append({
+                    "id":          z["id"],
+                    "name":        z["name"]       or "",
+                    "hqAddress":   z["hq_address"] or "",
+                    "sectorCount": z["sector_count"],
+                    "officers":    [_o(r) for r in cur.fetchall()],
+                })
     finally:
         conn.close()
-    return ok([{
-        "id": r["id"], "name": r["name"],
-        "hqAddress": r["hq_address"], "officerName": r["officer_name"],
-        "officerPno": r["officer_pno"], "officerMobile": r["officer_mobile"],
-        "sectorCount": r["sector_count"],
-    } for r in rows])
+    return ok(result)
 
 
 @admin_bp.route("/super-zones/<int:sz_id>/zones", methods=["POST"])
@@ -108,17 +262,37 @@ def add_zone(sz_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO zones
-                    (name, hq_address, officer_name, officer_pno, officer_mobile, super_zone_id)
-                VALUES (%s,%s,%s,%s,%s,%s)
-            """, (name, body.get("hqAddress"), body.get("officerName"),
-                  body.get("officerPno"), body.get("officerMobile"), sz_id))
-            new_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO zones (name,hq_address,super_zone_id) VALUES (%s,%s,%s)",
+                (name, body.get("hqAddress", ""), sz_id)
+            )
+            z_id = cur.lastrowid
+            for o in body.get("officers", []):
+                _insert_officer(cur, "zonal_officers", "zone_id", z_id, o)
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id, "name": name}, "Zone added", 201)
+    return ok({"id": z_id, "name": name}, "Zone added", 201)
+
+
+@admin_bp.route("/zones/<int:z_id>", methods=["PUT"])
+@admin_required
+def update_zone(z_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE zones SET name=%s,hq_address=%s WHERE id=%s",
+                (body.get("name", ""), body.get("hqAddress", ""), z_id)
+            )
+            cur.execute("DELETE FROM zonal_officers WHERE zone_id=%s", (z_id,))
+            for o in body.get("officers", []):
+                _insert_officer(cur, "zonal_officers", "zone_id", z_id, o)
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
 
 
 @admin_bp.route("/zones/<int:z_id>", methods=["DELETE"])
@@ -134,8 +308,72 @@ def delete_zone(z_id):
     return ok(None, "Deleted")
 
 
+# ── Zonal officers sub-resource ───────────────────────────────────────────────
+
+@admin_bp.route("/zones/<int:z_id>/officers", methods=["GET"])
+@admin_required
+def get_zonal_officers(z_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM zonal_officers WHERE zone_id=%s ORDER BY id",
+                (z_id,)
+            )
+            rows = cur.fetchall()
+            staff = _staff_list(cur, request.user.get("district"))
+    finally:
+        conn.close()
+    return ok({"officers": [_o(r) for r in rows], "availableStaff": staff})
+
+
+@admin_bp.route("/zones/<int:z_id>/officers", methods=["POST"])
+@admin_required
+def add_zonal_officer(z_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            new_id = _insert_officer(cur, "zonal_officers", "zone_id", z_id, body)
+        conn.commit()
+    finally:
+        conn.close()
+    return ok({"id": new_id}, "Officer added", 201)
+
+
+@admin_bp.route("/zonal-officers/<int:o_id>", methods=["PUT"])
+@admin_required
+def update_zonal_officer(o_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE zonal_officers SET name=%s,pno=%s,mobile=%s,user_rank=%s,user_id=%s WHERE id=%s",
+                (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
+                 body.get("rank", ""), body.get("userId") or None, o_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
+
+
+@admin_bp.route("/zonal-officers/<int:o_id>", methods=["DELETE"])
+@admin_required
+def delete_zonal_officer(o_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM zonal_officers WHERE id=%s", (o_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Deleted")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  STRUCTURE — Sectors
+#  SECTORS
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/zones/<int:z_id>/sectors", methods=["GET"])
@@ -146,26 +384,25 @@ def get_sectors(z_id):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT s.*, COUNT(DISTINCT gp.id) AS gp_count
-                FROM sectors s
-                LEFT JOIN gram_panchayats gp ON gp.sector_id = s.id
-                WHERE s.zone_id = %s
-                GROUP BY s.id ORDER BY s.id
+                FROM sectors s LEFT JOIN gram_panchayats gp ON gp.sector_id=s.id
+                WHERE s.zone_id=%s GROUP BY s.id ORDER BY s.id
             """, (z_id,))
             sectors = cur.fetchall()
+            result = []
             for s in sectors:
-                cur.execute("""
-                    SELECT id, name, pno, mobile FROM sector_officers
-                    WHERE sector_id = %s ORDER BY id
-                """, (s["id"],))
-                s["officers"] = cur.fetchall()
+                cur.execute(
+                    "SELECT * FROM sector_officers WHERE sector_id=%s ORDER BY id",
+                    (s["id"],)
+                )
+                result.append({
+                    "id":       s["id"],
+                    "name":     s["name"] or "",
+                    "gpCount":  s["gp_count"],
+                    "officers": [_o(r) for r in cur.fetchall()],
+                })
     finally:
         conn.close()
-    return ok([{
-        "id": s["id"], "name": s["name"], "gpCount": s["gp_count"],
-        "officers": [{"id": o["id"], "name": o["name"],
-                      "pno": o["pno"], "mobile": o["mobile"]}
-                     for o in s["officers"]],
-    } for s in sectors])
+    return ok(result)
 
 
 @admin_bp.route("/zones/<int:z_id>/sectors", methods=["POST"])
@@ -178,17 +415,39 @@ def add_sector(z_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO sectors (name, zone_id) VALUES (%s,%s)", (name, z_id))
-            new_id = cur.lastrowid
+            cur.execute(
+                "INSERT INTO sectors (name,zone_id) VALUES (%s,%s)",
+                (name, z_id)
+            )
+            s_id = cur.lastrowid
             for o in body.get("officers", []):
-                cur.execute("""
-                    INSERT INTO sector_officers (sector_id, name, pno, mobile)
-                    VALUES (%s,%s,%s,%s)
-                """, (new_id, o.get("name"), o.get("pno"), o.get("mobile")))
+                _insert_officer(cur, "sector_officers", "sector_id", s_id, o)
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id, "name": name}, "Sector added", 201)
+    return ok({"id": s_id, "name": name}, "Sector added", 201)
+
+
+@admin_bp.route("/sectors/<int:s_id>", methods=["PUT"])
+@admin_required
+def update_sector(s_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if body.get("name"):
+                cur.execute(
+                    "UPDATE sectors SET name=%s WHERE id=%s",
+                    (body["name"], s_id)
+                )
+            cur.execute("DELETE FROM sector_officers WHERE sector_id=%s", (s_id,))
+            for o in body.get("officers", []):
+                if o.get("name", "").strip():
+                    _insert_officer(cur, "sector_officers", "sector_id", s_id, o)
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
 
 
 @admin_bp.route("/sectors/<int:s_id>", methods=["DELETE"])
@@ -204,27 +463,60 @@ def delete_sector(s_id):
     return ok(None, "Deleted")
 
 
+# ── Sector officers sub-resource ──────────────────────────────────────────────
+
+@admin_bp.route("/sectors/<int:s_id>/officers", methods=["GET"])
+@admin_required
+def get_sector_officers(s_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT * FROM sector_officers WHERE sector_id=%s ORDER BY id",
+                (s_id,)
+            )
+            rows = cur.fetchall()
+            staff = _staff_list(cur, request.user.get("district"))
+    finally:
+        conn.close()
+    return ok({"officers": [_o(r) for r in rows], "availableStaff": staff})
+
+
 @admin_bp.route("/sectors/<int:s_id>/officers", methods=["POST"])
 @admin_required
-def add_officer(s_id):
+def add_sector_officer(s_id):
     body = request.get_json() or {}
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                INSERT INTO sector_officers (sector_id, name, pno, mobile)
-                VALUES (%s,%s,%s,%s)
-            """, (s_id, body.get("name"), body.get("pno"), body.get("mobile")))
-            new_id = cur.lastrowid
+            new_id = _insert_officer(cur, "sector_officers", "sector_id", s_id, body)
         conn.commit()
     finally:
         conn.close()
     return ok({"id": new_id}, "Officer added", 201)
 
 
-@admin_bp.route("/officers/<int:o_id>", methods=["DELETE"])
+@admin_bp.route("/sector-officers/<int:o_id>", methods=["PUT"])
 @admin_required
-def delete_officer(o_id):
+def update_sector_officer(o_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE sector_officers SET name=%s,pno=%s,mobile=%s,user_rank=%s,user_id=%s WHERE id=%s",
+                (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
+                 body.get("rank", ""), body.get("userId") or None, o_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
+
+
+@admin_bp.route("/sector-officers/<int:o_id>", methods=["DELETE"])
+@admin_required
+def delete_sector_officer(o_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -235,8 +527,36 @@ def delete_officer(o_id):
     return ok(None, "Deleted")
 
 
+# ── helper to insert into any officer table ───────────────────────────────────
+def _insert_officer(cur, table, fk_col, fk_val, o):
+    uid    = o.get("userId") or o.get("user_id") or None
+    name   = o.get("name",   "").strip()
+    pno    = o.get("pno",    "").strip()
+    mobile = o.get("mobile", "").strip()
+    rank   = o.get("rank",   "").strip()
+
+    if uid:
+        cur.execute(
+            "SELECT name, pno, mobile, user_rank FROM users WHERE id=%s",
+            (uid,)
+        )
+        u = cur.fetchone()
+        if u:
+            if not name:   name   = u["name"]      or ""
+            if not pno:    pno    = u["pno"]       or ""
+            if not mobile: mobile = u["mobile"]    or ""
+            if not rank:   rank   = u["user_rank"] or ""
+
+    cur.execute(
+        f"""INSERT INTO {table} ({fk_col}, user_id, name, pno, mobile, user_rank)
+            VALUES (%s, %s, %s, %s, %s, %s)""",
+        (fk_val, uid or None, name, pno, mobile, rank)
+    )
+    return cur.lastrowid
+
+
 # ══════════════════════════════════════════════════════════════════════════════
-#  STRUCTURE — Gram Panchayats
+#  GRAM PANCHAYATS
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/sectors/<int:s_id>/gram-panchayats", methods=["GET"])
@@ -248,16 +568,17 @@ def get_gram_panchayats(s_id):
             cur.execute("""
                 SELECT gp.*, COUNT(ms.id) AS center_count
                 FROM gram_panchayats gp
-                LEFT JOIN matdan_sthal ms ON ms.gram_panchayat_id = gp.id
-                WHERE gp.sector_id = %s
-                GROUP BY gp.id ORDER BY gp.id
+                LEFT JOIN matdan_sthal ms ON ms.gram_panchayat_id=gp.id
+                WHERE gp.sector_id=%s GROUP BY gp.id ORDER BY gp.id
             """, (s_id,))
             rows = cur.fetchall()
     finally:
         conn.close()
     return ok([{
-        "id": r["id"], "name": r["name"],
-        "address": r["address"], "centerCount": r["center_count"],
+        "id":          r["id"],
+        "name":        r["name"]    or "",
+        "address":     r["address"] or "",
+        "centerCount": r["center_count"],
     } for r in rows])
 
 
@@ -272,13 +593,31 @@ def add_gram_panchayat(s_id):
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "INSERT INTO gram_panchayats (name, address, sector_id) VALUES (%s,%s,%s)",
-                (name, body.get("address"), s_id))
+                "INSERT INTO gram_panchayats (name,address,sector_id) VALUES (%s,%s,%s)",
+                (name, body.get("address", ""), s_id)
+            )
             new_id = cur.lastrowid
         conn.commit()
     finally:
         conn.close()
     return ok({"id": new_id, "name": name}, "GP added", 201)
+
+
+@admin_bp.route("/gram-panchayats/<int:gp_id>", methods=["PUT"])
+@admin_required
+def update_gram_panchayat(gp_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE gram_panchayats SET name=%s,address=%s WHERE id=%s",
+                (body.get("name", ""), body.get("address", ""), gp_id)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
 
 
 @admin_bp.route("/gram-panchayats/<int:gp_id>", methods=["DELETE"])
@@ -295,7 +634,7 @@ def delete_gram_panchayat(gp_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  STRUCTURE — Matdan Sthal (Election Centers)
+#  ELECTION CENTERS (Matdan Sthal)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/gram-panchayats/<int:gp_id>/centers", methods=["GET"])
@@ -306,20 +645,23 @@ def get_centers(gp_id):
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT ms.*,
-                    (SELECT COUNT(*) FROM duty_assignments da WHERE da.sthal_id = ms.id) AS duty_count
+                    (SELECT COUNT(*) FROM duty_assignments da WHERE da.sthal_id=ms.id) AS duty_count
                 FROM matdan_sthal ms
-                WHERE ms.gram_panchayat_id = %s ORDER BY ms.id
+                WHERE ms.gram_panchayat_id=%s ORDER BY ms.id
             """, (gp_id,))
             rows = cur.fetchall()
     finally:
         conn.close()
     return ok([{
-        "id": r["id"], "name": r["name"], "address": r["address"],
-        "thana": r["thana"], "centerType": r["center_type"],
-        "busNo": r["bus_no"],
-        "latitude":  float(r["latitude"])  if r["latitude"]  else None,
-        "longitude": float(r["longitude"]) if r["longitude"] else None,
-        "dutyCount": r["duty_count"],
+        "id":         r["id"],
+        "name":       r["name"]        or "",
+        "address":    r["address"]     or "",
+        "thana":      r["thana"]       or "",
+        "centerType": r["center_type"],
+        "busNo":      r["bus_no"]      or "",
+        "latitude":   float(r["latitude"])  if r["latitude"]  else None,
+        "longitude":  float(r["longitude"]) if r["longitude"] else None,
+        "dutyCount":  r["duty_count"],
     } for r in rows])
 
 
@@ -337,14 +679,39 @@ def add_center(gp_id):
                 INSERT INTO matdan_sthal
                     (name, address, gram_panchayat_id, thana, center_type, bus_no, latitude, longitude)
                 VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (name, body.get("address"), gp_id, body.get("thana"),
-                  body.get("centerType", "C"), body.get("busNo"),
-                  body.get("latitude"), body.get("longitude")))
+            """, (
+                name, body.get("address", ""), gp_id,
+                body.get("thana", ""), body.get("centerType", "C"),
+                body.get("busNo", ""), body.get("latitude"), body.get("longitude"),
+            ))
             new_id = cur.lastrowid
         conn.commit()
     finally:
         conn.close()
     return ok({"id": new_id, "name": name}, "Center added", 201)
+
+
+@admin_bp.route("/centers/<int:c_id>", methods=["PUT"])
+@admin_required
+def update_center(c_id):
+    body = request.get_json() or {}
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE matdan_sthal
+                SET name=%s, address=%s, thana=%s, center_type=%s,
+                    bus_no=%s, latitude=%s, longitude=%s
+                WHERE id=%s
+            """, (
+                body.get("name", ""), body.get("address", ""), body.get("thana", ""),
+                body.get("centerType", "C"), body.get("busNo", ""),
+                body.get("latitude"), body.get("longitude"), c_id,
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Updated")
 
 
 @admin_bp.route("/centers/<int:c_id>", methods=["DELETE"])
@@ -360,6 +727,58 @@ def delete_center(c_id):
     return ok(None, "Deleted")
 
 
+# ── Matdan Kendra (rooms) ─────────────────────────────────────────────────────
+
+@admin_bp.route("/centers/<int:c_id>/rooms", methods=["GET"])
+@admin_required
+def get_rooms(c_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id, room_number FROM matdan_kendra WHERE matdan_sthal_id=%s ORDER BY id",
+                (c_id,)
+            )
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return ok([{"id": r["id"], "roomNumber": r["room_number"] or ""} for r in rows])
+
+
+@admin_bp.route("/centers/<int:c_id>/rooms", methods=["POST"])
+@admin_required
+def add_room(c_id):
+    body = request.get_json() or {}
+    rn = body.get("roomNumber", "").strip()
+    if not rn:
+        return err("roomNumber required")
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "INSERT INTO matdan_kendra (room_number,matdan_sthal_id) VALUES (%s,%s)",
+                (rn, c_id)
+            )
+            new_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+    return ok({"id": new_id, "roomNumber": rn}, "Room added", 201)
+
+
+@admin_bp.route("/rooms/<int:r_id>", methods=["DELETE"])
+@admin_required
+def delete_room(r_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM matdan_kendra WHERE id=%s", (r_id,))
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "Deleted")
+
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  STAFF
 # ══════════════════════════════════════════════════════════════════════════════
@@ -367,183 +786,227 @@ def delete_center(c_id):
 @admin_bp.route("/staff", methods=["GET"])
 @admin_required
 def get_staff():
-    search = request.args.get("q", "").strip()
-
+    search   = request.args.get("q", "").strip()
+    district = request.user.get("district")
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            d_clause = "AND u.district=%s" if district else ""
+            d_param  = (district,) if district else ()
             if search:
-                cur.execute("""
-                    SELECT u.*, da.sthal_id, ms.name AS center_name
+                like = f"%{search}%"
+                cur.execute(f"""
+                    SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
+                           da.sthal_id, ms.name AS center_name
                     FROM users u
-                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
-                    LEFT JOIN matdan_sthal ms ON ms.id = da.sthal_id
-                    WHERE u.role = 'staff'
-                    AND (u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s)
+                    LEFT JOIN duty_assignments da ON da.staff_id=u.id
+                    LEFT JOIN matdan_sthal ms ON ms.id=da.sthal_id
+                    WHERE u.role='staff' {d_clause}
+                      AND (u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s OR u.thana LIKE %s)
                     ORDER BY u.name
-                """, (f"%{search}%", f"%{search}%", f"%{search}%"))
+                """, d_param + (like, like, like, like))
             else:
-                cur.execute("""
-                    SELECT u.*, da.sthal_id, ms.name AS center_name
+                cur.execute(f"""
+                    SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
+                           da.sthal_id, ms.name AS center_name
                     FROM users u
-                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
-                    LEFT JOIN matdan_sthal ms ON ms.id = da.sthal_id
-                    WHERE u.role = 'staff'
+                    LEFT JOIN duty_assignments da ON da.staff_id=u.id
+                    LEFT JOIN matdan_sthal ms ON ms.id=da.sthal_id
+                    WHERE u.role='staff' {d_clause}
                     ORDER BY u.name
-                """)
+                """, d_param)
             rows = cur.fetchall()
     finally:
         conn.close()
-
     return ok([{
-        "id": r["id"],
-        "name": r["name"],
-        "pno": r["pno"],
-        "mobile": r["mobile"],
-        "thana": r["thana"],
-        "district": r["district"],
+        "id":         r["id"],
+        "name":       r["name"]       or "",
+        "pno":        r["pno"]        or "",
+        "mobile":     r["mobile"]     or "",
+        "thana":      r["thana"]      or "",
+        "district":   r["district"]   or "",
+        "rank":       r["user_rank"]  or "",
         "isAssigned": r["sthal_id"] is not None,
-        "centerName": r["center_name"],
+        "centerName": r["center_name"] or "",
     } for r in rows])
 
 @admin_bp.route("/staff", methods=["POST"])
 @admin_required
 def add_staff():
     body = request.get_json() or {}
+
     name = body.get("name", "").strip()
-    pno  = body.get("pno",  "").strip()
+    pno  = body.get("pno", "").strip()
+
     if not name or not pno:
-        return err("name and pno are required")
+        return err("name and pno required")
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT id FROM users WHERE pno = %s", (pno,))
+            # 🔍 Check duplicate PNO
+            cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
             if cur.fetchone():
                 return err(f"PNO {pno} already registered", 409)
+
+            # 🔍 Ensure unique username
+            cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+            username = pno if not cur.fetchone() else f"{pno}_{_admin_id()}"
+
+            # 🔥 FIX: ALWAYS use admin district
+            district = request.user.get("district") or ""
+
             cur.execute("""
                 INSERT INTO users
-                    (name, pno, username, password, mobile, thana, district, role, is_active, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
-            """, (name, pno, pno, generate_password_hash(pno),
-                  body.get("mobile"), body.get("thana"),
-                  body.get("district", request.user.get("district")),
-                  _admin_id()))
+                    (name, pno, username, password, mobile, thana, district, user_rank, role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+            """, (
+                name,
+                pno,
+                username,
+                generate_password_hash(pno),
+                body.get("mobile", ""),
+                body.get("thana", ""),
+                district,                       # ✅ FIXED
+                body.get("rank", ""),
+                _admin_id(),
+            ))
+
             new_id = cur.lastrowid
+
         conn.commit()
+
     finally:
         conn.close()
-    return ok({"id": new_id, "name": name, "pno": pno}, "Staff added", 201)
 
+    write_log("INFO", f"Staff '{name}' PNO:{pno} added by admin {_admin_id()}", "Staff")
+
+    return ok({"id": new_id, "name": name, "pno": pno}, "Staff added", 201)
 
 @admin_bp.route("/staff/bulk", methods=["POST"])
 @admin_required
 def add_staff_bulk():
-    body    = request.get_json() or {}
-    items   = body.get("staff", [])
+    body  = request.get_json() or {}
+    items = body.get("staff", [])
+
     if not items:
-        return err("staff list is empty")
+        return err("staff list empty")
+
     added, skipped = 0, []
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
             for s in items:
-                pno  = str(s.get("pno",  "")).strip()
-                name = str(s.get("name", "")).strip()
+                pno  = str(s.get("pno", "") or "").strip()
+                name = str(s.get("name", "") or "").strip()
+
                 if not pno or not name:
+                    skipped.append(pno or "(empty)")
                     continue
-                cur.execute("SELECT id FROM users WHERE pno = %s", (pno,))
+
+                # 🔍 Duplicate check
+                cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
                 if cur.fetchone():
                     skipped.append(pno)
                     continue
+
+                # 🔍 Username check
+                cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+                username = pno if not cur.fetchone() else f"{pno}_{added}"
+
+                # 🔥 FIX: ALWAYS use admin district
+                district = request.user.get("district") or ""
+
                 cur.execute("""
                     INSERT INTO users
                         (name, pno, username, password, mobile, thana, district, role, is_active, created_by)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
-                """, (name, pno, pno, generate_password_hash(pno),
-                      s.get("mobile"), s.get("thana"),
-                      s.get("district", request.user.get("district")),
-                      _admin_id()))
+                """, (
+                    name,
+                    pno,
+                    username,
+                    generate_password_hash(pno),
+                    str(s.get("mobile") or ""),
+                    str(s.get("thana") or ""),
+                    district,                  # ✅ FIXED
+                    _admin_id(),
+                ))
+
                 added += 1
+
         conn.commit()
+
     finally:
         conn.close()
-    write_log("INFO",
-              f"Bulk staff: {added} added, {len(skipped)} skipped (admin {_admin_id()})",
-              "Import")
-    return ok({"added": added, "skipped": skipped, "total": len(items)},
-              f"{added} staff added")
+
+    write_log("INFO", f"Bulk: {added} added, {len(skipped)} skipped (admin {_admin_id()})", "Import")
+
+    return ok({
+        "added": added,
+        "skipped": skipped,
+        "total": len(items)
+    }, f"{added} staff added")
 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  DUTY ASSIGNMENTS
-#  ── Now includes zonal & sector officer details for duty card printing ──
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/duties", methods=["GET"])
 @admin_required
 def get_duties():
     sthal_id = request.args.get("center_id")
-    staff_id  = request.args.get("staff_id")   # NEW: filter by staff for remove-duty
+    staff_id = request.args.get("staff_id")
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            base_select = """
-                SELECT
-                    da.id, da.bus_no,
-                    u.id AS staff_id, u.name, u.pno, u.mobile, u.thana,
-                    ms.name   AS center_name,  ms.thana  AS center_thana,
-                    ms.center_type,
-                    gp.name   AS gp_name,
-                    s.name    AS sector_name,
-                    z.name    AS zone_name,    z.officer_name AS zonal_officer,
-                    z.officer_mobile            AS zonal_mobile,
-                    sz.name   AS super_zone_name,
-                    -- first sector officer for this sector
-                    (SELECT so.name   FROM sector_officers so
-                     WHERE so.sector_id = s.id ORDER BY so.id LIMIT 1) AS sector_officer,
-                    (SELECT so.mobile FROM sector_officers so
-                     WHERE so.sector_id = s.id ORDER BY so.id LIMIT 1) AS sector_mobile
+            base = """
+                SELECT da.id, da.bus_no,
+                       u.id AS staff_id, u.name, u.pno, u.mobile, u.thana,
+                       ms.name AS center_name, ms.thana AS center_thana, ms.center_type,
+                       gp.name AS gp_name, s.name AS sector_name,
+                       z.name AS zone_name, sz.name AS super_zone_name,
+                       (SELECT zo.name   FROM zonal_officers zo WHERE zo.zone_id=z.id ORDER BY zo.id LIMIT 1) AS zonal_officer,
+                       (SELECT zo.mobile FROM zonal_officers zo WHERE zo.zone_id=z.id ORDER BY zo.id LIMIT 1) AS zonal_mobile,
+                       (SELECT so.name   FROM sector_officers so WHERE so.sector_id=s.id ORDER BY so.id LIMIT 1) AS sector_officer,
+                       (SELECT so.mobile FROM sector_officers so WHERE so.sector_id=s.id ORDER BY so.id LIMIT 1) AS sector_mobile
                 FROM duty_assignments da
-                JOIN users            u  ON u.id  = da.staff_id
-                JOIN matdan_sthal     ms ON ms.id = da.sthal_id
-                JOIN gram_panchayats  gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors          s  ON s.id  = gp.sector_id
-                JOIN zones            z  ON z.id  = s.zone_id
-                JOIN super_zones      sz ON sz.id = z.super_zone_id
+                JOIN users u             ON u.id  = da.staff_id
+                JOIN matdan_sthal ms     ON ms.id = da.sthal_id
+                JOIN gram_panchayats gp  ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s           ON s.id  = gp.sector_id
+                JOIN zones z             ON z.id  = s.zone_id
+                JOIN super_zones sz      ON sz.id = z.super_zone_id
             """
             if staff_id:
-                cur.execute(base_select + " WHERE da.staff_id = %s ORDER BY ms.name",
-                            (staff_id,))
+                cur.execute(base + " WHERE da.staff_id=%s ORDER BY ms.name", (staff_id,))
             elif sthal_id:
-                cur.execute(base_select + " WHERE da.sthal_id = %s ORDER BY u.name",
-                            (sthal_id,))
+                cur.execute(base + " WHERE da.sthal_id=%s ORDER BY u.name", (sthal_id,))
             else:
-                cur.execute(base_select + " WHERE sz.admin_id = %s ORDER BY ms.name, u.name",
-                            (_admin_id(),))
+                cur.execute(base + " WHERE sz.admin_id=%s ORDER BY ms.name, u.name", (_admin_id(),))
             rows = cur.fetchall()
     finally:
         conn.close()
-
     return ok([{
         "id":            r["id"],
-        "busNo":         r["bus_no"],
+        "busNo":         r["bus_no"]          or "",
         "staffId":       r["staff_id"],
-        "name":          r["name"],
-        "pno":           r["pno"],
-        "mobile":        r["mobile"],
-        "staffThana":    r["thana"],
-        "centerName":    r["center_name"],
-        "centerThana":   r["center_thana"],
-        "centerType":    r["center_type"],
-        "gpName":        r["gp_name"],
-        "sectorName":    r["sector_name"],
-        "zoneName":      r["zone_name"],
-        "superZoneName": r["super_zone_name"],
-        # ── officer details for duty card ──
-        "zonalOfficer":  r["zonal_officer"],
-        "zonalMobile":   r["zonal_mobile"],
-        "sectorOfficer": r["sector_officer"],
-        "sectorMobile":  r["sector_mobile"],
+        "name":          r["name"]            or "",
+        "pno":           r["pno"]             or "",
+        "mobile":        r["mobile"]          or "",
+        "staffThana":    r["thana"]           or "",
+        "centerName":    r["center_name"]     or "",
+        "centerThana":   r["center_thana"]    or "",
+        "centerType":    r["center_type"]     or "C",
+        "gpName":        r["gp_name"]         or "",
+        "sectorName":    r["sector_name"]     or "",
+        "zoneName":      r["zone_name"]       or "",
+        "superZoneName": r["super_zone_name"] or "",
+        "zonalOfficer":  r["zonal_officer"]   or "",
+        "zonalMobile":   r["zonal_mobile"]    or "",
+        "sectorOfficer": r["sector_officer"]  or "",
+        "sectorMobile":  r["sector_mobile"]   or "",
     } for r in rows])
 
 
@@ -553,9 +1016,8 @@ def assign_duty():
     body     = request.get_json() or {}
     staff_id = body.get("staffId")
     sthal_id = body.get("centerId")
-    bus_no   = body.get("busNo")
     if not staff_id or not sthal_id:
-        return err("staffId and centerId are required")
+        return err("staffId and centerId required")
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -563,7 +1025,7 @@ def assign_duty():
                 INSERT INTO duty_assignments (staff_id, sthal_id, bus_no, assigned_by)
                 VALUES (%s,%s,%s,%s)
                 ON DUPLICATE KEY UPDATE bus_no=VALUES(bus_no), assigned_by=VALUES(assigned_by)
-            """, (staff_id, sthal_id, bus_no, _admin_id()))
+            """, (staff_id, sthal_id, body.get("busNo", ""), _admin_id()))
         conn.commit()
     finally:
         conn.close()
@@ -585,7 +1047,7 @@ def remove_duty(duty_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  ALL CENTERS (map + booth page)
+#  ALL CENTERS  (map view)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/centers/all", methods=["GET"])
@@ -595,41 +1057,42 @@ def all_centers():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT ms.id, ms.name, ms.address, ms.thana,
-                       ms.center_type, ms.bus_no, ms.latitude, ms.longitude,
-                       gp.name AS gp_name,
-                       s.name  AS sector_name,
-                       z.name  AS zone_name,
-                       sz.name AS super_zone_name,
+                SELECT ms.id, ms.name, ms.address, ms.thana, ms.center_type, ms.bus_no,
+                       ms.latitude, ms.longitude,
+                       gp.name AS gp_name, s.name AS sector_name,
+                       z.name AS zone_name, sz.name AS super_zone_name,
                        COUNT(da.id) AS duty_count
                 FROM matdan_sthal ms
-                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors         s  ON s.id  = gp.sector_id
-                JOIN zones           z  ON z.id  = s.zone_id
-                JOIN super_zones     sz ON sz.id = z.super_zone_id
+                JOIN gram_panchayats gp  ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s           ON s.id  = gp.sector_id
+                JOIN zones z             ON z.id  = s.zone_id
+                JOIN super_zones sz      ON sz.id = z.super_zone_id
                 LEFT JOIN duty_assignments da ON da.sthal_id = ms.id
-                WHERE sz.admin_id = %s
+                WHERE sz.admin_id=%s
                 GROUP BY ms.id ORDER BY ms.name
             """, (_admin_id(),))
             rows = cur.fetchall()
     finally:
         conn.close()
     return ok([{
-        "id": r["id"], "name": r["name"], "address": r["address"],
-        "thana": r["thana"], "centerType": r["center_type"],
-        "busNo": r["bus_no"],
-        "latitude":  float(r["latitude"])  if r["latitude"]  else None,
-        "longitude": float(r["longitude"]) if r["longitude"] else None,
-        "gpName":        r["gp_name"],
-        "sectorName":    r["sector_name"],
-        "zoneName":      r["zone_name"],
-        "superZoneName": r["super_zone_name"],
+        "id":            r["id"],
+        "name":          r["name"]            or "",
+        "address":       r["address"]         or "",
+        "thana":         r["thana"]           or "",
+        "centerType":    r["center_type"]     or "C",
+        "busNo":         r["bus_no"]          or "",
+        "latitude":      float(r["latitude"])  if r["latitude"]  else None,
+        "longitude":     float(r["longitude"]) if r["longitude"] else None,
+        "gpName":        r["gp_name"]         or "",
+        "sectorName":    r["sector_name"]     or "",
+        "zoneName":      r["zone_name"]       or "",
+        "superZoneName": r["super_zone_name"] or "",
         "dutyCount":     r["duty_count"],
     } for r in rows])
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  OVERVIEW STATS
+#  OVERVIEW
 # ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/overview", methods=["GET"])
@@ -638,43 +1101,49 @@ def admin_overview():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT COUNT(*) AS cnt FROM super_zones WHERE admin_id=%s",
-                        (_admin_id(),))
+            cur.execute(
+                "SELECT COUNT(*) AS cnt FROM super_zones WHERE admin_id=%s",
+                (_admin_id(),)
+            )
             sz = cur.fetchone()["cnt"]
 
             cur.execute("""
                 SELECT COUNT(DISTINCT ms.id) AS cnt
                 FROM matdan_sthal ms
-                JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id
-                JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones szn ON szn.id=z.super_zone_id
+                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s          ON s.id  = gp.sector_id
+                JOIN zones z            ON z.id  = s.zone_id
+                JOIN super_zones szn    ON szn.id = z.super_zone_id
                 WHERE szn.admin_id=%s
             """, (_admin_id(),))
             booths = cur.fetchone()["cnt"]
 
-            cur.execute("""
-                SELECT COUNT(*) AS cnt FROM users
-                WHERE role='staff' AND district=%s
-            """, (request.user.get("district"),))
+            d = request.user.get("district")
+            if d:
+                cur.execute(
+                    "SELECT COUNT(*) AS cnt FROM users WHERE role='staff' AND district=%s",
+                    (d,)
+                )
+            else:
+                cur.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff'")
             staff = cur.fetchone()["cnt"]
 
             cur.execute("""
                 SELECT COUNT(da.id) AS cnt
                 FROM duty_assignments da
-                JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id
-                JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones szn ON szn.id=z.super_zone_id
+                JOIN matdan_sthal ms     ON ms.id = da.sthal_id
+                JOIN gram_panchayats gp  ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s           ON s.id  = gp.sector_id
+                JOIN zones z             ON z.id  = s.zone_id
+                JOIN super_zones szn     ON szn.id = z.super_zone_id
                 WHERE szn.admin_id=%s
             """, (_admin_id(),))
             assigned = cur.fetchone()["cnt"]
     finally:
         conn.close()
     return ok({
-        "superZones":     sz,
-        "totalBooths":    booths,
-        "totalStaff":     staff,
+        "superZones":    sz,
+        "totalBooths":   booths,
+        "totalStaff":    staff,
         "assignedDuties": assigned,
     })
