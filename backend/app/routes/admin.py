@@ -1007,21 +1007,22 @@ def delete_staff(staff_id):
 @admin_bp.route("/duties", methods=["GET"])
 @admin_required
 def get_duties():
-    sthal_id = request.args.get("center_id")
-    staff_id = request.args.get("staff_id")
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            base = """
+
+            cur.execute("""
                 SELECT da.id, da.bus_no,
-                       u.id AS staff_id, u.name, u.pno, u.mobile, u.thana,
-                       ms.name AS center_name, ms.thana AS center_thana, ms.center_type,
-                       gp.name AS gp_name, s.name AS sector_name,
-                       z.name AS zone_name, sz.name AS super_zone_name,
-                       (SELECT zo.name   FROM zonal_officers zo WHERE zo.zone_id=z.id ORDER BY zo.id LIMIT 1) AS zonal_officer,
-                       (SELECT zo.mobile FROM zonal_officers zo WHERE zo.zone_id=z.id ORDER BY zo.id LIMIT 1) AS zonal_mobile,
-                       (SELECT so.name   FROM sector_officers so WHERE so.sector_id=s.id ORDER BY so.id LIMIT 1) AS sector_officer,
-                       (SELECT so.mobile FROM sector_officers so WHERE so.sector_id=s.id ORDER BY so.id LIMIT 1) AS sector_mobile
+                       u.id AS staff_id, u.name, u.pno, u.mobile, u.thana, u.user_rank, u.district,
+
+                       ms.id AS center_id,
+                       ms.name AS center_name, ms.center_type,
+
+                       gp.name AS gp_name,
+                       s.id AS sector_id, s.name AS sector_name,
+                       z.id AS zone_id, z.name AS zone_name,
+                       sz.id AS super_zone_id, sz.name AS super_zone_name
+
                 FROM duty_assignments da
                 JOIN users u             ON u.id  = da.staff_id
                 JOIN matdan_sthal ms     ON ms.id = da.sthal_id
@@ -1029,36 +1030,76 @@ def get_duties():
                 JOIN sectors s           ON s.id  = gp.sector_id
                 JOIN zones z             ON z.id  = s.zone_id
                 JOIN super_zones sz      ON sz.id = z.super_zone_id
-            """
-            if staff_id:
-                cur.execute(base + " WHERE da.staff_id=%s ORDER BY ms.name", (staff_id,))
-            elif sthal_id:
-                cur.execute(base + " WHERE da.sthal_id=%s ORDER BY u.name", (sthal_id,))
-            else:
-                cur.execute(base + " WHERE sz.admin_id=%s ORDER BY ms.name, u.name", (_admin_id(),))
+                WHERE sz.admin_id=%s
+                ORDER BY ms.name, u.name
+            """, (_admin_id(),))
+
             rows = cur.fetchall()
+            result = []
+
+            for r in rows:
+
+                # 🟣 SUPER ZONE OFFICERS (ALL)
+                cur.execute("""
+                    SELECT name, pno, mobile, user_rank
+                    FROM kshetra_officers
+                    WHERE super_zone_id=%s
+                """, (r["super_zone_id"],))
+                super_officers = cur.fetchall()
+
+                # 🔵 ZONAL OFFICERS (ALL)
+                cur.execute("""
+                    SELECT name, pno, mobile, user_rank
+                    FROM zonal_officers
+                    WHERE zone_id=%s
+                """, (r["zone_id"],))
+                zonal_officers = cur.fetchall()
+
+                # 🟢 SECTOR OFFICERS (ALL)
+                cur.execute("""
+                    SELECT name, pno, mobile, user_rank
+                    FROM sector_officers
+                    WHERE sector_id=%s
+                """, (r["sector_id"],))
+                sector_officers = cur.fetchall()
+
+                # 🟡 SAHYOGI (WITH RANK + DISTRICT)
+                cur.execute("""
+                    SELECT u.name, u.pno, u.mobile, u.thana, u.user_rank, u.district
+                    FROM duty_assignments da2
+                    JOIN users u ON u.id = da2.staff_id
+                    WHERE da2.sthal_id = %s
+                """, (r["center_id"],))
+                sahyogi = cur.fetchall()
+
+                result.append({
+                    "id": r["id"],
+                    "name": r["name"],
+                    "pno": r["pno"],
+                    "mobile": r["mobile"],
+                    "staffThana": r["thana"],
+                    "rank": r["user_rank"],
+                    "district": r["district"],
+
+                    "centerName": r["center_name"],
+                    "gpName": r["gp_name"],
+                    "sectorName": r["sector_name"],
+                    "zoneName": r["zone_name"],
+                    "superZoneName": r["super_zone_name"],
+
+                    "busNo": r["bus_no"],
+
+                    "superOfficers": super_officers,
+                    "zonalOfficers": zonal_officers,
+                    "sectorOfficers": sector_officers,
+
+                    "sahyogi": sahyogi
+                })
+
     finally:
         conn.close()
-    return ok([{
-        "id":            r["id"],
-        "busNo":         r["bus_no"]          or "",
-        "staffId":       r["staff_id"],
-        "name":          r["name"]            or "",
-        "pno":           r["pno"]             or "",
-        "mobile":        r["mobile"]          or "",
-        "staffThana":    r["thana"]           or "",
-        "centerName":    r["center_name"]     or "",
-        "centerThana":   r["center_thana"]    or "",
-        "centerType":    r["center_type"]     or "C",
-        "gpName":        r["gp_name"]         or "",
-        "sectorName":    r["sector_name"]     or "",
-        "zoneName":      r["zone_name"]       or "",
-        "superZoneName": r["super_zone_name"] or "",
-        "zonalOfficer":  r["zonal_officer"]   or "",
-        "zonalMobile":   r["zonal_mobile"]    or "",
-        "sectorOfficer": r["sector_officer"]  or "",
-        "sectorMobile":  r["sector_mobile"]   or "",
-    } for r in rows])
+
+    return ok(result)
 
 
 @admin_bp.route("/duties", methods=["POST"])
@@ -1198,3 +1239,4 @@ def admin_overview():
         "totalStaff":    staff,
         "assignedDuties": assigned,
     })
+    

@@ -60,106 +60,131 @@ class _DutyCardPageState extends State<DutyCardPage> {
 
   // ── PDF Generation ─────────────────────────────────────────────────────────
   Future<void> _print(List<Map> list) async {
-    final pdf  = pw.Document();
-    final font = await PdfGoogleFonts.notoSansDevanagariRegular();
-    final bold = await PdfGoogleFonts.notoSansDevanagariBold();
+  final pdf  = pw.Document();
+  final font = await PdfGoogleFonts.notoSansDevanagariRegular();
+  final bold = await PdfGoogleFonts.notoSansDevanagariBold();
 
-    for (final s in list) {
-      pdf.addPage(pw.Page(
-        pageFormat: PdfPageFormat.a5,
-        margin: const pw.EdgeInsets.all(14),
+  for (final s in list) {
+    pdf.addPage(
+      pw.Page(
+        pageFormat: PdfPageFormat.a6.landscape,
+        margin: const pw.EdgeInsets.all(6),
         build: (_) => pw.Container(
           decoration: pw.BoxDecoration(
-              border: pw.Border.all(width: 2),
-              color: PdfColor.fromHex('#FFE4EE')),
-          child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            border: pw.Border.all(width: 1.5),
+          ),
+          child: pw.Padding(
+            padding: const pw.EdgeInsets.all(6),
+            child: pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.start,
               children: [
-            // Header
-            pw.Container(
-              color: PdfColor.fromHex('#B71C5D'),
-              padding: const pw.EdgeInsets.symmetric(vertical: 8, horizontal: 12),
-              child: pw.Column(children: [
-                pw.Text('ड्यूटी कार्ड',
-                    style: pw.TextStyle(font: bold, fontSize: 18,
-                        color: PdfColors.white)),
-                pw.Text('पंचायत सामान्य निर्वाचन-2026',
-                    style: pw.TextStyle(font: font, fontSize: 11,
-                        color: PdfColors.white)),
-                pw.Text('जनपद: बागपत',
-                    style: pw.TextStyle(font: font, fontSize: 9,
-                        color: PdfColors.white)),
-              ]),
-            ),
 
-            pw.Padding(
-              padding: const pw.EdgeInsets.all(10),
-              child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                pw.Text(
-                    'दिनांक: ${s['dutyDate'] ?? '15 अप्रैल 2026'}  |  समय: 07:00 से 20:00 बजे तक',
-                    style: pw.TextStyle(font: font, fontSize: 9)),
-                pw.Text('थाना: ${s['staffThana'] ?? '-'}  |  जनपद: बागपत',
-                    style: pw.TextStyle(font: font, fontSize: 9)),
-                pw.SizedBox(height: 8),
-
-                pw.Text('कर्मचारी विवरण',
-                    style: pw.TextStyle(font: bold, fontSize: 10)),
-                pw.SizedBox(height: 3),
-                _tbl([
-                  ['PNO', '${s['pno']}'],
-                  ['नाम', '${s['name']}'],
-                  ['मोबाइल', '${s['mobile']}'],
-                  ['थाना', '${s['staffThana'] ?? '-'}'],
-                ], font, bold),
-
-                pw.SizedBox(height: 8),
-                pw.Text('ड्यूटी स्थान',
-                    style: pw.TextStyle(font: bold, fontSize: 10)),
-                pw.SizedBox(height: 3),
-                _tbl([
-                  ['मतदान केंद्र', '${s['centerName']}'],
-                  ['ग्राम पंचायत', '${s['gpName']}'],
-                  ['सेक्टर', '${s['sectorName']}'],
-                  ['जोन', '${s['zoneName']}'],
-                  ['सुपर जोन', '${s['superZoneName']}'],
-                  ['बस नं.', '${s['busNo'] ?? '-'}'],
-                  ['प्रकार', 'Type ${s['centerType'] ?? 'C'}'],
-                ], font, bold),
-
-                pw.SizedBox(height: 8),
-                pw.Text('अधिकारी विवरण',
-                    style: pw.TextStyle(font: bold, fontSize: 10)),
-                pw.SizedBox(height: 3),
-                _tbl([
-                  ['जोनल अधिकारी', '${s['zonalOfficer'] ?? '-'}'],
-                  ['मोबाइल', '${s['zonalMobile'] ?? '-'}'],
-                  ['सेक्टर अधिकारी', '${s['sectorOfficer'] ?? '-'}'],
-                  ['मोबाइल', '${s['sectorMobile'] ?? '-'}'],
-                ], font, bold),
-
-                pw.SizedBox(height: 20),
-                pw.Row(mainAxisAlignment: pw.MainAxisAlignment.end,
-                    children: [
-                  pw.Column(
-                      crossAxisAlignment: pw.CrossAxisAlignment.center,
-                      children: [
-                    pw.Container(width: 80, height: 1, color: PdfColors.black),
-                    pw.SizedBox(height: 3),
-                    pw.Text('SP बागपत',
-                        style: pw.TextStyle(font: font, fontSize: 9)),
-                    pw.Text('हस्ताक्षर / मुहर',
-                        style: pw.TextStyle(font: font, fontSize: 8,
-                            color: PdfColors.grey600)),
+                // HEADER
+                pw.Center(
+                  child: pw.Column(children: [
+                    pw.Text('ड्यूटी कार्ड', style: pw.TextStyle(font: bold, fontSize: 12)),
+                    pw.Text('लोकसभा निर्वाचन', style: pw.TextStyle(font: font, fontSize: 8)),
+                    pw.Text('जनपद: बागपत', style: pw.TextStyle(font: font, fontSize: 7)),
                   ]),
-                ]),
-              ]),
+                ),
+
+                pw.SizedBox(height: 4),
+
+                // STAFF
+                pw.Text(
+                  '${s['name']} (${s['rank']}) | ${s['pno']} | ${s['mobile']}',
+                  style: pw.TextStyle(font: bold, fontSize: 8),
+                ),
+
+                pw.Text(
+                  'थाना: ${s['staffThana']} | जिला: ${s['district']}',
+                  style: pw.TextStyle(font: font, fontSize: 7),
+                ),
+
+                pw.Divider(),
+
+                // OFFICERS
+                _officerBlock('क्षेत्राधिकारी', s['superOfficers'], bold, font),
+                _officerBlock('जोनल अधिकारी', s['zonalOfficers'], bold, font),
+                _officerBlock('सेक्टर अधिकारी', s['sectorOfficers'], bold, font),
+
+                pw.Divider(),
+
+                // SAHYOGI
+                pw.Text('सहयोगी कर्मचारी', style: pw.TextStyle(font: bold, fontSize: 8)),
+
+                pw.Table(
+                  border: pw.TableBorder.all(width: 0.3),
+                  children: [
+                    pw.TableRow(
+                      children: [
+                        _cell('नाम', bold),
+                        _cell('PNO', bold),
+                        _cell('रैंक', bold),
+                        _cell('मोबाइल', bold),
+                        _cell('जिला', bold),
+                      ],
+                    ),
+                    ...((s['sahyogi'] ?? []) as List).map((e) =>
+                      pw.TableRow(children: [
+                        _cell('${e['name']}', font),
+                        _cell('${e['pno']}', font),
+                        _cell('${e['user_rank']}', font),
+                        _cell('${e['mobile']}', font),
+                        _cell('${e['district']}', font),
+                      ])
+                    )
+                  ],
+                ),
+
+                pw.Spacer(),
+
+                pw.Align(
+                  alignment: pw.Alignment.centerRight,
+                  child: pw.Text('पुलिस अधीक्षक बागपत',
+                      style: pw.TextStyle(font: font, fontSize: 7)),
+                )
+              ],
             ),
-          ]),
+          ),
         ),
-      ));
-    }
-    await Printing.layoutPdf(onLayout: (_) => pdf.save());
+      ),
+    );
   }
+
+  await Printing.layoutPdf(onLayout: (_) => pdf.save());
+}
+  
+
+
+  pw.Widget _officerBlock(String title, List list, pw.Font bold, pw.Font font) {
+  return pw.Container(
+    margin: const pw.EdgeInsets.symmetric(vertical: 2),
+    padding: const pw.EdgeInsets.all(3),
+    decoration: pw.BoxDecoration(
+      border: pw.Border.all(width: 0.5),
+      color: PdfColors.grey200,
+    ),
+    child: pw.Column(
+      crossAxisAlignment: pw.CrossAxisAlignment.start,
+      children: [
+        pw.Text(title, style: pw.TextStyle(font: bold, fontSize: 7)),
+        ...list.map((o) => pw.Text(
+          '${o['name']} (${o['user_rank']}) - ${o['mobile']}',
+          style: pw.TextStyle(font: font, fontSize: 7),
+        ))
+      ],
+    ),
+  );
+}
+
+
+pw.Widget _cell(String text, pw.Font f) {
+  return pw.Padding(
+    padding: const pw.EdgeInsets.all(2),
+    child: pw.Text(text, style: pw.TextStyle(font: f, fontSize: 6)),
+  );
+}
 
   pw.Widget _tbl(List<List<String>> rows, pw.Font f, pw.Font b) {
     return pw.Table(
@@ -221,7 +246,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
               GestureDetector(
                 onTap: () {
                   final sel = _filtered
-                      .where((s) => _selected.contains(s['id']))
+                      .where((s) => _selected.contains(s['id'] ?? 0))
                       .map((s) => Map<String, dynamic>.from(s))
                       .toList();
                   _print(sel);

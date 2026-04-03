@@ -9,6 +9,7 @@ from app.routes.master      import master_bp
 from app.routes.super_admin import super_admin_bp
 from app.routes.admin       import admin_bp
 from app.routes.staff       import staff_bp
+from app.routes.booth_routes import booth_bp
 
 
 def create_app():
@@ -24,7 +25,7 @@ def create_app():
     app.register_blueprint(super_admin_bp)   # /super/...
     app.register_blueprint(admin_bp)         # /admin/...
     app.register_blueprint(staff_bp)         # /staff/...
-
+    app.register_blueprint(booth_bp)
     # ── Health ping (no auth) ────────────────────────────────────────────────
     @app.route("/ping")
     def ping():
