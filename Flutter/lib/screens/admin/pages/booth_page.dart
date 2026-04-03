@@ -66,198 +66,276 @@ class _BoothPageState extends State<BoothPage> {
     });
   }
 
-  // ── Assign Dialog (with available staff dropdown) ─────────────────────────
   void _showAssignDialog(Map center) {
-    Map? selectedStaff;
-    final busCtrl = TextEditingController(text: '${center['busNo'] ?? ''}');
-    final unassigned = _unassigned;
+  Map? selectedStaff;
+  final busCtrl    = TextEditingController(text: '${center['busNo'] ?? ''}');
+  final searchCtrl = TextEditingController();
+  final unassigned = _unassigned;
+  List filtered    = unassigned;
 
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 460),
-          child: StatefulBuilder(
-            builder: (ctx, ss) => Container(
-              decoration: BoxDecoration(
-                color: kBg, borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: kBorder, width: 1.2),
-              ),
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
-                dlgHeader('Assign Staff', Icons.how_to_vote_outlined, ctx),
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                    // Center info banner
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: kSurface, borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: kBorder.withOpacity(0.5)),
-                      ),
-                      child: Row(children: [
-                        TypeBadge(type: '${center['centerType'] ?? 'C'}'),
-                        const SizedBox(width: 10),
-                        Expanded(child: Column(
+  showDialog(
+    context: context,
+    builder: (ctx) => Dialog(
+      backgroundColor: Colors.transparent,
+      insetPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 24),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: StatefulBuilder(
+          builder: (ctx, ss) {
+            void filterStaff(String q) {
+              ss(() {
+                filtered = q.isEmpty
+                    ? unassigned
+                    : unassigned.where((s) =>
+                        '${s['name']}'.toLowerCase().contains(q.toLowerCase())      ||
+                        '${s['pno']}'.toLowerCase().contains(q.toLowerCase())       ||
+                        '${s['thana']}'.toLowerCase().contains(q.toLowerCase())     ||
+                        '${s['user_rank']}'.toLowerCase().contains(q.toLowerCase())).toList();
+              });
+            }
+
+            // ⬇️ Key fix: listen to keyboard height
+            final keyboardHeight = MediaQuery.of(ctx).viewInsets.bottom;
+
+            return AnimatedPadding(
+              duration: const Duration(milliseconds: 150),
+              curve: Curves.easeOut,
+              padding: EdgeInsets.only(bottom: keyboardHeight),
+              child: Container(
+                decoration: BoxDecoration(
+                  color: kBg,
+                  borderRadius: BorderRadius.circular(16),
+                  border: Border.all(color: kBorder, width: 1.2),
+                ),
+                // ⬇️ Key fix: constrain max height so it never overflows
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    dlgHeader('Assign Staff', Icons.how_to_vote_outlined, ctx),
+
+                    // ⬇️ Key fix: scrollable body
+                    Flexible(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.all(16),
+                        child: Column(
                           crossAxisAlignment: CrossAxisAlignment.start,
                           children: [
-                            Text('${center['name']}', style: const TextStyle(
-                                color: kDark, fontWeight: FontWeight.w700,
-                                fontSize: 13)),
-                            Text('${center['thana']} • ${center['gpName']}',
-                                style: const TextStyle(
-                                    color: kSubtle, fontSize: 11)),
-                          ],
-                        )),
-                      ]),
-                    ),
-                    const SizedBox(height: 16),
 
-                    // Available staff count
-                    Row(children: [
-                      const Icon(Icons.people_outline, size: 14, color: kSubtle),
-                      const SizedBox(width: 6),
-                      Text('${unassigned.length} unassigned staff available',
-                          style: const TextStyle(
-                              color: kSubtle, fontSize: 12,
-                              fontWeight: FontWeight.w600)),
-                    ]),
-                    const SizedBox(height: 10),
-
-                    // Staff Dropdown
-                    unassigned.isEmpty
-                        ? Container(
-                            padding: const EdgeInsets.all(12),
-                            decoration: BoxDecoration(
-                              color: kError.withOpacity(0.05),
-                              borderRadius: BorderRadius.circular(10),
-                              border: Border.all(color: kError.withOpacity(0.3)),
-                            ),
-                            child: const Row(children: [
-                              Icon(Icons.warning_amber_rounded,
-                                  color: kError, size: 16),
-                              SizedBox(width: 8),
-                              Text('No unassigned staff available',
-                                  style: TextStyle(color: kError, fontSize: 12)),
-                            ]),
-                          )
-                        : DropdownButtonFormField<Map>(
-                            value: selectedStaff,
-                            isExpanded: true,
-                            dropdownColor: kBg,
-                            decoration: InputDecoration(
-                              labelText: 'Select Staff Member',
-                              labelStyle: const TextStyle(color: kSubtle),
-                              prefixIcon: const Icon(Icons.badge_outlined,
-                                  size: 18, color: kPrimary),
-                              filled: true, fillColor: Colors.white,
-                              border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(color: kBorder)),
-                              enabledBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(color: kBorder)),
-                              focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(10),
-                                  borderSide: const BorderSide(
-                                      color: kPrimary, width: 2)),
-                              isDense: true,
-                              contentPadding: const EdgeInsets.symmetric(
-                                  horizontal: 12, vertical: 12),
-                            ),
-                            items: unassigned.map((s) => DropdownMenuItem<Map>(
-                              value: s,
+                            // Center info banner
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                              decoration: BoxDecoration(
+                                color: kSurface,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(color: kBorder.withOpacity(0.5)),
+                              ),
                               child: Row(children: [
-                                Container(
-                                  width: 28, height: 28,
-                                  decoration: BoxDecoration(
-                                    color: kSurface, shape: BoxShape.circle,
-                                    border: Border.all(color: kBorder)),
-                                  child: Center(child: Text(
-                                    '${s['name']}'[0].toUpperCase(),
-                                    style: const TextStyle(
-                                        color: kPrimary, fontSize: 12,
-                                        fontWeight: FontWeight.w800))),
-                                ),
+                                TypeBadge(type: '${center['centerType'] ?? 'C'}'),
                                 const SizedBox(width: 10),
                                 Expanded(child: Column(
                                   crossAxisAlignment: CrossAxisAlignment.start,
-                                  mainAxisAlignment: MainAxisAlignment.center,
                                   children: [
-                                    Text('${s['name']}',
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(
-                                            color: kDark, fontSize: 13,
-                                            fontWeight: FontWeight.w600)),
-                                    Text('PNO: ${s['pno']} • ${s['thana']}',
-                                        style: const TextStyle(
-                                            color: kSubtle, fontSize: 10)),
+                                    Text('${center['name']}', style: const TextStyle(
+                                        color: kDark, fontWeight: FontWeight.w700, fontSize: 13)),
+                                    Text('${center['thana']} • ${center['gpName']}',
+                                        style: const TextStyle(color: kSubtle, fontSize: 11)),
                                   ],
                                 )),
                               ]),
-                            )).toList(),
-                            onChanged: (v) => ss(() => selectedStaff = v),
-                          ),
+                            ),
+                            const SizedBox(height: 14),
 
-                    const SizedBox(height: 12),
-                    AppTextField(label: 'Bus Number',
-                        controller: busCtrl,
-                        prefixIcon: Icons.directions_bus_outlined),
-                    const SizedBox(height: 4),
+                            // Staff section
+                            unassigned.isEmpty
+                                ? Container(
+                                    padding: const EdgeInsets.all(12),
+                                    decoration: BoxDecoration(
+                                      color: kError.withOpacity(0.05),
+                                      borderRadius: BorderRadius.circular(10),
+                                      border: Border.all(color: kError.withOpacity(0.3)),
+                                    ),
+                                    child: const Row(children: [
+                                      Icon(Icons.warning_amber_rounded, color: kError, size: 16),
+                                      SizedBox(width: 8),
+                                      Text('No unassigned staff available',
+                                          style: TextStyle(color: kError, fontSize: 12)),
+                                    ]),
+                                  )
+                                : Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-                    Row(children: [
-                      Expanded(
-                        child: OutlinedButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          style: OutlinedButton.styleFrom(
-                            foregroundColor: kSubtle,
-                            side: const BorderSide(color: kBorder),
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                          child: const Text('Cancel'),
+                                    // Search field
+                                    TextField(
+                                      controller: searchCtrl,
+                                      onChanged: filterStaff,
+                                      style: const TextStyle(color: kDark, fontSize: 13),
+                                      decoration: InputDecoration(
+                                        hintText: 'Search by name, PNO, thana, rank...',
+                                        hintStyle: const TextStyle(color: kSubtle, fontSize: 12),
+                                        prefixIcon: const Icon(Icons.search, color: kSubtle, size: 18),
+                                        suffixIcon: searchCtrl.text.isNotEmpty
+                                            ? IconButton(
+                                                icon: const Icon(Icons.clear, size: 16, color: kSubtle),
+                                                onPressed: () { searchCtrl.clear(); filterStaff(''); })
+                                            : null,
+                                        filled: true, fillColor: Colors.white, isDense: true,
+                                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                                        border: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                            borderSide: const BorderSide(color: kBorder)),
+                                        enabledBorder: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                            borderSide: const BorderSide(color: kBorder)),
+                                        focusedBorder: OutlineInputBorder(
+                                            borderRadius: BorderRadius.circular(10),
+                                            borderSide: const BorderSide(color: kPrimary, width: 2)),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 8),
+
+                                    // Staff list — fixed height, internally scrollable
+                                    Container(
+                                      height: 180, // fixed, won't grow
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius: BorderRadius.circular(10),
+                                        border: Border.all(color: kBorder),
+                                      ),
+                                      child: filtered.isEmpty
+                                          ? const Center(child: Text('No staff found',
+                                              style: TextStyle(color: kSubtle, fontSize: 12)))
+                                          : ListView.separated(
+                                              padding: const EdgeInsets.symmetric(vertical: 4),
+                                              itemCount: filtered.length,
+                                              separatorBuilder: (_, __) =>
+                                                  Divider(height: 1, color: kBorder.withOpacity(0.5)),
+                                              itemBuilder: (_, i) {
+                                                final s = filtered[i];
+                                                final isSelected = selectedStaff?['id'] == s['id'];
+                                                return InkWell(
+                                                  onTap: () => ss(() => selectedStaff = isSelected ? null : s),
+                                                  child: Container(
+                                                    padding: const EdgeInsets.symmetric(
+                                                        horizontal: 12, vertical: 9),
+                                                    color: isSelected
+                                                        ? kPrimary.withOpacity(0.07)
+                                                        : Colors.transparent,
+                                                    child: Row(children: [
+                                                      Container(
+                                                        width: 32, height: 32,
+                                                        decoration: BoxDecoration(
+                                                          color: isSelected
+                                                              ? kPrimary.withOpacity(0.15)
+                                                              : kSurface,
+                                                          shape: BoxShape.circle,
+                                                          border: Border.all(
+                                                              color: isSelected ? kPrimary : kBorder)),
+                                                        child: Center(child: Text(
+                                                          '${s['name']}'[0].toUpperCase(),
+                                                          style: TextStyle(
+                                                              color: isSelected ? kPrimary : kSubtle,
+                                                              fontSize: 13,
+                                                              fontWeight: FontWeight.w800))),
+                                                      ),
+                                                      const SizedBox(width: 10),
+                                                      Expanded(child: Column(
+                                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                                        children: [
+                                                          Text('${s['name']}', style: TextStyle(
+                                                              color: isSelected ? kPrimary : kDark,
+                                                              fontSize: 13,
+                                                              fontWeight: FontWeight.w600)),
+                                                          Text(
+                                                            'PNO: ${s['pno']} • ${s['thana']} • ${s['user_rank'] ?? ''}',
+                                                            style: const TextStyle(
+                                                                color: kSubtle, fontSize: 10),
+                                                            overflow: TextOverflow.ellipsis,
+                                                          ),
+                                                        ],
+                                                      )),
+                                                      if (isSelected)
+                                                        const Icon(Icons.check_circle,
+                                                            color: kPrimary, size: 18),
+                                                    ]),
+                                                  ),
+                                                );
+                                              },
+                                            ),
+                                    ),
+
+                                    Padding(
+                                      padding: const EdgeInsets.only(top: 5),
+                                      child: Text(
+                                        '${filtered.length} of ${unassigned.length} unassigned staff',
+                                        style: const TextStyle(color: kSubtle, fontSize: 11)),
+                                    ),
+                                  ]),
+
+                            const SizedBox(height: 12),
+                            AppTextField(
+                                label: 'Bus Number',
+                                controller: busCtrl,
+                                prefixIcon: Icons.directions_bus_outlined),
+                            const SizedBox(height: 14),
+
+                            // Action buttons
+                            Row(children: [
+                              Expanded(
+                                child: OutlinedButton(
+                                  onPressed: () => Navigator.pop(ctx),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: kSubtle,
+                                    side: const BorderSide(color: kBorder),
+                                    padding: const EdgeInsets.symmetric(vertical: 13),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  child: const Text('Cancel'),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: ElevatedButton(
+                                  style: ElevatedButton.styleFrom(
+                                    backgroundColor: selectedStaff != null ? kPrimary : kSubtle,
+                                    foregroundColor: Colors.white,
+                                    padding: const EdgeInsets.symmetric(vertical: 13),
+                                    shape: RoundedRectangleBorder(
+                                        borderRadius: BorderRadius.circular(10)),
+                                  ),
+                                  onPressed: selectedStaff == null
+                                      ? null
+                                      : () async {
+                                          final token = await AuthService.getToken();
+                                          await ApiService.post('/admin/duties', {
+                                            'staffId': selectedStaff!['id'],
+                                            'centerId': center['id'],
+                                            'busNo': busCtrl.text,
+                                          }, token: token);
+                                          Navigator.pop(ctx);
+                                          _load();
+                                          if (mounted) showSnack(context, 'Duty assigned');
+                                        },
+                                  child: const Text('Assign'),
+                                ),
+                              ),
+                            ]),
+                          ],
                         ),
                       ),
-                      const SizedBox(width: 12),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: selectedStaff == null
-                                ? kSubtle : kPrimary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10)),
-                          ),
-                          onPressed: selectedStaff == null || unassigned.isEmpty
-                              ? null
-                              : () async {
-                                  final token = await AuthService.getToken();
-                                  await ApiService.post('/admin/duties', {
-                                    'staffId': selectedStaff!['id'],
-                                    'centerId': center['id'],
-                                    'busNo': busCtrl.text,
-                                  }, token: token);
-                                  Navigator.pop(ctx);
-                                  _load();
-                                  if (mounted) showSnack(context, 'Duty assigned');
-                                },
-                          child: const Text('Assign'),
-                        ),
-                      ),
-                    ]),
-                  ]),
+                    ),
+                  ],
                 ),
-              ]),
-            ),
-          ),
+              ),
+            );
+          },
         ),
       ),
-    );
-  }
+    ),
+  );
+}
 
   // ── Duties Dialog ─────────────────────────────────────────────────────────
   void _showDutiesDialog(Map center) async {
