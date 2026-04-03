@@ -837,6 +837,7 @@ def add_staff():
 
     name = body.get("name", "").strip()
     pno  = body.get("pno", "").strip()
+    rank = str(body.get("rank", "")).strip()
 
     if not name or not pno:
         return err("name and pno required")
@@ -900,6 +901,7 @@ def add_staff_bulk():
             for s in items:
                 pno  = str(s.get("pno", "") or "").strip()
                 name = str(s.get("name", "") or "").strip()
+                rank = str(s.get("rank", "") or "").strip()
 
                 if not pno or not name:
                     skipped.append(pno or "(empty)")
@@ -920,8 +922,8 @@ def add_staff_bulk():
 
                 cur.execute("""
                     INSERT INTO users
-                        (name, pno, username, password, mobile, thana, district, role, is_active, created_by)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                        (name, pno, username, password, mobile, thana, district, user_rank, role, is_active, created_by)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
                 """, (
                     name,
                     pno,
@@ -929,7 +931,8 @@ def add_staff_bulk():
                     generate_password_hash(pno),
                     str(s.get("mobile") or ""),
                     str(s.get("thana") or ""),
-                    district,                  # ✅ FIXED
+                    district,
+                    rank,                  # ✅ FIXED
                     _admin_id(),
                 ))
 
@@ -947,6 +950,54 @@ def add_staff_bulk():
         "skipped": skipped,
         "total": len(items)
     }, f"{added} staff added")
+
+
+@admin_bp.route("/staff/<int:staff_id>", methods=["PUT"])
+@admin_required
+def update_staff(staff_id):
+    body = request.get_json() or {}
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE users
+                SET name=%s,
+                    pno=%s,
+                    mobile=%s,
+                    thana=%s,
+                    user_rank=%s
+                WHERE id=%s AND role='staff'
+            """, (
+                body.get("name", ""),
+                body.get("pno", ""),
+                body.get("mobile", ""),
+                body.get("thana", ""),
+                body.get("rank", ""),
+                staff_id,
+            ))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, "Staff updated")
+
+@admin_bp.route("/staff/<int:staff_id>", methods=["DELETE"])
+@admin_required
+def delete_staff(staff_id):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM users WHERE id=%s AND role='staff'",
+                (staff_id,)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, "Staff deleted")
+
 
 
 # ══════════════════════════════════════════════════════════════════════════════
