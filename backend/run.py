@@ -9,7 +9,7 @@ from app.routes.master      import master_bp
 from app.routes.super_admin import super_admin_bp
 from app.routes.admin       import admin_bp
 from app.routes.staff       import staff_bp
-
+from app.routes.hierarchy   import hierarchy
 
 def create_app():
     app = Flask(__name__)
@@ -24,6 +24,7 @@ def create_app():
     app.register_blueprint(super_admin_bp)   # /super/...
     app.register_blueprint(admin_bp)         # /admin/...
     app.register_blueprint(staff_bp) 
+    app.register_blueprint(hierarchy)
     # ── Health ping (no auth) ────────────────────────────────────────────────
     @app.route("/ping")
     def ping():
