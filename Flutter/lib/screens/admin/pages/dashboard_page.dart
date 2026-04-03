@@ -2,9 +2,11 @@ import 'package:flutter/material.dart';
 import '../../../services/api_service.dart';
 import '../../../services/auth_service.dart';
 import '../core/widgets.dart';
+import 'hierarchy_report_page.dart';
 
 class DashboardPage extends StatefulWidget {
   const DashboardPage({super.key});
+
   @override
   State<DashboardPage> createState() => _DashboardPageState();
 }
@@ -15,49 +17,58 @@ class _DashboardPageState extends State<DashboardPage> {
   bool _loading = true;
 
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _load();
+  }
 
+  // ─────────────────────────────────────────────
+  // LOAD DATA
+  // ─────────────────────────────────────────────
   Future<void> _load() async {
-  setState(() => _loading = true);
+    setState(() => _loading = true);
 
-  try {
-    final token = await AuthService.getToken();
+    try {
+      final token = await AuthService.getToken();
 
-    final s = await ApiService.get('/admin/overview', token: token);
-    final d = await ApiService.get('/admin/duties', token: token);
+      final s = await ApiService.get('/admin/overview', token: token);
+      final d = await ApiService.get('/admin/duties', token: token);
 
-    setState(() {
-      _stats  = s['data'];
-      _duties = d['data'] ?? [];
-      _loading = false;
-    });
+      setState(() {
+        _stats = s['data'];
+        _duties = d['data'] ?? [];
+        _loading = false;
+      });
+    } catch (e) {
+      setState(() => _loading = false);
 
-  } catch (e) {
-    setState(() => _loading = false);
-
-    // 🔥 IMPORTANT FIX (ADD THIS)
-    if (e.toString().contains("Session expired")) {
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(
-          context,
-          '/login',
-          (route) => false,
-        );
+      // 🔥 SESSION EXPIRED FIX
+      if (e.toString().contains("Session expired")) {
+        if (mounted) {
+          Navigator.pushNamedAndRemoveUntil(
+            context,
+            '/login',
+            (route) => false,
+          );
+        }
+        return;
       }
-      return;
-    }
 
-    // normal error
-    if (mounted) {
-      showSnack(context, 'Failed to load: $e', error: true);
+      if (mounted) {
+        showSnack(context, 'Failed to load: $e', error: true);
+      }
     }
   }
-}
 
+  // ─────────────────────────────────────────────
+  // UI
+  // ─────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     if (_loading) {
-      return const Center(child: CircularProgressIndicator(color: kPrimary));
+      return const Center(
+        child: CircularProgressIndicator(color: kPrimary),
+      );
     }
 
     return RefreshIndicator(
@@ -66,40 +77,122 @@ class _DashboardPageState extends State<DashboardPage> {
       child: ListView(
         padding: const EdgeInsets.all(16),
         children: [
-          // ── Stats ─────────────────────────────────────────────────────────
+          // ── STATS ─────────────────────────────
           if (_stats != null)
             LayoutBuilder(builder: (_, c) {
               final cols = c.maxWidth > 500 ? 4 : 2;
               return GridView.count(
                 shrinkWrap: true,
                 crossAxisCount: cols,
-                crossAxisSpacing: 12, mainAxisSpacing: 12,
+                crossAxisSpacing: 12,
+                mainAxisSpacing: 12,
                 childAspectRatio: 1.4,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  StatCard(label: 'Super Zones',
-                      value: '${_stats!['superZones'] ?? 0}',
-                      icon: Icons.layers_outlined, color: kPrimary),
-                  StatCard(label: 'Total Booths',
-                      value: '${_stats!['totalBooths'] ?? 0}',
-                      icon: Icons.location_on_outlined, color: kSuccess),
-                  StatCard(label: 'Total Staff',
-                      value: '${_stats!['totalStaff'] ?? 0}',
-                      icon: Icons.badge_outlined, color: kAccent),
-                  StatCard(label: 'Assigned',
-                      value: '${_stats!['assignedDuties'] ?? 0}',
-                      icon: Icons.how_to_vote_outlined, color: kInfo),
+                  StatCard(
+                    label: 'Super Zones',
+                    value: '${_stats!['superZones'] ?? 0}',
+                    icon: Icons.layers_outlined,
+                    color: kPrimary,
+                  ),
+                  StatCard(
+                    label: 'Total Booths',
+                    value: '${_stats!['totalBooths'] ?? 0}',
+                    icon: Icons.location_on_outlined,
+                    color: kSuccess,
+                  ),
+                  StatCard(
+                    label: 'Total Staff',
+                    value: '${_stats!['totalStaff'] ?? 0}',
+                    icon: Icons.badge_outlined,
+                    color: kAccent,
+                  ),
+                  StatCard(
+                    label: 'Assigned',
+                    value: '${_stats!['assignedDuties'] ?? 0}',
+                    icon: Icons.how_to_vote_outlined,
+                    color: kInfo,
+                  ),
                 ],
               );
             }),
 
-          const SizedBox(height: 20),
+          // ── ✅ HIERARCHY REPORT BUTTON ─────────────────────────────
+          Padding(
+            padding: const EdgeInsets.only(top: 16, bottom: 16),
+            child: InkWell(
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const HierarchyReportPage(),
+                ),
+              ),
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F2B5B), Color(0xFF1A3D7C)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF0F2B5B).withOpacity(0.3),
+                      blurRadius: 12,
+                      offset: const Offset(0, 4),
+                    )
+                  ],
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.table_chart_outlined,
+                        color: Colors.white, size: 22),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'प्रशासनिक पदानुक्रम रिपोर्ट',
+                            style: TextStyle(
+                              color: Colors.white,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          Text(
+                            'Super Zone · Sector · Panchayat Tables',
+                            style: TextStyle(
+                              color: Colors.white60,
+                              fontSize: 11,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right,
+                        color: Colors.white54, size: 20),
+                  ],
+                ),
+              ),
+            ),
+          ),
+
+          const SizedBox(height: 10),
+
+          // ── RECENT DUTIES ─────────────────────────────
           const SectionHeader('Recent Duty Assignments'),
 
           if (_duties.isEmpty)
-            emptyState('No duties assigned yet', Icons.how_to_vote_outlined)
+            emptyState(
+              'No duties assigned yet',
+              Icons.how_to_vote_outlined,
+            )
           else
             Container(
+              margin: const EdgeInsets.only(top: 10),
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
@@ -110,8 +203,12 @@ class _DashboardPageState extends State<DashboardPage> {
                 child: DataTable(
                   headingRowColor: WidgetStateProperty.all(kSurface),
                   headingTextStyle: const TextStyle(
-                      color: kDark, fontWeight: FontWeight.w800, fontSize: 12),
-                  dataTextStyle: const TextStyle(color: kDark, fontSize: 12),
+                    color: kDark,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 12,
+                  ),
+                  dataTextStyle:
+                      const TextStyle(color: kDark, fontSize: 12),
                   columnSpacing: 16,
                   columns: const [
                     DataColumn(label: Text('Name')),
@@ -120,15 +217,23 @@ class _DashboardPageState extends State<DashboardPage> {
                     DataColumn(label: Text('Super Zone')),
                     DataColumn(label: Text('Type')),
                   ],
-                  rows: _duties.take(30).map((d) => DataRow(cells: [
-                    DataCell(Text('${d['name']}')),
-                    DataCell(Text('${d['pno']}')),
-                    DataCell(Text('${d['centerName'] ?? '-'}',
-                        overflow: TextOverflow.ellipsis)),
-                    DataCell(Text('${d['superZoneName'] ?? '-'}',
-                        overflow: TextOverflow.ellipsis)),
-                    DataCell(TypeBadge(type: '${d['centerType'] ?? 'C'}')),
-                  ])).toList(),
+                  rows: _duties.take(30).map((d) {
+                    return DataRow(cells: [
+                      DataCell(Text('${d['name']}')),
+                      DataCell(Text('${d['pno']}')),
+                      DataCell(Text(
+                        '${d['centerName'] ?? '-'}',
+                        overflow: TextOverflow.ellipsis,
+                      )),
+                      DataCell(Text(
+                        '${d['superZoneName'] ?? '-'}',
+                        overflow: TextOverflow.ellipsis,
+                      )),
+                      DataCell(
+                        TypeBadge(type: '${d['centerType'] ?? 'C'}'),
+                      ),
+                    ]);
+                  }).toList(),
                 ),
               ),
             ),

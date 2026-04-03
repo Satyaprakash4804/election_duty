@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
-
+import '../admin/pages/hierarchy_report_page.dart';
 // ─────────────────────────────────────────────
 //  PALETTE
 // ─────────────────────────────────────────────
@@ -564,6 +564,35 @@ class _SuperDashboardState extends State<SuperDashboard>
                 ],
               );
             }),
+             // After the GridView in _buildOverview, add:
+const SizedBox(height: 16),
+GestureDetector(
+  onTap: () => Navigator.push(context,
+      MaterialPageRoute(builder: (_) => const HierarchyReportPage())),
+  child: Container(
+    padding: const EdgeInsets.all(16),
+    decoration: BoxDecoration(
+      gradient: const LinearGradient(
+          colors: [Color(0xFF0F2B5B), Color(0xFF1A3D7C)]),
+      borderRadius: BorderRadius.circular(12),
+      boxShadow: [BoxShadow(
+          color: kPrimary.withOpacity(0.25),
+          blurRadius: 12, offset: const Offset(0, 4))],
+    ),
+    child: const Row(children: [
+      Icon(Icons.table_chart_outlined, color: Colors.white, size: 22),
+      SizedBox(width: 14),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text('Hierarchy Report', style: TextStyle(
+            color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
+        Text('Super Zone · Sector · Panchayat',
+            style: TextStyle(color: Colors.white60, fontSize: 11)),
+      ])),
+      Icon(Icons.chevron_right, color: Colors.white54),
+    ]),
+  ),
+),
+
             const SizedBox(height: 20),
 
             _sectionHeader('District Summary'),
@@ -579,6 +608,9 @@ class _SuperDashboardState extends State<SuperDashboard>
       ),
     );
   }
+
+  
+
 
   // ── TAB 1: ADMIN LIST ─────────────────────────
   Widget _buildAdminList() {
