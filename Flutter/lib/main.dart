@@ -1,24 +1,54 @@
 import 'package:flutter/material.dart';
+import 'services/auth_service.dart';
+
+// 🔹 ADMIN PAGES
+import 'screens/admin/admin_dashboard.dart';
+
+// 🔹 LOGIN PAGE
+import 'screens/auth/login_page.dart';
+import 'screens/master_admin/master_dashboard.dart';
+import 'screens/super_admin/super_dashboard.dart';
+
+// 🔥 Firebase
 import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
 
-import 'services/auth_service.dart';
+// 🔔 LOCAL NOTIFICATIONS (IMPORTANT)
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 
-// ADMIN PAGES
-import 'screens/admin/admin_dashboard.dart';
-import 'screens/master_admin/master_dashboard.dart';
-import 'screens/super_admin/super_dashboard.dart';
+// ✅ GLOBAL INSTANCE (REQUIRED)
+final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
+    FlutterLocalNotificationsPlugin();
 
-// AUTH
-import 'screens/auth/login_page.dart';
+/// 🔥 BACKGROUND HANDLER
+@pragma('vm:entry-point')
+Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
+  await Firebase.initializeApp();
+  print("🔔 Background message: ${message.messageId}");
+}
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
 
+  // 🔥 Firebase init
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+
+  // 🔥 Background messages
+  FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
+
+  // // 🔔 Initialize Local Notifications
+  // const AndroidInitializationSettings androidInitSettings =
+  //     AndroidInitializationSettings('@mipmap/ic_launcher');
+
+  // const InitializationSettings initSettings =
+  //     InitializationSettings(android: androidInitSettings);
+
+  // await flutterLocalNotificationsPlugin.initialize(
+  //   initializationSettings: initSettings,
+  // );
 
   runApp(const MyApp());
 }
@@ -35,12 +65,67 @@ class _MyAppState extends State<MyApp> {
   @override
   void initState() {
     super.initState();
+
     getToken();
+
+    // 🔐 Permission (important Android 13+)
+    FirebaseMessaging.instance.requestPermission();
+
+    setupNotificationChannel();
+
+    // 🔔 FOREGROUND MESSAGE LISTENER
+    FirebaseMessaging.onMessage.listen((RemoteMessage message) {
+      print("🔔 Foreground message received");
+
+      if (message.notification != null) {
+        print("Title: ${message.notification!.title}");
+        print("Body: ${message.notification!.body}");
+
+        showNotification(message);
+      }
+    });
   }
 
+  /// 🔑 GET FCM TOKEN
   Future<void> getToken() async {
     String? token = await FirebaseMessaging.instance.getToken();
-    print("FCM TOKEN: $token");
+    print("🔥 FCM TOKEN: $token");
+  }
+
+  /// 🔔 CREATE NOTIFICATION CHANNEL (ANDROID)
+  Future<void> setupNotificationChannel() async {
+    const AndroidNotificationChannel channel = AndroidNotificationChannel(
+      'channel_id',
+      'channel_name',
+      description: 'This channel is used for important notifications',
+      importance: Importance.high,
+    );
+
+    await flutterLocalNotificationsPlugin
+        .resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>()
+        ?.createNotificationChannel(channel);
+  }
+
+  /// 🔔 SHOW LOCAL NOTIFICATION
+  Future<void> showNotification(RemoteMessage message) async {
+    const AndroidNotificationDetails androidDetails =
+        AndroidNotificationDetails(
+      'channel_id',
+      'channel_name',
+      importance: Importance.high,
+      priority: Priority.high,
+    );
+
+    const NotificationDetails notificationDetails =
+        NotificationDetails(android: androidDetails);
+
+    await flutterLocalNotificationsPlugin.show(
+      id: 0,
+      title: message.notification?.title ?? "No Title",
+      body: message.notification?.body ?? "No Body",
+      notificationDetails: notificationDetails,
+    );
   }
 
   @override
@@ -55,9 +140,11 @@ class _MyAppState extends State<MyApp> {
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1565C0),
           foregroundColor: Colors.white,
+          elevation: 2,
         ),
       ),
 
+      // ✅ ROUTES
       routes: {
         '/login': (context) => const LoginPage(),
         '/admin': (context) => const AdminDashboard(),
@@ -65,14 +152,13 @@ class _MyAppState extends State<MyApp> {
         '/super': (context) => const SuperDashboard(),
       },
 
+      // ✅ AUTO LOGIN CHECK
       home: const AuthCheck(),
     );
   }
 }
 
-//
-// AUTH CHECK
-//
+/// 🔥 AUTH CHECK (UNCHANGED)
 class AuthCheck extends StatelessWidget {
   const AuthCheck({super.key});
 

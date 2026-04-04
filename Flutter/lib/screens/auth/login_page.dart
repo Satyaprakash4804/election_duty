@@ -164,10 +164,11 @@ class _ElectionEmblem extends StatelessWidget {
               ),
             ],
           ),
-          child: const Icon(
-            Icons.how_to_vote_rounded,
-            color: kBorder,
-            size: 38,
+          child: ClipOval(
+            child: Image.asset(
+              'assets/images/logo.png',
+              fit: BoxFit.cover,
+            ),
           ),
         ),
         const SizedBox(height: 14),
@@ -461,6 +462,9 @@ class _LoginPageState extends State<LoginPage>
                                 crossAxisAlignment:
                                     CrossAxisAlignment.stretch,
                                 children: [
+
+                                 
+                                  
 
                                   // Emblem
                                   const _ElectionEmblem(),
