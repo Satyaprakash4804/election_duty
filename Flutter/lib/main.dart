@@ -1,19 +1,47 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_messaging/firebase_messaging.dart';
+import 'firebase_options.dart';
+
 import 'services/auth_service.dart';
 
-// 🔹 ADMIN PAGES
+// ADMIN PAGES
 import 'screens/admin/admin_dashboard.dart';
-
-// 🔹 LOGIN PAGE (CREATE THIS FILE IF NOT EXISTS)
-import 'screens/auth/login_page.dart';
 import 'screens/master_admin/master_dashboard.dart';
 import 'screens/super_admin/super_dashboard.dart';
-void main() {
+
+// AUTH
+import 'screens/auth/login_page.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
+
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+
+  @override
+  void initState() {
+    super.initState();
+    getToken();
+  }
+
+  Future<void> getToken() async {
+    String? token = await FirebaseMessaging.instance.getToken();
+    print("FCM TOKEN: $token");
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -27,27 +55,23 @@ class MyApp extends StatelessWidget {
         appBarTheme: const AppBarTheme(
           backgroundColor: Color(0xFF1565C0),
           foregroundColor: Colors.white,
-          elevation: 2,
         ),
       ),
 
-      // ✅ ROUTES (VERY IMPORTANT)
       routes: {
         '/login': (context) => const LoginPage(),
         '/admin': (context) => const AdminDashboard(),
         '/master': (context) => const MasterDashboard(),
         '/super': (context) => const SuperDashboard(),
-      
       },
 
-      // ✅ AUTO LOGIN CHECK
       home: const AuthCheck(),
     );
   }
 }
 
 //
-// 🔥 AUTH CHECK (DECIDES WHERE TO GO)
+// AUTH CHECK
 //
 class AuthCheck extends StatelessWidget {
   const AuthCheck({super.key});
@@ -74,7 +98,6 @@ class AuthCheck extends StatelessWidget {
           return const LoginPage();
         }
 
-        // 🔥 ROLE BASED REDIRECT
         switch (role) {
           case "MASTER":
             return const MasterDashboard();
@@ -84,8 +107,6 @@ class AuthCheck extends StatelessWidget {
 
           case "ADMIN":
             return const AdminDashboard();
-
-          
 
           default:
             return const LoginPage();
