@@ -5,14 +5,16 @@ from werkzeug.security import check_password_hash, generate_password_hash
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/api/staff")
 
-
 @staff_bp.route("/my-duty", methods=["GET"])
 @login_required
 def my_duty():
     staff_id = request.user["id"]
     conn = get_db()
+
     try:
         with conn.cursor() as cur:
+
+            # ─── MAIN DUTY ───
             cur.execute("""
                 SELECT
                     da.id AS duty_id,
@@ -24,13 +26,21 @@ def my_duty():
                     ms.center_type,
                     ms.latitude,
                     ms.longitude,
+
+                    gp.id AS gp_id,
+                    s.id  AS sector_id,
+                    z.id  AS zone_id,
+                    sz.id AS super_zone_id,
+
                     gp.name  AS gp_name,
                     gp.address AS gp_address,
                     s.name   AS sector_name,
                     z.name   AS zone_name,
                     z.hq_address AS zone_hq,
                     sz.name  AS super_zone_name,
+
                     u2.name  AS assigned_by_name
+
                 FROM duty_assignments da
                 JOIN matdan_sthal ms      ON ms.id = da.sthal_id
                 JOIN gram_panchayats gp   ON gp.id = ms.gram_panchayat_id
@@ -42,48 +52,93 @@ def my_duty():
             """, (staff_id,))
             row = cur.fetchone()
 
-            # All staff at the same center
-            other_staff = []
-            if row:
-                cur.execute("""
-                    SELECT u.name, u.pno, u.mobile, u.thana
-                    FROM duty_assignments da2
-                    JOIN users u ON u.id = da2.staff_id
-                    WHERE da2.sthal_id = %s
-                    ORDER BY u.name
-                """, (row["center_id"],))
-                other_staff = cur.fetchall()
+            if not row:
+                return ok(None, "No duty assigned yet")
+
+            # ─── ALL STAFF (FIXED rank bug) ───
+            cur.execute("""
+                SELECT 
+                    u.name,
+                    u.pno,
+                    u.mobile,
+                    u.thana,
+                    u.district,
+                    u.user_rank
+                FROM duty_assignments da2
+                JOIN users u ON u.id = da2.staff_id
+                WHERE da2.sthal_id = %s
+                ORDER BY u.name
+            """, (row["center_id"],))
+            other_staff = cur.fetchall()
+
+            # ─── SECTOR OFFICERS ───
+            cur.execute("""
+                SELECT 
+                    COALESCE(u.name, so.name) AS name,
+                    COALESCE(u.pno, so.pno) AS pno,
+                    COALESCE(u.mobile, so.mobile) AS mobile,
+                    COALESCE(u.user_rank, so.user_rank) AS user_rank
+                FROM sector_officers so
+                LEFT JOIN users u ON u.id = so.user_id
+                WHERE so.sector_id = %s
+            """, (row["sector_id"],))
+            sector_officers = cur.fetchall()
+
+            # ─── ZONAL OFFICERS ───
+            cur.execute("""
+                SELECT 
+                    COALESCE(u.name, zo.name) AS name,
+                    COALESCE(u.pno, zo.pno) AS pno,
+                    COALESCE(u.mobile, zo.mobile) AS mobile,
+                    COALESCE(u.user_rank, zo.user_rank) AS user_rank
+                FROM zonal_officers zo
+                LEFT JOIN users u ON u.id = zo.user_id
+                WHERE zo.zone_id = %s
+            """, (row["zone_id"],))
+            zonal_officers = cur.fetchall()
+
+            # ─── SUPER ZONE OFFICERS (kshetra_officers) ───
+            cur.execute("""
+                SELECT 
+                    COALESCE(u.name, ko.name) AS name,
+                    COALESCE(u.pno, ko.pno) AS pno,
+                    COALESCE(u.mobile, ko.mobile) AS mobile,
+                    COALESCE(u.user_rank, ko.user_rank) AS user_rank
+                FROM kshetra_officers ko
+                LEFT JOIN users u ON u.id = ko.user_id
+                WHERE ko.super_zone_id = %s
+            """, (row["super_zone_id"],))
+            super_officers = cur.fetchall()
+
     finally:
         conn.close()
 
-    if not row:
-        return ok(None, "No duty assigned yet")
-
     return ok({
-        "dutyId":        row["duty_id"],
-        "busNo":         row["bus_no"],
-        "centerId":      row["center_id"],
-        "centerName":    row["center_name"],
+        "dutyId": row["duty_id"],
+        "busNo": row["bus_no"],
+        "centerId": row["center_id"],
+        "centerName": row["center_name"],
         "centerAddress": row["center_address"],
-        "thana":         row["thana"],
-        "centerType":    row["center_type"],
-        "latitude":      float(row["latitude"])  if row["latitude"]  else None,
-        "longitude":     float(row["longitude"]) if row["longitude"] else None,
-        "gpName":        row["gp_name"],
-        "gpAddress":     row["gp_address"],
-        "sectorName":    row["sector_name"],
-        "zoneName":      row["zone_name"],
-        "zoneHq":        row["zone_hq"],
-        "superZoneName": row["super_zone_name"],
-        "assignedBy":    row["assigned_by_name"],
-        "allStaff": [{
-            "name":   s["name"],
-            "pno":    s["pno"],
-            "mobile": s["mobile"],
-            "thana":  s["thana"],
-        } for s in other_staff],
-    })
+        "thana": row["thana"],
+        "centerType": row["center_type"],
+        "latitude": float(row["latitude"]) if row["latitude"] else None,
+        "longitude": float(row["longitude"]) if row["longitude"] else None,
 
+        "gpName": row["gp_name"],
+        "gpAddress": row["gp_address"],
+        "sectorName": row["sector_name"],
+        "zoneName": row["zone_name"],
+        "zoneHq": row["zone_hq"],
+        "superZoneName": row["super_zone_name"],
+        "assignedBy": row["assigned_by_name"],
+
+        "allStaff": other_staff,
+
+        # ✅ FRONTEND FIX
+        "sectorOfficers": sector_officers,
+        "zonalOfficers": zonal_officers,
+        "superOfficers": super_officers,
+    })
 
 @staff_bp.route("/profile", methods=["GET"])
 @login_required

@@ -35,7 +35,50 @@ const NAV = [
   { id: 'password',  label: 'पासवर्ड बदलें',  icon: KeyRound  },
 ]
 
-// ─── Duty Card Print ──────────────────────────────────────────
+// ─── Inline cell helpers (identical to AdminDuties) ───────────
+const TD = ({ children, bold, center, mono, colSpan, rowSpan, style = {} }) => (
+  <td colSpan={colSpan} rowSpan={rowSpan}
+    style={{ border:'1px solid #000', padding:'3px 5px', fontSize:'10px', verticalAlign:'middle',
+      textAlign: center ? 'center' : 'left', fontWeight: bold ? 700 : 400,
+      fontFamily: mono ? 'monospace' : 'inherit', ...style }}>
+    {children}
+  </td>
+)
+
+const TH = ({ children, colSpan, rowSpan, style = {} }) => (
+  <td colSpan={colSpan} rowSpan={rowSpan}
+    style={{ border:'1px solid #000', padding:'3px 5px', fontSize:'10px', fontWeight:700,
+      textAlign:'center', verticalAlign:'middle', background:'#e8e8e8', ...style }}>
+    {children}
+  </td>
+)
+
+// ─── Officer Block (identical to AdminDuties) ─────────────────
+function OfficerBlock({ label, officers }) {
+  return (
+    <table style={{ borderCollapse:'collapse', width:'100%', fontSize:'9.5px' }}>
+      <tbody>
+        <tr>
+          <td colSpan={4} style={{ border:'1px solid #000', background:'#e8e8e8', fontWeight:700,
+            textAlign:'center', padding:'2px 4px' }}>{label}</td>
+        </tr>
+        {(!officers || officers.length === 0) ? (
+          <tr><td colSpan={4} style={{ border:'1px solid #000', padding:'2px 4px',
+            color:'#999', textAlign:'center' }}>—</td></tr>
+        ) : officers.map((o, i) => (
+          <tr key={i}>
+            <td style={{ border:'1px solid #000', padding:'2px 4px', width:'24%' }}>{rh(o.user_rank)}</td>
+            <td style={{ border:'1px solid #000', padding:'2px 4px', fontWeight:600 }}>{v(o.name)}</td>
+            <td style={{ border:'1px solid #000', padding:'2px 4px', fontFamily:'monospace', width:'20%' }}>{v(o.pno)}</td>
+            <td style={{ border:'1px solid #000', padding:'2px 4px', width:'22%' }}>{v(o.mobile)}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  )
+}
+
+// ─── Duty Card Print (identical layout to AdminDuties) ────────
 function DutyCardPrint({ duty, user, onClose }) {
   const printRef = useRef()
 
@@ -52,34 +95,17 @@ function DutyCardPrint({ duty, user, onClose }) {
         body{font-family:'Noto Sans Devanagari',Arial,sans-serif;background:#fff;-webkit-print-color-adjust:exact;print-color-adjust:exact;}
         @page{size:A4 portrait;margin:8mm;}
         table{border-collapse:collapse;width:100%;}
-        td,th{border:1px solid #000;font-size:10px;padding:3px 5px;vertical-align:middle;}
-        img{display:block;}
+        td{border:1px solid #000;font-size:10px;padding:3px 5px;vertical-align:middle;}
       </style></head><body>${content}</body></html>`)
     win.document.close()
     win.onload = () => { win.print(); win.close() }
   }
 
-  const allStaff = duty.allStaff || []
+  const allStaff = duty.allStaff        || []
+  const zonal    = duty.zonalOfficers   || []
+  const sector   = duty.sectorOfficers  || []
+  const superOff = duty.superOfficers   || []
   const sahRows  = Array.from({ length: Math.max(8, allStaff.length) }, (_, i) => allStaff[i] || null)
-
-  const TH = ({ children, colSpan, style }) => (
-    <td colSpan={colSpan} style={{
-      border:'1px solid #000', background:'#e8e8e8', fontWeight:700,
-      fontSize:9, padding:'3px 5px', textAlign:'center', ...style
-    }}>{children}</td>
-  )
-  const TD = ({ children, colSpan, center, bold, mono, style }) => (
-    <td colSpan={colSpan} style={{
-      border:'1px solid #000', padding:'3px 5px',
-      textAlign: center ? 'center' : 'left',
-      fontWeight: bold ? 700 : 400,
-      fontFamily: mono ? 'monospace' : 'inherit',
-      ...style
-    }}>{children}</td>
-  )
-
-  // absolute URL for print window (cross-origin images won't load with relative paths)
-  const logoUrl = `${window.location.origin}/logo/logo.jpeg`
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm p-3">
@@ -120,12 +146,12 @@ function DutyCardPrint({ duty, user, onClose }) {
                   <td colSpan={10} style={{ border:'2px solid #000', padding:'6px 10px' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:10 }}>
 
-                      {/* LEFT — logo */}
-                      <img
-                        src={logoUrl}
-                        alt="लोगो"
-                        style={{ width:60, height:60, objectFit:'contain', flexShrink:0 }}
-                      />
+                      {/* LEFT — logo (circular, identical to AdminDuties) */}
+                      <div style={{ width:54, height:54, border:'2px solid #000', borderRadius:'50%',
+                        overflow:'hidden', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                        <img src="/logo/logo.jpeg" alt="Logo"
+                          style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }} />
+                      </div>
 
                       {/* CENTER — titles */}
                       <div style={{ flex:1, textAlign:'center' }}>
@@ -139,7 +165,7 @@ function DutyCardPrint({ duty, user, onClose }) {
 
                       {/* RIGHT — UP Police circle */}
                       <div style={{
-                        width:60, height:60, border:'2px solid #000', borderRadius:'50%',
+                        width:54, height:54, border:'2px solid #000', borderRadius:'50%',
                         display:'flex', alignItems:'center', justifyContent:'center',
                         fontSize:7, fontWeight:700, textAlign:'center', padding:3, flexShrink:0
                       }}>
@@ -214,12 +240,30 @@ function DutyCardPrint({ duty, user, onClose }) {
                     <TD center style={{ color:'#888', fontSize:9 }}>{i+1}</TD>
                     <TD center style={{ color: s?'#000':'#ccc' }}>{s ? rh(s.rank) : '—'}</TD>
                     <TD colSpan={2} style={{ color: s?'#000':'#ccc', fontWeight: s?500:400 }}>{s ? v(s.name) : '—'}</TD>
-                    <TD center style={{ color: s?'#000':'#ccc', fontFamily:'monospace' }}>{s ? v(s.pno) : '—'}</TD>
+                    <TD center mono style={{ color: s?'#000':'#ccc' }}>{s ? v(s.pno) : '—'}</TD>
                     <TD center style={{ color: s?'#000':'#ccc' }}>{s ? v(s.mobile) : '—'}</TD>
                     <TD colSpan={2} center style={{ color: s?'#000':'#ccc' }}>{s ? v(s.thana) : '—'}</TD>
                     <TD colSpan={2} center style={{ color: s?'#000':'#ccc' }}>{s ? v(s.district) : '—'}</TD>
                   </tr>
                 ))}
+
+                {/* ══ OFFICERS SECTION ══ */}
+                <tr><TH colSpan={10}>अधिकारी विवरण</TH></tr>
+                <tr>
+                  <td colSpan={5} style={{ border:'1px solid #000', padding:0, verticalAlign:'top' }}>
+                    <OfficerBlock label="जोनल अधिकारी" officers={zonal} />
+                  </td>
+                  <td colSpan={5} style={{ border:'1px solid #000', padding:0, verticalAlign:'top' }}>
+                    <OfficerBlock label="सेक्टर अधिकारी" officers={sector} />
+                  </td>
+                </tr>
+                {superOff.length > 0 && (
+                  <tr>
+                    <td colSpan={10} style={{ border:'1px solid #000', padding:0, verticalAlign:'top' }}>
+                      <OfficerBlock label="क्षेत्र अधिकारी (सुपर जोन)" officers={superOff} />
+                    </td>
+                  </tr>
+                )}
 
                 {/* ══ FOOTER ══ */}
                 <tr style={{ background:'#f8f8f8' }}>

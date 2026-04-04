@@ -142,10 +142,11 @@ function DutyCardPrint({ duty, onClose }) {
                 <tr>
                   <td colSpan={10} style={{ border:'2px solid #000', padding:'6px 10px' }}>
                     <div style={{ display:'flex', alignItems:'center', gap:10 }}>
+                      {/* ── Logo (top-left) ── */}
                       <div style={{ width:54, height:54, border:'2px solid #000', borderRadius:'50%',
-                        display:'flex', alignItems:'center', justifyContent:'center', fontSize:7,
-                        fontWeight:700, textAlign:'center', padding:3, flexShrink:0 }}>
-                        भारत<br/>निर्वाचन<br/>आयोग
+                        overflow:'hidden', flexShrink:0, display:'flex', alignItems:'center', justifyContent:'center' }}>
+                        <img src="/logo/logo.jpeg" alt="Logo"
+                          style={{ width:'100%', height:'100%', objectFit:'cover', display:'block' }} />
                       </div>
                       <div style={{ flex:1, textAlign:'center' }}>
                         <div style={{ fontSize:17, fontWeight:700, letterSpacing:1 }}>ड्यूटी कार्ड</div>
