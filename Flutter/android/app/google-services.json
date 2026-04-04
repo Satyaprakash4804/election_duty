@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "791596517361",
+    "project_id": "election-duty-management",
+    "storage_bucket": "election-duty-management.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:791596517361:android:f64d13bca25c285a112650",
+        "android_client_info": {
+          "package_name": "com.example.election_duty"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBZdAo7LyydrOKgHPBJpuYSJRR5IZYqPUs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
