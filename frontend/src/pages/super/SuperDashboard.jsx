@@ -6,9 +6,9 @@ import SuperAdmins from './SuperAdmins'
 import SuperFormData from './SuperFormData'
 
 const navItems = [
-  { to: '/super',           icon: LayoutDashboard, label: 'Dashboard' },
-  { to: '/super/admins',    icon: Users,            label: 'Admins'    },
-  { to: '/super/form-data', icon: FileBarChart2,    label: 'Form Data' },
+  { to: '/super',           icon: LayoutDashboard, label: 'डैशबोर्ड'   },
+  { to: '/super/admins',    icon: Users,            label: 'व्यवस्थापक' },
+  { to: '/super/form-data', icon: FileBarChart2,    label: 'फ़ॉर्म डेटा' },
 ]
 
 export default function SuperDashboard() {

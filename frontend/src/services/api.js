@@ -77,11 +77,34 @@ export const adminAPI = {
 
 // ── Super Admin ───────────────────────────────────────
 export const superAPI = {
-  overview:      () => api.get('/super/overview').then((r) => r.data.data),
-  getAdmins:     () => api.get('/super/admins').then((r) => r.data.data),
-  createAdmin:   (body) => api.post('/super/admins', body).then((r) => r.data),
-  deleteAdmin:   (id) => api.delete(`/super/admins/${id}`).then((r) => r.data),
-  formData:      () => api.get('/super/form-data').then((r) => r.data.data),
+
+  overview: () =>
+    api.get('/super/overview').then((r) => r.data.data),
+
+  // ✅ FIXED (search + pagination)
+  getAdmins: (params) =>
+    api.get('/super/admins', { params }).then((r) => r.data.data),
+
+  createAdmin: (body) =>
+    api.post('/super/admins', body).then((r) => r.data),
+
+  deleteAdmin: (id) =>
+    api.delete(`/super/admins/${id}`).then((r) => r.data),
+
+  // ✅ ADD THIS (UPDATE)
+  updateAdmin: (id, body) =>
+    api.put(`/super/admins/${id}`, body).then((r) => r.data),
+
+  // ✅ ADD THIS (TOGGLE)
+  toggleAdmin: (id) =>
+    api.patch(`/super/admins/${id}/toggle`).then((r) => r.data),
+
+  // ✅ OPTIONAL
+  resetPassword: (id, password) =>
+    api.patch(`/super/admins/${id}/reset-password`, { password }).then((r) => r.data),
+
+  formData: () =>
+    api.get('/super/form-data').then((r) => r.data.data),
 }
 
 // ── Master ────────────────────────────────────────────
@@ -97,6 +120,7 @@ export const masterAPI = {
 export const staffAPI = {
   myDuty:   () => api.get('/staff/my-duty').then((r) => r.data.data),
   profile:  () => api.get('/staff/profile').then((r) => r.data.data),
+  changePassword: (body) => api.post('/staff/change-password', body).then(r => r.data),
 }
 
 export default api

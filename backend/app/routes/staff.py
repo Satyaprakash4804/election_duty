@@ -1,6 +1,7 @@
 from flask import Blueprint, request
 from db import get_db
 from app.routes import ok, err, login_required
+from werkzeug.security import check_password_hash, generate_password_hash
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/api/staff")
 
@@ -109,3 +110,25 @@ def my_profile():
         "district": row["district"],
         "isActive": bool(row["is_active"]),
     })
+    
+@staff_bp.route("/change-password", methods=["POST"])
+@login_required
+def change_password():
+    body = request.get_json() or {}
+    current  = body.get("currentPassword", "")
+    new_pass = body.get("newPassword", "")
+    if len(new_pass) < 6:
+        return err("पासवर्ड कम से कम 6 अक्षर का होना चाहिए")
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT password FROM users WHERE id=%s", (request.user["id"],))
+            row = cur.fetchone()
+            if not check_password_hash(row["password"], current):
+                return err("वर्तमान पासवर्ड गलत है", 401)
+            cur.execute("UPDATE users SET password=%s WHERE id=%s",
+                        (generate_password_hash(new_pass), request.user["id"]))
+        conn.commit()
+    finally:
+        conn.close()
+    return ok(None, "पासवर्ड बदल दिया गया")

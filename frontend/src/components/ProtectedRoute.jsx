@@ -20,7 +20,6 @@ export function ProtectedRoute({ children, allowedRoles }) {
     const redirect = ROLE_ROUTES[role] || '/login'
     return <Navigate to={redirect} replace />
   }
-
   return children
 }
 

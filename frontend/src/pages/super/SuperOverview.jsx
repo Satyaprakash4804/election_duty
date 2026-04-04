@@ -5,10 +5,10 @@ import { Spinner, PageHeader } from '../../components/ui'
 import toast from 'react-hot-toast'
 
 const statCards = (stats) => [
-  { icon: Users,          label: 'Total Admins',    value: stats?.totalAdmins,    iconBg: 'bg-amber-100',  iconColor: 'text-amber-800'  },
-  { icon: MapPin,         label: 'Total Booths',    value: stats?.totalBooths,    iconBg: 'bg-blue-100',   iconColor: 'text-blue-800'   },
-  { icon: Users,          label: 'Total Staff',     value: stats?.totalStaff,     iconBg: 'bg-green-100',  iconColor: 'text-green-800'  },
-  { icon: ClipboardCheck, label: 'Assigned Duties', value: stats?.assignedDuties, iconBg: 'bg-orange-100', iconColor: 'text-orange-800' },
+  { icon: Users,          label: 'कुल व्यवस्थापक',    value: stats?.totalAdmins,    iconBg: 'bg-amber-100',  iconColor: 'text-amber-800'  },
+  { icon: MapPin,         label: 'कुल बूथ',            value: stats?.totalBooths,    iconBg: 'bg-blue-100',   iconColor: 'text-blue-800'   },
+  { icon: Users,          label: 'कुल स्टाफ',          value: stats?.totalStaff,     iconBg: 'bg-green-100',  iconColor: 'text-green-800'  },
+  { icon: ClipboardCheck, label: 'सौंपी गई ड्यूटी',   value: stats?.assignedDuties, iconBg: 'bg-orange-100', iconColor: 'text-orange-800' },
 ]
 
 export function SuperOverview() {
@@ -18,7 +18,7 @@ export function SuperOverview() {
   useEffect(() => {
     superAPI.overview()
       .then(setStats)
-      .catch(() => toast.error('Failed to load overview'))
+      .catch(() => toast.error('ओवरव्यू लोड करने में विफल'))
       .finally(() => setLoading(false))
   }, [])
 
@@ -27,8 +27,8 @@ export function SuperOverview() {
   return (
     <div>
       <PageHeader
-        title="Super Admin Dashboard"
-        subtitle="System-wide election management overview"
+        title="सुपर एडमिन डैशबोर्ड"
+        subtitle="सिस्टम-व्यापी चुनाव प्रबंधन अवलोकन"
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3">
