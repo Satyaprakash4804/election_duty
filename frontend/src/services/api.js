@@ -2,7 +2,7 @@ import axios from 'axios'
 
 const BASE_URL = import.meta.env.VITE_API_URL || 'http://127.0.0.1:5000/api'
 
-const api = axios.create({ baseURL: BASE_URL })
+const api = axios.create({ baseURL: BASE_URL,withCredentials:true })
 
 // Attach token to every request
 api.interceptors.request.use((config) => {
@@ -36,7 +36,7 @@ export const adminAPI = {
 
   // Super Zones
   getSuperZones:    () => api.get('/admin/super-zones').then((r) => r.data.data),
-  addSuperZone:     (name) => api.post('/admin/super-zones', { name }).then((r) => r.data),
+  addSuperZone: (body) => api.post('/admin/super-zones', body),
   deleteSuperZone:  (id) => api.delete(`/admin/super-zones/${id}`).then((r) => r.data),
 
   // Zones

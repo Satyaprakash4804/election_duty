@@ -6,18 +6,18 @@ import { Spinner, PageHeader } from '../../components/ui'
 import toast from 'react-hot-toast'
 
 const STATS = [
-  { key: 'superZones',     label: 'Super Zones',     iconBg: 'bg-amber-100',  iconColor: 'text-amber-800',  Icon: Building2      },
-  { key: 'totalBooths',    label: 'Total Booths',    iconBg: 'bg-blue-100',   iconColor: 'text-blue-800',   Icon: MapPin          },
-  { key: 'totalStaff',     label: 'Total Staff',     iconBg: 'bg-green-100',  iconColor: 'text-green-800',  Icon: Users           },
-  { key: 'assignedDuties', label: 'Assigned Duties', iconBg: 'bg-orange-100', iconColor: 'text-orange-800', Icon: ClipboardCheck  },
+  { key: 'superZones',     label: 'सुपर ज़ोन',       iconBg: 'bg-amber-100',  iconColor: 'text-amber-800',  Icon: Building2      },
+  { key: 'totalBooths',    label: 'कुल बूथ',         iconBg: 'bg-blue-100',   iconColor: 'text-blue-800',   Icon: MapPin          },
+  { key: 'totalStaff',     label: 'कुल कर्मचारी',    iconBg: 'bg-green-100',  iconColor: 'text-green-800',  Icon: Users           },
+  { key: 'assignedDuties', label: 'आवंटित ड्यूटियाँ', iconBg: 'bg-orange-100', iconColor: 'text-orange-800', Icon: ClipboardCheck  },
 ]
 
 const ACTIONS = [
-  { label: 'Manage Structure (Zones → Centers)', href: '/admin/structure', Icon: Building2      },
-  { label: 'View All Centers',                   href: '/admin/centers',   Icon: MapPin          },
-  { label: 'Add / Search Staff',                 href: '/admin/staff',     Icon: Users           },
-  { label: 'Assign Duties',                      href: '/admin/duties',    Icon: ClipboardCheck  },
-  { label: 'Hierarchy View', href: '/admin/hierarchy', Icon: Building2 },
+  { label: 'संरचना प्रबंधित करें (ज़ोन → केंद्र)', href: '/admin/structure', Icon: Building2      },
+  { label: 'सभी केंद्र देखें',                      href: '/admin/centers',   Icon: MapPin          },
+  { label: 'कर्मचारी जोड़ें / खोजें',               href: '/admin/staff',     Icon: Users           },
+  { label: 'ड्यूटी आवंटित करें',                    href: '/admin/duties',    Icon: ClipboardCheck  },
+  { label: 'पदानुक्रम दृश्य',                       href: '/admin/hierarchy', Icon: Building2       },
 ]
 
 function StatCard({ item, value }) {
@@ -35,7 +35,6 @@ function StatCard({ item, value }) {
 
 function ActionLink({ item }) {
   const Ic = item.Icon
-
   return (
     <a
       href={item.href}
@@ -48,6 +47,7 @@ function ActionLink({ item }) {
     </a>
   )
 }
+
 export default function AdminOverview() {
   const [stats, setStats]     = useState(null)
   const [loading, setLoading] = useState(true)
@@ -55,28 +55,28 @@ export default function AdminOverview() {
   useEffect(() => {
     adminAPI.overview()
       .then(setStats)
-      .catch(() => toast.error('Failed to load overview'))
+      .catch(() => toast.error('अवलोकन लोड करने में विफल'))
       .finally(() => setLoading(false))
   }, [])
 
   if (loading) return <Spinner />
 
-  const assigned   = stats?.assignedDuties ?? 0
-  const booths     = stats?.totalBooths    ?? 0
-  const staff      = stats?.totalStaff     ?? 0
-  const boothPct   = booths ? (assigned / booths) * 100 : 0
-  const staffPct   = staff  ? (assigned / staff)  * 100 : 0
+  const assigned = stats?.assignedDuties ?? 0
+  const booths   = stats?.totalBooths    ?? 0
+  const staff    = stats?.totalStaff     ?? 0
+  const boothPct = booths ? (assigned / booths) * 100 : 0
+  const staffPct = staff  ? (assigned / staff)  * 100 : 0
 
   const bars = [
-    { label: 'Booths with duties assigned', pct: boothPct, a: assigned, b: booths, color: 'bg-[#8b6914]' },
-    { label: 'Staff assigned',              pct: staffPct, a: assigned, b: staff,  color: 'bg-[#5c8b3a]' },
+    { label: 'ड्यूटी आवंटित बूथ', pct: boothPct, a: assigned, b: booths, color: 'bg-[#8b6914]' },
+    { label: 'आवंटित कर्मचारी',    pct: staffPct, a: assigned, b: staff,  color: 'bg-[#5c8b3a]' },
   ]
 
   return (
     <div>
       <PageHeader
-        title="Admin Dashboard"
-        subtitle="Overview of your district's election setup"
+        title="व्यवस्थापक डैशबोर्ड"
+        subtitle="आपके जिले की चुनाव व्यवस्था का अवलोकन"
       />
 
       <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-3 mb-6">
@@ -93,7 +93,7 @@ export default function AdminOverview() {
           className="bg-[#fdfaf5] border border-[#8b734b]/20 rounded-xl p-5"
         >
           <h2 className="text-[15px] font-medium text-[#2c2416] mb-4 pb-3 border-b border-[#8b734b]/15">
-            Assignment progress
+            आवंटन की प्रगति
           </h2>
           <div className="space-y-5">
             {bars.map((bar) => (
@@ -122,7 +122,7 @@ export default function AdminOverview() {
           className="bg-[#fdfaf5] border border-[#8b734b]/20 rounded-xl p-5"
         >
           <h2 className="text-[15px] font-medium text-[#2c2416] mb-4 pb-3 border-b border-[#8b734b]/15">
-            Quick actions
+            त्वरित कार्य
           </h2>
           <div className="space-y-2">
             {ACTIONS.map((item) => (

@@ -10,13 +10,18 @@ from app.routes.super_admin import super_admin_bp
 from app.routes.admin       import admin_bp
 from app.routes.staff       import staff_bp
 from app.routes.hierarchy   import hierarchy
+from app.routes.hierarchyweb  import hierarchy_bp
 
 def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
     # CORS — allow Flutter app on any origin during development
-    CORS(app, resources={r"/*": {"origins": "*"}})
+ 
+
+    CORS(app,
+     supports_credentials=True,
+     origins=["http://localhost:5173"])
 
     # ── Register Blueprints ───────────────────────────────────────────────────
     app.register_blueprint(auth_bp)          # /api/login, /api/logout
@@ -25,6 +30,7 @@ def create_app():
     app.register_blueprint(admin_bp)         # /admin/...
     app.register_blueprint(staff_bp) 
     app.register_blueprint(hierarchy)
+    app.register_blueprint(hierarchy_bp)
     # ── Health ping (no auth) ────────────────────────────────────────────────
     @app.route("/ping")
     def ping():

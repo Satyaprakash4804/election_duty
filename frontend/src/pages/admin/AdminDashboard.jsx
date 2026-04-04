@@ -9,12 +9,12 @@ import AdminCenters from './AdminCenters'
 import AdminHierarchy from './AdminHierarchy'
 
 const navItems = [
-  { to: '/admin',           icon: LayoutDashboard, label: 'Dashboard'   },
-  { to: '/admin/structure', icon: Building2,        label: 'Structure'   },
-  { to: '/admin/centers',   icon: MapPin,           label: 'All Centers' },
-  { to: '/admin/staff',     icon: Users,            label: 'Staff'       },
-  { to: '/admin/duties',    icon: ClipboardList,    label: 'Duties'      },
-  { to: '/admin/hierarchy', icon: Building2,        label: 'Hierarchy'   },
+  { to: '/admin',           icon: LayoutDashboard, label: 'डैशबोर्ड'   },
+  { to: '/admin/structure', icon: Building2,        label: 'संरचना'     },
+  { to: '/admin/centers',   icon: MapPin,           label: 'सभी केंद्र' },
+  { to: '/admin/staff',     icon: Users,            label: 'कर्मचारी'   },
+  { to: '/admin/duties',    icon: ClipboardList,    label: 'कर्तव्य'    },
+  { to: '/admin/hierarchy', icon: Building2,        label: 'पदानुक्रम'  },
 ]
 
 export default function AdminDashboard() {
