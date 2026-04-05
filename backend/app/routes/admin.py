@@ -1007,22 +1007,34 @@ def delete_staff(staff_id):
 @admin_bp.route("/duties", methods=["GET"])
 @admin_required
 def get_duties():
+    # ✅ NEW: optional center_id filter
+    center_id_filter = request.args.get("center_id", type=int)
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-
-            cur.execute("""
+ 
+            where_extra = ""
+            params = [_admin_id()]
+            if center_id_filter:
+                where_extra = "AND ms.id = %s"
+                params.append(center_id_filter)
+ 
+            cur.execute(f"""
                 SELECT da.id, da.bus_no,
-                       u.id AS staff_id, u.name, u.pno, u.mobile, u.thana, u.user_rank, u.district,
-
-                       ms.id AS center_id,
-                       ms.name AS center_name, ms.center_type,
-
+                       u.id AS staff_id, u.name, u.pno, u.mobile,
+                       u.thana, u.user_rank, u.district,
+ 
+                       ms.id   AS center_id,
+                       ms.name AS center_name,
+                       ms.center_type,
+ 
                        gp.name AS gp_name,
-                       s.id AS sector_id, s.name AS sector_name,
-                       z.id AS zone_id, z.name AS zone_name,
-                       sz.id AS super_zone_id, sz.name AS super_zone_name
-
+                       s.id    AS sector_id,  s.name AS sector_name,
+                       z.id    AS zone_id,    z.name AS zone_name,
+                       sz.id   AS super_zone_id, sz.name AS super_zone_name,
+                       sz.block AS block_name
+ 
                 FROM duty_assignments da
                 JOIN users u             ON u.id  = da.staff_id
                 JOIN matdan_sthal ms     ON ms.id = da.sthal_id
@@ -1030,40 +1042,33 @@ def get_duties():
                 JOIN sectors s           ON s.id  = gp.sector_id
                 JOIN zones z             ON z.id  = s.zone_id
                 JOIN super_zones sz      ON sz.id = z.super_zone_id
-                WHERE sz.admin_id=%s
+                WHERE sz.admin_id = %s {where_extra}
                 ORDER BY ms.name, u.name
-            """, (_admin_id(),))
-
+            """, params)
+ 
             rows = cur.fetchall()
             result = []
-
+ 
             for r in rows:
-
-                # 🟣 SUPER ZONE OFFICERS (ALL)
+ 
                 cur.execute("""
                     SELECT name, pno, mobile, user_rank
-                    FROM kshetra_officers
-                    WHERE super_zone_id=%s
+                    FROM kshetra_officers WHERE super_zone_id=%s
                 """, (r["super_zone_id"],))
                 super_officers = cur.fetchall()
-
-                # 🔵 ZONAL OFFICERS (ALL)
+ 
                 cur.execute("""
                     SELECT name, pno, mobile, user_rank
-                    FROM zonal_officers
-                    WHERE zone_id=%s
+                    FROM zonal_officers WHERE zone_id=%s
                 """, (r["zone_id"],))
                 zonal_officers = cur.fetchall()
-
-                # 🟢 SECTOR OFFICERS (ALL)
+ 
                 cur.execute("""
                     SELECT name, pno, mobile, user_rank
-                    FROM sector_officers
-                    WHERE sector_id=%s
+                    FROM sector_officers WHERE sector_id=%s
                 """, (r["sector_id"],))
                 sector_officers = cur.fetchall()
-
-                # 🟡 SAHYOGI (WITH RANK + DISTRICT)
+ 
                 cur.execute("""
                     SELECT u.name, u.pno, u.mobile, u.thana, u.user_rank, u.district
                     FROM duty_assignments da2
@@ -1071,36 +1076,38 @@ def get_duties():
                     WHERE da2.sthal_id = %s
                 """, (r["center_id"],))
                 sahyogi = cur.fetchall()
-
+ 
                 result.append({
-                    "id": r["id"],
-                    "name": r["name"],
-                    "pno": r["pno"],
-                    "mobile": r["mobile"],
-                    "staffThana": r["thana"],
-                    "rank": r["user_rank"],
-                    "district": r["district"],
-
-                    "centerName": r["center_name"],
-                    "gpName": r["gp_name"],
-                    "sectorName": r["sector_name"],
-                    "zoneName": r["zone_name"],
-                    "superZoneName": r["super_zone_name"],
-
-                    "busNo": r["bus_no"],
-
-                    "superOfficers": super_officers,
-                    "zonalOfficers": zonal_officers,
+                    "id":         r["id"],
+                    # ✅ include center_id so Flutter can filter by it
+                    "centerId":   r["center_id"],
+                    "name":       r["name"]       or "",
+                    "pno":        r["pno"]         or "",
+                    "mobile":     r["mobile"]      or "",
+                    "staffThana": r["thana"]        or "",
+                    "rank":       r["user_rank"]    or "",
+                    "district":   r["district"]     or "",
+ 
+                    "centerName":    r["center_name"]    or "",
+                    "gpName":        r["gp_name"]         or "",
+                    "sectorName":    r["sector_name"]     or "",
+                    "zoneName":      r["zone_name"]       or "",
+                    "superZoneName": r["super_zone_name"] or "",
+                    "blockName":     r["block_name"]      or "",
+ 
+                    "busNo": r["bus_no"] or "",
+ 
+                    "superOfficers":  super_officers,
+                    "zonalOfficers":  zonal_officers,
                     "sectorOfficers": sector_officers,
-
-                    "sahyogi": sahyogi
+                    "sahyogi":        sahyogi,
                 })
-
+ 
     finally:
         conn.close()
-
+ 
     return ok(result)
-
+ 
 
 @admin_bp.route("/duties", methods=["POST"])
 @admin_required
@@ -1149,23 +1156,29 @@ def all_centers():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT ms.id, ms.name, ms.address, ms.thana, ms.center_type, ms.bus_no,
+                SELECT ms.id, ms.name, ms.address, ms.thana,
+                       ms.center_type, ms.bus_no,
                        ms.latitude, ms.longitude,
-                       gp.name AS gp_name, s.name AS sector_name,
-                       z.name AS zone_name, sz.name AS super_zone_name,
+                       gp.name AS gp_name,
+                       s.name  AS sector_name,
+                       z.name  AS zone_name,
+                       sz.name AS super_zone_name,
+                       -- ✅ include block name from super_zones
+                       sz.block AS block_name,
                        COUNT(da.id) AS duty_count
                 FROM matdan_sthal ms
-                JOIN gram_panchayats gp  ON gp.id = ms.gram_panchayat_id
-                JOIN sectors s           ON s.id  = gp.sector_id
-                JOIN zones z             ON z.id  = s.zone_id
-                JOIN super_zones sz      ON sz.id = z.super_zone_id
+                JOIN gram_panchayats gp  ON gp.id  = ms.gram_panchayat_id
+                JOIN sectors s           ON s.id   = gp.sector_id
+                JOIN zones z             ON z.id   = s.zone_id
+                JOIN super_zones sz      ON sz.id  = z.super_zone_id
                 LEFT JOIN duty_assignments da ON da.sthal_id = ms.id
-                WHERE sz.admin_id=%s
+                WHERE sz.admin_id = %s
                 GROUP BY ms.id ORDER BY ms.name
             """, (_admin_id(),))
             rows = cur.fetchall()
     finally:
         conn.close()
+ 
     return ok([{
         "id":            r["id"],
         "name":          r["name"]            or "",
@@ -1179,6 +1192,7 @@ def all_centers():
         "sectorName":    r["sector_name"]     or "",
         "zoneName":      r["zone_name"]       or "",
         "superZoneName": r["super_zone_name"] or "",
+        "blockName":     r["block_name"]      or "",   # ✅ NEW
         "dutyCount":     r["duty_count"],
     } for r in rows])
 
