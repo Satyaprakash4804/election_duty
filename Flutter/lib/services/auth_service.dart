@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../core/constants.dart';
 import 'api_service.dart';
@@ -24,10 +25,16 @@ class AuthService {
       response["data"]["token"],
     );
 
-    // 🔥 SAVE ROLE (VERY IMPORTANT)
+    // ✅ SAVE ROLE
     await prefs.setString(
       "role",
       response["data"]["user"]["role"],
+    );
+
+    // 🔥 NEW: SAVE FULL USER DATA
+    await prefs.setString(
+      "user",
+      jsonEncode(response["data"]["user"]),
     );
 
     return response;
@@ -45,10 +52,20 @@ class AuthService {
     return prefs.getString("role");
   }
 
+  // 🔥 NEW: GET USER
+  static Future<Map<String, dynamic>?> getUser() async {
+    final prefs = await SharedPreferences.getInstance();
+    final userStr = prefs.getString("user");
+
+    if (userStr == null) return null;
+
+    return jsonDecode(userStr);
+  }
+
   // 🔹 LOGOUT
   static Future<void> logout() async {
     final prefs = await SharedPreferences.getInstance();
-    await prefs.clear(); // 🔥 clear everything
+    await prefs.clear();
   }
 
   // 🔹 CHECK LOGIN

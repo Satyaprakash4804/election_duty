@@ -3,7 +3,7 @@ import 'services/auth_service.dart';
 
 // 🔹 ADMIN PAGES
 import 'screens/admin/admin_dashboard.dart';
-
+import 'screens/staff/staff_dashboard_page.dart';
 // 🔹 LOGIN PAGE
 import 'screens/auth/login_page.dart';
 import 'screens/master_admin/master_dashboard.dart';
@@ -150,6 +150,7 @@ class _MyAppState extends State<MyApp> {
         '/admin': (context) => const AdminDashboard(),
         '/master': (context) => const MasterDashboard(),
         '/super': (context) => const SuperDashboard(),
+        '/staff': (context) => const StaffDashboardPage(),
       },
 
       // ✅ AUTO LOGIN CHECK
@@ -193,6 +194,9 @@ class AuthCheck extends StatelessWidget {
 
           case "ADMIN":
             return const AdminDashboard();
+
+          case "STAFF":
+            return const StaffDashboardPage();
 
           default:
             return const LoginPage();

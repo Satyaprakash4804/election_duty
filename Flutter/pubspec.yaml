@@ -20,6 +20,7 @@ dependencies:
   pdf: ^3.10.0
   printing: ^5.11.0
   shared_preferences: ^2.2.2
+  url_launcher: ^6.2.0
   # 🔹 HTTP (for backend later)
   http: ^1.2.0
 

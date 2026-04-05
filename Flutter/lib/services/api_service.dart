@@ -4,11 +4,14 @@ import '../core/constants.dart';
 import 'auth_service.dart';
 
 class ApiService {
+
   // 🔹 COMMON HEADERS
-  static Map<String, String> _headers({String? token}) {
+  static Future<Map<String, String>> _headers({String? token}) async {
+    final t = token ?? await AuthService.getToken();
+
     return {
       "Content-Type": "application/json",
-      if (token != null) "Authorization": "Bearer $token",
+      if (t != null) "Authorization": "Bearer $t",
     };
   }
 
@@ -17,14 +20,16 @@ class ApiService {
     final url = Uri.parse("${AppConstants.baseUrl}$endpoint");
 
     print("🌐 GET: $url");
-    print("🔑 TOKEN: $token");
 
-    final response = await http.get(
-      url,
-      headers: _headers(token: token),
-    );
+    try {
+      final response = await http
+          .get(url, headers: await _headers(token: token))
+          .timeout(const Duration(seconds: 20));
 
-    return _handleResponse(response);
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception("GET Error: $e");
+    }
   }
 
   // 🔹 POST REQUEST
@@ -35,13 +40,19 @@ class ApiService {
     print("🌐 POST: $url");
     print("📦 BODY: $data");
 
-    final response = await http.post(
-      url,
-      headers: _headers(token: token),
-      body: jsonEncode(data),
-    );
+    try {
+      final response = await http
+          .post(
+            url,
+            headers: await _headers(token: token),
+            body: jsonEncode(data),
+          )
+          .timeout(const Duration(seconds: 20));
 
-    return _handleResponse(response);
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception("POST Error: $e");
+    }
   }
 
   // 🔹 PUT REQUEST
@@ -51,13 +62,19 @@ class ApiService {
 
     print("🌐 PUT: $url");
 
-    final response = await http.put(
-      url,
-      headers: _headers(token: token),
-      body: jsonEncode(data),
-    );
+    try {
+      final response = await http
+          .put(
+            url,
+            headers: await _headers(token: token),
+            body: jsonEncode(data),
+          )
+          .timeout(const Duration(seconds: 20));
 
-    return _handleResponse(response);
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception("PUT Error: $e");
+    }
   }
 
   // 🔹 DELETE REQUEST
@@ -66,46 +83,58 @@ class ApiService {
 
     print("🌐 DELETE: $url");
 
-    final response = await http.delete(
-      url,
-      headers: _headers(token: token),
-    );
+    try {
+      final response = await http
+          .delete(url, headers: await _headers(token: token))
+          .timeout(const Duration(seconds: 20));
 
-    return _handleResponse(response);
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception("DELETE Error: $e");
+    }
   }
 
-  // 🔥 SAFE RESPONSE HANDLER (FIXED)
+  // 🔥 RESPONSE HANDLER (ADVANCED)
   static dynamic _handleResponse(http.Response response) {
     final raw = response.body;
 
     print("📡 STATUS: ${response.statusCode}");
-    print("📨 RAW RESPONSE: $raw");
+    print("📨 RESPONSE: $raw");
 
-    // 🚨 FIX 1: Handle HTML response (main bug you had)
+    // 🚨 HTML ERROR (wrong URL / backend down)
     if (raw.startsWith("<!DOCTYPE") || raw.startsWith("<html")) {
-      throw Exception(
-          "❌ Server returned HTML (Check API URL or Token)");
+      throw Exception("❌ Server returned HTML (Check API URL / Server)");
     }
 
-    // 🚨 FIX 2: Handle empty response
+    // 🚨 EMPTY RESPONSE
     if (raw.isEmpty) {
       throw Exception("❌ Empty response from server");
     }
 
-    final body = jsonDecode(raw);
+    dynamic body;
+    try {
+      body = jsonDecode(raw);
+    } catch (e) {
+      throw Exception("❌ Invalid JSON response");
+    }
 
     // ✅ SUCCESS
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return body;
     }
 
-    // 🔐 AUTO LOGOUT ON 401
+    // 🔐 UNAUTHORIZED → AUTO LOGOUT
     if (response.statusCode == 401) {
       AuthService.logout();
-      throw Exception("Session expired. Please login again.");
+      throw Exception("🔐 Session expired. Please login again.");
     }
 
-    // ❌ OTHER ERRORS
-    throw Exception(body["message"] ?? "API Error");
+    // ❌ SERVER ERROR
+    if (response.statusCode >= 500) {
+      throw Exception("🔥 Server error (${response.statusCode})");
+    }
+
+    // ❌ CLIENT ERROR
+    throw Exception(body["message"] ?? "❌ API Error");
   }
 }

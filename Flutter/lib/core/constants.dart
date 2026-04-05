@@ -1,6 +1,6 @@
 class AppConstants {
   // 🔥 BASE URL (change when deploying)
-  static const String baseUrl = "http://192.168.1.12:5000/api";
+  static const String baseUrl = "http://10.239.33.54:5000/api";
 
   // 🔐 AUTH
   static const String login = "$baseUrl/login";

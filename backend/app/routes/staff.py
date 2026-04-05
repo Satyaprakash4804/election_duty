@@ -148,7 +148,7 @@ def my_profile():
     try:
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT id, name, pno, mobile, thana, district, is_active
+                SELECT id, name, pno, mobile, thana, district, user_rank, is_active
                 FROM users WHERE id = %s
             """, (staff_id,))
             row = cur.fetchone()
@@ -163,6 +163,7 @@ def my_profile():
         "mobile":   row["mobile"],
         "thana":    row["thana"],
         "district": row["district"],
+        "user_rank": row["user_rank"],
         "isActive": bool(row["is_active"]),
     })
     
