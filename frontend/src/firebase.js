@@ -2,12 +2,12 @@ import { initializeApp } from "firebase/app";
 import { getMessaging, getToken, onMessage } from "firebase/messaging";
 
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID",
+  apiKey: "AIzaSyB-Whwa3Frajx7-IldPe3dwO4QLjLJaMjQ",
+  authDomain: "election-duty-management.firebaseapp.com",
+  projectId: "election-duty-management",
+  storageBucket: "election-duty-management.firebasestorage.app",
+  messagingSenderId: "791596517361",
+  appId: "1:791596517361:web:2a963c00664f1997112650",
 };
 
 const app = initializeApp(firebaseConfig);
