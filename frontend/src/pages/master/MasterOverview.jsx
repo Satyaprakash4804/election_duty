@@ -60,7 +60,7 @@ export default function MasterOverview() {
           {[
             { label: 'Backend',       value: stats?.backend      || 'Flask' },
             { label: 'Last Backup',   value: stats?.lastBackup   || 'Never' },
-            { label: 'Flutter Build', value: stats?.flutterBuild || '—'    },
+            { label: 'React Build', value: stats?.flutterBuild || '—'    },
           ].map(({ label, value }) => (
             <div key={label} className="flex justify-between items-center py-2.5 border-b border-[#8b734b]/10 last:border-0 text-[13px]">
               <span className="text-[#7a6a50]">{label}</span>

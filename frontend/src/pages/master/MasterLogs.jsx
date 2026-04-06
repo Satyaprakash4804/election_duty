@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import { RefreshCw, Activity } from 'lucide-react'
 import { masterAPI } from '../../services/api'
 import { PageHeader, Spinner, EmptyState } from '../../components/ui'
 import toast from 'react-hot-toast'
 
 const LEVELS = ['ALL', 'INFO', 'WARN', 'ERROR']
+const LIMITS = [50, 100, 200, 500]
 
 const levelStyle = {
   INFO:  'bg-[#e6eef8] text-[#1a3d6e]',
@@ -16,18 +17,20 @@ export default function MasterLogs() {
   const [logs, setLogs]       = useState([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter]   = useState('ALL')
+  const [limit, setLimit]     = useState(100)
 
-  const load = () => {
+  const load = useCallback(() => {
     setLoading(true)
-    masterAPI.getLogs()
+    const params = new URLSearchParams()
+    if (filter !== 'ALL') params.set('level', filter)
+    params.set('limit', limit)
+    masterAPI.getLogs(`?${params.toString()}`)
       .then(setLogs)
       .catch(() => toast.error('Failed to load logs'))
       .finally(() => setLoading(false))
-  }
+  }, [filter, limit])
 
-  useEffect(() => { load() }, [])
-
-  const filtered = filter === 'ALL' ? logs : logs.filter(l => l.level === filter)
+  useEffect(() => { load() }, [load])
 
   if (loading) return <Spinner />
 
@@ -35,7 +38,7 @@ export default function MasterLogs() {
     <div>
       <PageHeader
         title="System Logs"
-        subtitle={`${logs.length} recent entries`}
+        subtitle={`${logs.length} entries`}
         action={
           <button
             onClick={load}
@@ -46,8 +49,9 @@ export default function MasterLogs() {
         }
       />
 
-      {/* Level filters */}
-      <div className="flex gap-2 mb-5">
+      {/* Filters row */}
+      <div className="flex flex-wrap items-center gap-2 mb-5">
+        {/* Level filters */}
         {LEVELS.map((l) => (
           <button
             key={l}
@@ -61,9 +65,20 @@ export default function MasterLogs() {
             {l}
           </button>
         ))}
+
+        {/* Limit selector */}
+        <select
+          value={limit}
+          onChange={(e) => setLimit(Number(e.target.value))}
+          className="ml-auto text-[12px] border border-[#8b734b]/20 rounded-full px-3 py-1.5 bg-[#fdfaf5] text-[#7a6a50] focus:outline-none focus:ring-1 focus:ring-[#8b734b]/40"
+        >
+          {LIMITS.map((n) => (
+            <option key={n} value={n}>Last {n}</option>
+          ))}
+        </select>
       </div>
 
-      {filtered.length === 0 ? (
+      {logs.length === 0 ? (
         <EmptyState message="No logs found" icon={Activity} />
       ) : (
         <div className="bg-[#fdfaf5] border border-[#8b734b]/20 rounded-xl overflow-hidden">
@@ -81,8 +96,8 @@ export default function MasterLogs() {
               </tr>
             </thead>
             <tbody>
-              {filtered.map((l, i) => (
-                <tr key={i} className="hover:bg-[#f5f0e8] transition-colors border-b border-[#8b734b]/10 last:border-0">
+              {logs.map((l, i) => (
+                <tr key={l.id ?? i} className="hover:bg-[#f5f0e8] transition-colors border-b border-[#8b734b]/10 last:border-0">
                   <td className="px-4 py-2.5">
                     <span className={`inline-block text-[10px] font-medium px-2 py-0.5 rounded-full ${levelStyle[l.level] || 'bg-[#f0ead8] text-[#7a6a50]'}`}>
                       {l.level}

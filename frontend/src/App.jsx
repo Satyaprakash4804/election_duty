@@ -70,7 +70,7 @@ export default function App() {
           <Route
             path="/master/*"
             element={
-              <ProtectedRoute allowedRoles={['MASTER']}>
+              <ProtectedRoute allowedRoles={['MASTER', 'ADMIN']}>
                 <MasterDashboard />
               </ProtectedRoute>
             }
