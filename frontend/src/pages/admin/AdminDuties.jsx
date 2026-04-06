@@ -179,11 +179,11 @@ function DutyCardPrint({ duty, onClose }) {
 
                 {/* ══ PRIMARY OFFICER – data ══ */}
                 <tr>
-                  <TD center bold>{rh(duty.rank)}</TD>
+                  <TD center bold>{rh(duty.user_rank)}</TD>
                   <TD center mono>{v(duty.pno)}</TD>
                   <TD colSpan={2} bold>{v(duty.name)}</TD>
                   <TD center>{v(duty.mobile)}</TD>
-                  <TD center>{v(duty.staffThana)}</TD>
+                  <TD center>{v(duty.thana)}</TD>
                   <TD center>{v(duty.district)}</TD>
                   <TD center>सशस्त्र</TD>
                   <TD colSpan={2} center bold>बस–{v(duty.busNo)}</TD>

@@ -190,7 +190,7 @@ function DutyCardPrint({ duty, user, onClose }) {
 
                 {/* ══ PRIMARY OFFICER – data ══ */}
                 <tr>
-                  <TD center bold>{rh(user?.rank)}</TD>
+                  <TD center bold>{rh(user?.user_rank)}</TD>
                   <TD center mono>{v(user?.pno)}</TD>
                   <TD colSpan={2} bold>{v(user?.name)}</TD>
                   <TD center>{v(user?.mobile)}</TD>
@@ -238,7 +238,7 @@ function DutyCardPrint({ duty, user, onClose }) {
                 {sahRows.map((s, i) => (
                   <tr key={i} style={{ background: i%2===0 ? '#fff' : '#fafafa' }}>
                     <TD center style={{ color:'#888', fontSize:9 }}>{i+1}</TD>
-                    <TD center style={{ color: s?'#000':'#ccc' }}>{s ? rh(s.rank) : '—'}</TD>
+                    <TD center style={{ color: s?'#000':'#ccc' }}>{s ? rh(s.user_rank) : '—'}</TD>
                     <TD colSpan={2} style={{ color: s?'#000':'#ccc', fontWeight: s?500:400 }}>{s ? v(s.name) : '—'}</TD>
                     <TD center mono style={{ color: s?'#000':'#ccc' }}>{s ? v(s.pno) : '—'}</TD>
                     <TD center style={{ color: s?'#000':'#ccc' }}>{s ? v(s.mobile) : '—'}</TD>
