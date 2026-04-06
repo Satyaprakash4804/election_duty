@@ -103,3 +103,4 @@ dist/
 
 venv
 .venv
+backend/serviceAccountKey.json
