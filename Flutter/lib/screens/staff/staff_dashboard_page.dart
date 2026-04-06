@@ -8,6 +8,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../../services/api_service.dart';
 import '../../../services/auth_service.dart';
 import '../admin/pages/duty_card_page.dart';
+import '../admin/pages/hierarchy_report_page.dart';
 
 // ── PALETTE ───────────────────────────────────────────────────────────────────
 const kBg        = Color(0xFFFDF6E3);

@@ -49,16 +49,48 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   void dispose() { _tabCtrl.dispose(); super.dispose(); }
 
   Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+
     try {
       final token = await AuthService.getToken();
-      final res   = await ApiService.get('/admin/hierarchy/full', token: token);
+      final role  = await AuthService.getRole();
+
+      print("🔑 TOKEN: $token");
+      print("👤 ROLE: $role");
+
+      final res = await ApiService.get('/admin/hierarchy/full', token: token);
+
+      print("📦 FULL RESPONSE: $res");
+      print("📦 TYPE: ${res.runtimeType}");
+
+      // 🔥 SAFE PARSE
+      List parsedData = [];
+
+      if (res is List) {
+        parsedData = res;
+      } else if (res is Map && res.containsKey('data')) {
+        parsedData = res['data'] ?? [];
+      } else {
+        print("⚠️ Unexpected response format");
+      }
+
+      print("📊 PARSED DATA LENGTH: ${parsedData.length}");
+
       setState(() {
-        _data    = res is List ? res : (res['data'] ?? res ?? []);
+        _data = parsedData;
         _loading = false;
       });
+
     } catch (e) {
-      setState(() { _loading = false; _error = e.toString(); });
+      print("❌ ERROR: $e");
+
+      setState(() {
+        _loading = false;
+        _error = e.toString();
+      });
     }
   }
 
