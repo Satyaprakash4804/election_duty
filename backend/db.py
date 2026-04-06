@@ -178,6 +178,29 @@ def init_db():
                 value TEXT,
                 updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
+            
+            # FCM tocken Table
+            cur.execute("""CREATE TABLE IF NOT EXISTS fcm_tokens (
+                id INT AUTO_INCREMENT PRIMARY KEY,
+
+                user_id INT NOT NULL,
+                token TEXT NOT NULL,
+
+                device_name VARCHAR(255) DEFAULT NULL,
+                browser VARCHAR(100) DEFAULT NULL,
+                os VARCHAR(100) DEFAULT NULL,
+
+                user_agent TEXT,
+                ip_address VARCHAR(45),
+
+                is_active TINYINT(1) DEFAULT 1,
+
+                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+
+                UNIQUE KEY unique_token (token(255)),
+
+                FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
 
             for k, v in [
                 ("maintenanceMode","false"),("allowStaffLogin","true"),
