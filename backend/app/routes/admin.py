@@ -896,6 +896,7 @@ def add_staff_bulk():
     added, skipped = 0, []
 
     conn = get_db()
+    
     try:
         with conn.cursor() as cur:
             for s in items:
