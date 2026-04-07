@@ -787,37 +787,70 @@ def delete_room(r_id):
 @admin_required
 def get_staff():
     search   = request.args.get("q", "").strip()
+    rank     = request.args.get("rank", "").strip()
+    armed    = request.args.get("armed", "").strip()   # ← NEW: "1", "0", or ""
     district = request.user.get("district")
+
+    RANK_ALIAS = {
+        "sp":        ["sp", "पुलिस अधीक्षक"],
+        "inspector": ["inspector", "निरीक्षक"],
+        "si":        ["si", "sub-inspector", "sub inspector", "उप-निरीक्षक"],
+        "hc":        ["hc", "head constable", "हेड कांस्टेबल"],
+        "constable": ["constable", "कांस्टेबल"],
+        "chaukidar": ["chaukidar", "चौकीदार", "watchman", "guard"],
+    }
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
             d_clause = "AND u.district=%s" if district else ""
             d_param  = (district,) if district else ()
+
+            rank_clause = ""
+            rank_params = ()
+            if rank and rank in RANK_ALIAS:
+                aliases = RANK_ALIAS[rank]
+                placeholders = ", ".join(["%s"] * len(aliases))
+                rank_clause = f"AND LOWER(TRIM(u.user_rank)) IN ({placeholders})"
+                rank_params = tuple(a.lower() for a in aliases)
+
+            # ← NEW: armed filter clause
+            armed_clause = ""
+            armed_params = ()
+            if armed == "1":
+                armed_clause = "AND u.is_armed = 1"
+            elif armed == "0":
+                armed_clause = "AND u.is_armed = 0"
+
             if search:
                 like = f"%{search}%"
                 cur.execute(f"""
-                    SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
+                    SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district,
+                           u.user_rank, u.is_armed,
                            da.sthal_id, ms.name AS center_name
                     FROM users u
-                    LEFT JOIN duty_assignments da ON da.staff_id=u.id
-                    LEFT JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                    WHERE u.role='staff' {d_clause}
+                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                    LEFT JOIN matdan_sthal ms     ON ms.id = da.sthal_id
+                    WHERE u.role = 'staff' {d_clause} {rank_clause} {armed_clause}
                       AND (u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s OR u.thana LIKE %s)
                     ORDER BY u.name
-                """, d_param + (like, like, like, like))
+                """, d_param + rank_params + armed_params + (like, like, like, like))
             else:
                 cur.execute(f"""
-                    SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
+                    SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district,
+                           u.user_rank, u.is_armed,
                            da.sthal_id, ms.name AS center_name
                     FROM users u
-                    LEFT JOIN duty_assignments da ON da.staff_id=u.id
-                    LEFT JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                    WHERE u.role='staff' {d_clause}
+                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                    LEFT JOIN matdan_sthal ms     ON ms.id = da.sthal_id
+                    WHERE u.role = 'staff' {d_clause} {rank_clause} {armed_clause}
                     ORDER BY u.name
-                """, d_param)
+                """, d_param + rank_params + armed_params)
+
             rows = cur.fetchall()
     finally:
         conn.close()
+
     return ok([{
         "id":         r["id"],
         "name":       r["name"]       or "",
@@ -826,10 +859,12 @@ def get_staff():
         "thana":      r["thana"]      or "",
         "district":   r["district"]   or "",
         "rank":       r["user_rank"]  or "",
+        "isArmed":    bool(r["is_armed"]),   # ← NEW
         "isAssigned": r["sthal_id"] is not None,
         "centerName": r["center_name"] or "",
     } for r in rows])
-
+    
+    
 @admin_bp.route("/staff", methods=["POST"])
 @admin_required
 def add_staff():
@@ -1254,4 +1289,49 @@ def admin_overview():
         "totalStaff":    staff,
         "assignedDuties": assigned,
     })
+  
+@admin_bp.route("/staff/rank-summary", methods=["GET"])
+@admin_required
+def staff_rank_summary():
+    """
+    Returns count of staff per rank, split by assigned/unassigned.
+    Used by the frontend rank tabs to show badge counts without a full fetch.
+    Response shape:
+    {
+      "data": [
+        { "rank": "inspector", "total": 12, "assigned": 8, "unassigned": 4 },
+        ...
+      ]
+    }
+    """
+    district = request.user.get("district")
+    d_clause = "AND u.district=%s" if district else ""
+    d_param  = (district,) if district else ()
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT
+                    LOWER(TRIM(u.user_rank)) AS rank_key,
+                    COUNT(*) AS total,
+                    SUM(CASE WHEN da.id IS NOT NULL THEN 1 ELSE 0 END) AS assigned
+                FROM users u
+                LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                WHERE u.role = 'staff' {d_clause}
+                GROUP BY LOWER(TRIM(u.user_rank))
+                ORDER BY rank_key
+            """, d_param)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+ 
+    return ok([{
+        "rank":       r["rank_key"]  or "अन्य",
+        "total":      r["total"],
+        "assigned":   r["assigned"]   or 0,
+        "unassigned": r["total"] - (r["assigned"] or 0),
+    } for r in rows])
+ 
+ 
     
