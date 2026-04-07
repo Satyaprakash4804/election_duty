@@ -48,6 +48,7 @@ export const adminAPI = {
   getSectors:   (zId) => api.get(`/admin/zones/${zId}/sectors`).then((r) => r.data.data),
   addSector:    (zId, body) => api.post(`/admin/zones/${zId}/sectors`, body).then((r) => r.data),
   deleteSector: (id) => api.delete(`/admin/sectors/${id}`).then((r) => r.data),
+  checkStaffAvailability: (requirements) => api.post('/admin/staff/check-availability', { requirements }).then(r => r.data),
 
   // Officers
   addOfficer:    (sId, body) => api.post(`/admin/sectors/${sId}/officers`, body).then((r) => r.data),
@@ -63,6 +64,7 @@ export const adminAPI = {
   addCenter:     (gpId, body) => api.post(`/admin/gram-panchayats/${gpId}/centers`, body).then((r) => r.data),
   deleteCenter:  (id) => api.delete(`/admin/centers/${id}`).then((r) => r.data),
   allCenters:    () => api.get('/admin/centers/all').then((r) => r.data.data),
+  
 
   // Staff
   getStaff:      (q = '') => api.get(`/admin/staff${q ? `?q=${q}` : ''}`).then((r) => r.data.data),

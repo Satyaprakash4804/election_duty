@@ -2,34 +2,23 @@ import { useEffect, useState, useCallback } from 'react'
 import {
   Plus, Trash2, Building2, Map as MapIcon, Grid3X3, Landmark, MapPin,
   ChevronLeft, ChevronRight, Languages, RefreshCw, Filter,
-  X, Check, AlertTriangle, BookOpen, ChevronDown, Search, UserPlus, User
+  X, Check, AlertTriangle, BookOpen, ChevronDown, Search, User, ShieldCheck
 } from 'lucide-react'
 import { adminAPI } from '../../services/api'
 import toast from 'react-hot-toast'
-import { useMap } from 'react-leaflet'
-import { GeoSearchControl, OpenStreetMapProvider } from 'leaflet-geosearch'
-
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  CONSTANTS & CONFIG
-// ══════════════════════════════════════════════════════════════════════════════
-
 import { MapContainer, TileLayer, Marker, useMapEvents } from 'react-leaflet'
 import L from 'leaflet'
-
 
 // Fix marker icon issue
 delete L.Icon.Default.prototype._getIconUrl
 L.Icon.Default.mergeOptions({
   iconRetinaUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png',
-  iconUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
-  shadowUrl: 'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
+  iconUrl:       'https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png',
+  shadowUrl:     'https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png',
 })
 
-// Click handler
 function LocationMarker({ setLatLng }) {
   const [position, setPosition] = useState(null)
-
   useMapEvents({
     click(e) {
       const { lat, lng } = e.latlng
@@ -37,16 +26,18 @@ function LocationMarker({ setLatLng }) {
       setLatLng(lat, lng)
     },
   })
-
   return position ? <Marker position={position} /> : null
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  CONSTANTS & CONFIG
+// ══════════════════════════════════════════════════════════════════════════════
 
 const PAGE_SIZE = 10
 
 const TABS = [
   { key: 'sz',     label: 'सुपर जोन',     icon: Building2, color: '#8b6914', bg: '#fdf5e6', light: '#fef9ee' },
-  { key: 'zone',   label: 'जोन',          icon: MapIcon,       color: '#2d6a4f', bg: '#f0f7eb', light: '#f7fbf5' },
+  { key: 'zone',   label: 'जोन',           icon: MapIcon,   color: '#2d6a4f', bg: '#f0f7eb', light: '#f7fbf5' },
   { key: 'sector', label: 'सेक्टर',        icon: Grid3X3,   color: '#1a3d6e', bg: '#e8f0fb', light: '#f2f6fd' },
   { key: 'gp',     label: 'ग्राम पंचायत', icon: Landmark,  color: '#6b2fa0', bg: '#f3ebfb', light: '#f9f4fd' },
   { key: 'sthal',  label: 'मतदान स्थल',   icon: MapPin,    color: '#9b2226', bg: '#fbeaea', light: '#fdf5f5' },
@@ -56,7 +47,7 @@ const TABS = [
 
 const FIELDS = {
   sz: [
-    { key: 'name',     label: 'सुपर जोन का नाम', required: true, half: false },
+    { key: 'name',     label: 'सुपर जोन का नाम', required: true },
     { key: 'district', label: 'जिला',             required: false },
     { key: 'block',    label: 'ब्लॉक',            required: false },
   ],
@@ -77,19 +68,12 @@ const FIELDS = {
     { key: 'thana',      label: 'थाना',                  required: false },
     { key: 'centerType', label: 'केंद्र प्रकार (A/B/C)', required: false, placeholder: 'C' },
     { key: 'busNo',      label: 'बस संख्या',             required: false },
-    { key: 'latitude',   label: 'अक्षांश',              required: false, type: 'number' },
-    { key: 'longitude',  label: 'देशांतर',              required: false, type: 'number' },
+    { key: 'latitude',   label: 'अक्षांश',               required: false, type: 'number' },
+    { key: 'longitude',  label: 'देशांतर',               required: false, type: 'number' },
   ],
   booth: [
     { key: 'roomNumber', label: 'कक्ष संख्या', required: true },
   ],
-}
-
-// Officer fields config per tab
-const OFFICER_CONFIG = {
-  sz:     { table: 'kshetra_officers',  label: 'क्षेत्र अधिकारी' },
-  zone:   { table: 'zonal_officers',   label: 'ज़ोनल अधिकारी' },
-  sector: { table: 'sector_officers',  label: 'सेक्टर अधिकारी' },
 }
 
 const COLUMNS = {
@@ -102,29 +86,49 @@ const COLUMNS = {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  RANK CONFIG
+// ══════════════════════════════════════════════════════════════════════════════
+
+const RANKS = [
+  { key: 'asp',       label: 'ASP',           hindi: 'अपर पुलिस अधीक्षक' },
+  { key: 'dsp',       label: 'DSP',           hindi: 'उप पुलिस अधीक्षक'  },
+  { key: 'co',        label: 'CO',            hindi: 'सर्किल ऑफिसर'      },
+  { key: 'inspector', label: 'Inspector',     hindi: 'निरीक्षक'           },
+  { key: 'sho',       label: 'SHO',           hindi: 'थाना प्रभारी'       },
+  { key: 'si',        label: 'SI',            hindi: 'उप निरीक्षक'        },
+  { key: 'hc',        label: 'Head Constable',hindi: 'हेड कांस्टेबल'     },
+  { key: 'constable', label: 'Constable',     hindi: 'कांस्टेबल'          },
+]
+
+// Tabs that use the officer count form
+const HAS_OFFICERS = ['sz', 'zone', 'sector']
+// Tabs that use duty auto-assignment (sthal)
+const HAS_DUTY_ASSIGN = ['sthal']
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  TRANSLATION ENGINE
 // ══════════════════════════════════════════════════════════════════════════════
 
 const isHindi = s => Boolean(s && /[\u0900-\u097F]/.test(s))
-const txCache = new Map()
+const txCache  = new Map()
 
 async function translateBatch(texts) {
   const pending = [...new Set(texts.filter(t => t && t.trim() && !isHindi(t) && !txCache.has(t)))]
   if (!pending.length) return false
   try {
     const res = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
+      method:  'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: 'claude-sonnet-4-20250514',
+        model:      'claude-sonnet-4-20250514',
         max_tokens: 1000,
         messages: [{
-          role: 'user',
+          role:    'user',
           content: `Translate these Indian election/administrative place names to Hindi (Devanagari script). Return ONLY valid JSON with original text as key and Hindi as value. No explanation or markdown.\n${JSON.stringify(pending)}`
         }]
       })
     })
-    const d = await res.json()
+    const d   = await res.json()
     const raw = (d.content?.[0]?.text || '{}').replace(/```json|```/g, '').trim()
     Object.entries(JSON.parse(raw)).forEach(([k, v]) => txCache.set(k, v))
     return true
@@ -138,137 +142,138 @@ const tx = s => {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  OFFICER FORM COMPONENT
+//  OFFICER COUNT FORM  (for SZ / Zone / Sector)
 // ══════════════════════════════════════════════════════════════════════════════
 
-const EMPTY_OFFICER = { name: '', pno: '', mobile: '', rank: '', userId: null }
-
-function OfficerForm({ officers, onChange, color, bg, light, availableStaff = [] }) {
-  const addOfficer = () => onChange([...officers, { ...EMPTY_OFFICER }])
-  const removeOfficer = idx => onChange(officers.filter((_, i) => i !== idx))
-  const updateOfficer = (idx, field, val) => {
-    const updated = officers.map((o, i) => i === idx ? { ...o, [field]: val } : o)
-    onChange(updated)
+function OfficerCountForm({ value, onChange, color, bg, light, availability, label }) {
+  const handleChange = (key, raw) => {
+    const n = Math.max(0, parseInt(raw) || 0)
+    onChange({ ...value, [key]: n })
   }
 
-  // When selecting from staff dropdown, autofill fields
-  const selectStaff = (idx, userId) => {
-    const staff = availableStaff.find(s => String(s.id) === String(userId))
-    if (staff) {
-      const updated = officers.map((o, i) => i === idx ? {
-        ...o,
-        userId: staff.id,
-        name: staff.name || '',
-        pno: staff.pno || '',
-        mobile: staff.mobile || '',
-        rank: staff.rank || '',
-      } : o)
-      onChange(updated)
-    } else {
-      updateOfficer(idx, 'userId', null)
-    }
-  }
+  const totalRequested = Object.values(value).reduce((s, v) => s + (parseInt(v) || 0), 0)
 
   return (
     <div className="mt-4 border-t pt-4" style={{ borderColor: '#e8d9c0' }}>
-      <div className="flex items-center justify-between mb-3">
-        <div className="flex items-center gap-2">
-          <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: bg }}>
-            <User size={11} style={{ color }} />
-          </div>
-          <span className="text-[12px] font-semibold text-[#6b5c42] uppercase tracking-wide">अधिकारी जानकारी</span>
+      <div className="flex items-center gap-2 mb-3">
+        <div className="w-5 h-5 rounded flex items-center justify-center" style={{ background: bg }}>
+          <ShieldCheck size={11} style={{ color }} />
         </div>
-        <button
-          type="button"
-          onClick={addOfficer}
-          className="flex items-center gap-1 text-[11px] font-medium px-2.5 py-1.5 rounded-lg transition-colors"
-          style={{ background: bg, color }}
-        >
-          <UserPlus size={11} /> अधिकारी जोड़ें
-        </button>
+        <span className="text-[12px] font-semibold text-[#6b5c42] uppercase tracking-wide">
+          {label || 'अधिकारी नियुक्ति'} — पद अनुसार संख्या
+        </span>
+        {totalRequested > 0 && (
+          <span className="ml-auto text-[11px] font-semibold px-2 py-0.5 rounded-full"
+            style={{ background: bg, color }}>
+            कुल: {totalRequested}
+          </span>
+        )}
       </div>
 
-      {officers.length === 0 && (
-        <p className="text-[12px] text-[#a89878] text-center py-3 rounded-lg" style={{ background: light }}>
-          कोई अधिकारी नहीं — ऊपर "अधिकारी जोड़ें" दबाएं
-        </p>
-      )}
+      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+        {RANKS.map(rank => {
+          const count    = parseInt(value[rank.key]) || 0
+          const avail    = availability?.[rank.key]
+          const hasError = avail && !avail.ok && count > 0
+          const isOk     = avail && avail.ok && count > 0
 
-      <div className="space-y-3">
-        {officers.map((officer, idx) => (
-          <div key={idx} className="rounded-xl border p-3 relative" style={{ borderColor: '#e8d9c0', background: light }}>
-            <button
-              type="button"
-              onClick={() => removeOfficer(idx)}
-              className="absolute top-2.5 right-2.5 w-6 h-6 rounded flex items-center justify-center text-[#a89878] hover:bg-[#fbeaea] hover:text-[#7a2020] transition-all"
+          return (
+            <div
+              key={rank.key}
+              className="rounded-xl border p-2.5 transition-all"
+              style={{
+                borderColor: hasError ? '#E24B4A' : isOk ? '#639922' : '#e8d9c0',
+                background:  hasError ? '#FCEBEB' : isOk ? '#EAF3DE' : light,
+              }}
             >
-              <X size={11} />
-            </button>
-
-            <p className="text-[10px] font-bold text-[#a89878] uppercase tracking-wider mb-2">
-              अधिकारी #{idx + 1}
-            </p>
-
-            {/* Staff picker (optional) */}
-            {availableStaff.length > 0 && (
-              <div className="mb-2">
-                <label className="block text-[10px] font-semibold text-[#6b5c42] uppercase tracking-wide mb-1">
-                  स्टाफ से चुनें (वैकल्पिक)
-                </label>
-                <div className="relative">
-                  <select
-                    value={officer.userId || ''}
-                    onChange={e => selectStaff(idx, e.target.value)}
-                    className="w-full appearance-none bg-white border border-[#ddd0b8] rounded-lg px-2.5 py-2 text-[12px] text-[#2c2416] focus:outline-none pr-6"
-                    onFocus={e => { e.target.style.borderColor = color; e.target.style.boxShadow = `0 0 0 2px ${color}20` }}
-                    onBlur={e => { e.target.style.borderColor = '#ddd0b8'; e.target.style.boxShadow = 'none' }}
-                  >
-                    <option value="">— मैन्युअल दर्ज करें —</option>
-                    {availableStaff.map(s => (
-                      <option key={s.id} value={s.id}>{s.name} ({s.pno})</option>
-                    ))}
-                  </select>
-                  <ChevronDown size={11} className="absolute right-2 top-1/2 -translate-y-1/2 text-[#9a8870] pointer-events-none" />
-                </div>
+              <div className="text-[10px] font-bold uppercase tracking-wider"
+                style={{ color: hasError ? '#A32D2D' : isOk ? '#27500A' : '#a89878' }}>
+                {rank.label}
               </div>
-            )}
-
-            <div className="grid grid-cols-2 gap-2">
-              {[
-                { key: 'name',   label: 'नाम',      req: true },
-                { key: 'rank',   label: 'पद/रैंक',  req: false },
-                { key: 'pno',    label: 'PNO',       req: false },
-                { key: 'mobile', label: 'मोबाइल',   req: false },
-              ].map(f => (
-                <div key={f.key}>
-                  <label className="block text-[10px] font-semibold text-[#6b5c42] uppercase tracking-wide mb-1">
-                    {f.label}{f.req && <span className="text-red-500 ml-0.5">*</span>}
-                  </label>
-                  <input
-                    type="text"
-                    className="w-full bg-white border border-[#ddd0b8] rounded-lg px-2.5 py-2 text-[12px] text-[#2c2416] focus:outline-none transition-all"
-                    value={officer[f.key] || ''}
-                    onChange={e => updateOfficer(idx, f.key, e.target.value)}
-                    onFocus={e => { e.target.style.borderColor = color; e.target.style.boxShadow = `0 0 0 2px ${color}20` }}
-                    onBlur={e => { e.target.style.borderColor = '#ddd0b8'; e.target.style.boxShadow = 'none' }}
-                  />
-                </div>
-              ))}
+              <div className="text-[9px] mb-2 truncate" style={{ color: '#b8a888' }}>
+                {rank.hindi}
+              </div>
+              <input
+                type="number"
+                min="0"
+                className="w-full text-center text-[20px] font-semibold bg-white border rounded-lg py-1 focus:outline-none transition-all"
+                style={{
+                  borderColor: hasError ? '#E24B4A' : isOk ? '#639922' : '#ddd0b8',
+                  color:       hasError ? '#A32D2D' : '#2c2416',
+                }}
+                value={count || ''}
+                placeholder="0"
+                onChange={e => handleChange(rank.key, e.target.value)}
+                onFocus={e => {
+                  e.target.style.borderColor = color
+                  e.target.style.boxShadow   = `0 0 0 2px ${color}20`
+                }}
+                onBlur={e => {
+                  e.target.style.borderColor = hasError ? '#E24B4A' : isOk ? '#639922' : '#ddd0b8'
+                  e.target.style.boxShadow   = 'none'
+                }}
+              />
+              {/* status line */}
+              <div className="text-[10px] mt-1.5 min-h-[14px] font-medium"
+                style={{ color: hasError ? '#A32D2D' : isOk ? '#3B6D11' : '#b8a888' }}>
+                {avail
+                  ? hasError
+                    ? `केवल ${avail.available} उपलब्ध!`
+                    : isOk
+                      ? `✓ ${avail.available} उपलब्ध`
+                      : `उपलब्ध: ${avail.available}`
+                  : count > 0
+                    ? 'सत्यापित करें...'
+                    : ''}
+              </div>
             </div>
-          </div>
-        ))}
+          )
+        })}
       </div>
+
+      {/* Availability result banner */}
+      {availability && (
+        <>
+          {Object.values(availability).some(d => !d.ok) ? (
+            <div className="mt-3 rounded-xl border p-3"
+              style={{ background: '#FCEBEB', borderColor: '#F09595' }}>
+              <p className="text-[12px] font-semibold mb-1" style={{ color: '#791F1F' }}>
+                निम्न पद पर्याप्त नहीं हैं:
+              </p>
+              <ul className="space-y-0.5">
+                {Object.entries(availability)
+                  .filter(([, d]) => !d.ok)
+                  .map(([key, d]) => (
+                    <li key={key} className="text-[11px] flex items-center gap-1" style={{ color: '#A32D2D' }}>
+                      <X size={10} />
+                      {RANKS.find(r => r.key === key)?.label}: {d.required} चाहिए,
+                      केवल {d.available} उपलब्ध
+                    </li>
+                  ))}
+              </ul>
+            </div>
+          ) : (
+            <div className="mt-3 rounded-xl border p-3 flex items-center gap-2"
+              style={{ background: '#EAF3DE', borderColor: '#97C459' }}>
+              <Check size={14} style={{ color: '#27500A' }} />
+              <p className="text-[12px] font-semibold" style={{ color: '#27500A' }}>
+                सभी पद उपलब्ध हैं — सहेजा जा सकता है
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   )
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  SEARCH TAB COMPONENT
+//  SEARCH TAB
 // ══════════════════════════════════════════════════════════════════════════════
 
 function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
-  const [query, setQuery] = useState('')
-  const [scope, setScope] = useState('all') // all | sz | zone | sector | gp | sthal | booth
+  const [query, setQuery]   = useState('')
+  const [scope, setScope]   = useState('all')
   const [results, setResults] = useState([])
 
   const SCOPE_OPTIONS = [
@@ -285,63 +290,49 @@ function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
     if (!query.trim()) { setResults([]); return }
     const q = query.toLowerCase()
     const found = []
-
     const match = str => str && str.toLowerCase().includes(q)
 
     if (scope === 'all' || scope === 'sz') {
       szList.forEach(item => {
-        if (match(item.name) || match(item.district) || match(item.block)) {
+        if (match(item.name) || match(item.district) || match(item.block))
           found.push({ type: 'sz', label: 'सुपर जोन', color: '#8b6914', bg: '#fdf5e6', item, display: tx(item.name) || item.name })
-        }
       })
     }
-
     if (scope === 'all' || scope === 'zone') {
       Object.values(zoneMap).flat().forEach(item => {
-        if (match(item.name) || match(item.hqAddress)) {
+        if (match(item.name) || match(item.hqAddress))
           found.push({ type: 'zone', label: 'जोन', color: '#2d6a4f', bg: '#f0f7eb', item, display: tx(item.name) || item.name })
-        }
       })
     }
-
     if (scope === 'all' || scope === 'sector') {
       Object.values(sectMap).flat().forEach(item => {
-        if (match(item.name)) {
+        if (match(item.name))
           found.push({ type: 'sector', label: 'सेक्टर', color: '#1a3d6e', bg: '#e8f0fb', item, display: tx(item.name) || item.name })
-        }
       })
     }
-
     if (scope === 'all' || scope === 'gp') {
       Object.values(gpMap).flat().forEach(item => {
-        if (match(item.name) || match(item.address)) {
+        if (match(item.name) || match(item.address))
           found.push({ type: 'gp', label: 'ग्राम पंचायत', color: '#6b2fa0', bg: '#f3ebfb', item, display: tx(item.name) || item.name })
-        }
       })
     }
-
     if (scope === 'all' || scope === 'sthal') {
       Object.values(sthalMap).flat().forEach(item => {
-        if (match(item.name) || match(item.address) || match(item.thana)) {
+        if (match(item.name) || match(item.address) || match(item.thana))
           found.push({ type: 'sthal', label: 'मतदान स्थल', color: '#9b2226', bg: '#fbeaea', item, display: tx(item.name) || item.name })
-        }
       })
     }
-
     if (scope === 'all' || scope === 'booth') {
       Object.values(boothMap).flat().forEach(item => {
-        if (match(item.roomNumber)) {
+        if (match(item.roomNumber))
           found.push({ type: 'booth', label: 'बूथ', color: '#0f5132', bg: '#e8f5ef', item, display: item.roomNumber })
-        }
       })
     }
-
     setResults(found.slice(0, 50))
   }, [query, scope, szList, zoneMap, sectMap, gpMap, sthalMap, boothMap])
 
   return (
     <div className="space-y-4">
-      {/* Search Box */}
       <div className="bg-white rounded-2xl border border-[#e8d9c0] shadow-sm overflow-hidden">
         <div className="p-4 sm:p-5">
           <div className="relative mb-3">
@@ -357,27 +348,20 @@ function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
               autoFocus
             />
             {query && (
-              <button
-                onClick={() => setQuery('')}
-                className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[#a89878] hover:bg-[#f0e8d8] transition-colors"
-              >
+              <button onClick={() => setQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 w-6 h-6 rounded-full flex items-center justify-center text-[#a89878] hover:bg-[#f0e8d8] transition-colors">
                 <X size={12} />
               </button>
             )}
           </div>
-
-          {/* Scope filters */}
           <div className="flex flex-wrap gap-2">
             {SCOPE_OPTIONS.map(opt => (
-              <button
-                key={opt.key}
-                onClick={() => setScope(opt.key)}
+              <button key={opt.key} onClick={() => setScope(opt.key)}
                 className="text-[11px] font-semibold px-3 py-1.5 rounded-full transition-all border"
                 style={scope === opt.key
                   ? { background: opt.color || '#374151', color: 'white', borderColor: opt.color || '#374151' }
                   : { background: '#faf6ef', color: '#7a6a50', borderColor: '#ddd0b8' }
-                }
-              >
+                }>
                 {opt.label}
               </button>
             ))}
@@ -385,7 +369,6 @@ function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
         </div>
       </div>
 
-      {/* Results */}
       {query.trim() && (
         <div className="bg-white rounded-2xl border border-[#e8d9c0] shadow-sm overflow-hidden">
           <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[#f0e8d8]">
@@ -394,7 +377,6 @@ function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
               {results.length} मिले
             </span>
           </div>
-
           {results.length === 0 ? (
             <div className="flex flex-col items-center justify-center py-12 text-center">
               <div className="w-12 h-12 rounded-2xl bg-[#f3f4f6] flex items-center justify-center mb-3">
@@ -407,24 +389,14 @@ function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
             <div className="divide-y divide-[#f5f0e8]">
               {results.map((r, idx) => (
                 <div key={idx} className="flex items-center gap-3 px-4 sm:px-5 py-3.5 hover:bg-[#faf6ef] transition-colors">
-                  <span
-                    className="text-[10px] font-bold px-2 py-1 rounded-md flex-shrink-0 whitespace-nowrap"
-                    style={{ background: r.bg, color: r.color }}
-                  >
-                    {r.label}
-                  </span>
+                  <span className="text-[10px] font-bold px-2 py-1 rounded-md flex-shrink-0 whitespace-nowrap"
+                    style={{ background: r.bg, color: r.color }}>{r.label}</span>
                   <div className="flex-1 min-w-0">
                     <p className="text-[13px] font-semibold text-[#2c2416] truncate">{r.display}</p>
-                    {r.item.address && (
-                      <p className="text-[11px] text-[#a89878] truncate mt-0.5">{tx(r.item.address) || r.item.address}</p>
-                    )}
-                    {r.item.thana && (
-                      <p className="text-[11px] text-[#a89878] truncate mt-0.5">थाना: {r.item.thana}</p>
-                    )}
+                    {r.item.address && <p className="text-[11px] text-[#a89878] truncate mt-0.5">{tx(r.item.address) || r.item.address}</p>}
+                    {r.item.thana   && <p className="text-[11px] text-[#a89878] truncate mt-0.5">थाना: {r.item.thana}</p>}
                   </div>
-                  {r.item.district && (
-                    <span className="text-[11px] text-[#a89878] flex-shrink-0">{r.item.district}</span>
-                  )}
+                  {r.item.district && <span className="text-[11px] text-[#a89878] flex-shrink-0">{r.item.district}</span>}
                 </div>
               ))}
             </div>
@@ -438,9 +410,7 @@ function SearchTab({ szList, zoneMap, sectMap, gpMap, sthalMap, boothMap }) {
             <Search size={28} className="text-[#9ca3af]" />
           </div>
           <p className="text-[#7a6a50] text-sm font-medium">पूरे चुनाव ढांचे में खोजें</p>
-          <p className="text-[#a89878] text-xs mt-1">
-            सुपर जोन से लेकर बूथ तक — सभी में एक साथ खोज
-          </p>
+          <p className="text-[#a89878] text-xs mt-1">सुपर जोन से लेकर बूथ तक — सभी में एक साथ खोज</p>
         </div>
       )}
     </div>
@@ -460,7 +430,7 @@ function HindiSelect({ label, value, onChange, options, disabled, color, placeho
           value={value}
           onChange={e => onChange(Number(e.target.value))}
           disabled={disabled || !options.length}
-          className="w-full appearance-none bg-[#faf6ef] border border-[#ddd0b8] rounded-lg px-3 py-2.5 text-[13px] text-[#2c2416] focus:outline-none focus:ring-2 disabled:opacity-50 disabled:cursor-not-allowed pr-8 transition-all"
+          className="w-full appearance-none bg-[#faf6ef] border border-[#ddd0b8] rounded-lg px-3 py-2.5 text-[13px] text-[#2c2416] focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed pr-8 transition-all"
           onFocus={e => { e.target.style.borderColor = color; e.target.style.boxShadow = `0 0 0 2px ${color}25` }}
           onBlur={e => { e.target.style.borderColor = '#ddd0b8'; e.target.style.boxShadow = 'none' }}
         >
@@ -477,10 +447,8 @@ function HindiSelect({ label, value, onChange, options, disabled, color, placeho
 
 function Spinner({ color }) {
   return (
-    <div
-      className="w-5 h-5 rounded-full border-2 border-t-transparent animate-spin"
-      style={{ borderColor: `${color}40`, borderTopColor: color }}
-    />
+    <div className="w-5 h-5 rounded-full border-2 border-t-transparent animate-spin"
+      style={{ borderColor: `${color}40`, borderTopColor: color }} />
   )
 }
 
@@ -513,53 +481,45 @@ function NeedsParentState({ message }) {
 // ══════════════════════════════════════════════════════════════════════════════
 
 export default function AdminStructure() {
-  const [activeTab,  setActiveTab]  = useState('sz')
+  const [activeTab, setActiveTab] = useState('sz')
 
-  // Data keyed by parent ID; szList is flat
-  const [szList,    setSzList]    = useState([])
-  const [zoneMap,   setZoneMap]   = useState({})
-  const [sectMap,   setSectMap]   = useState({})
-  const [gpMap,     setGpMap]     = useState({})
-  const [sthalMap,  setSthalMap]  = useState({})
-  const [boothMap,  setBoothMap]  = useState({})
+  // Data
+  const [szList,   setSzList]   = useState([])
+  const [zoneMap,  setZoneMap]  = useState({})
+  const [sectMap,  setSectMap]  = useState({})
+  const [gpMap,    setGpMap]    = useState({})
+  const [sthalMap, setSthalMap] = useState({})
+  const [boothMap, setBoothMap] = useState({})
 
-  // Selected filters (cascade)
-  const [selSZ,     setSelSZ]     = useState('')
-  const [selZone,   setSelZone]   = useState('')
-  const [selSect,   setSelSect]   = useState('')
-  const [selGP,     setSelGP]     = useState('')
-  const [selSthal,  setSelSthal]  = useState('')
+  // Cascade filters
+  const [selSZ,    setSelSZ]    = useState('')
+  const [selZone,  setSelZone]  = useState('')
+  const [selSect,  setSelSect]  = useState('')
+  const [selGP,    setSelGP]    = useState('')
+  const [selSthal, setSelSthal] = useState('')
 
-  // Pagination per tab
+  // Pagination
   const [pages, setPages] = useState({ sz: 1, zone: 1, sector: 1, gp: 1, sthal: 1, booth: 1 })
 
-  // UI state
-  const [showForm,  setShowForm]  = useState(false)
-  const [formVals,  setFormVals]  = useState({})
-  const [officers,  setOfficers]  = useState([])      // officer rows in add form
-  const [availableStaff, setAvailableStaff] = useState([])  // for officer picker
-  const [saving,    setSaving]    = useState(false)
-  const [loading,   setLoading]   = useState({ init: true, tab: false })
-  const [txState,   setTxState]   = useState({ busy: false, tick: 0 })
-  const [confirm,   setConfirm]   = useState(null)
-  const [mapRef, setMapRef] = useState(null)
+  // Form state
+  const [showForm,      setShowForm]      = useState(false)
+  const [formVals,      setFormVals]      = useState({})
+  const [rankCounts,    setRankCounts]    = useState({})        // { asp: 0, inspector: 2, ... }
+  const [rankAvailability, setRankAvailability] = useState(null) // result from check-availability API
+  const [saving,        setSaving]        = useState(false)
+  const [checkingAvail, setCheckingAvail] = useState(false)
+  const [loading,       setLoading]       = useState({ init: true, tab: false })
+  const [txState,       setTxState]       = useState({ busy: false, tick: 0 })
+  const [confirm,       setConfirm]       = useState(null)
+  const [mapRef,        setMapRef]        = useState(null)
 
   // ── Initial load ────────────────────────────────────────────────────────────
   useEffect(() => { fetchSZ() }, [])
 
-  // ── Fetch available staff when form opens for SZ/zone/sector ────────────────
-  useEffect(() => {
-    if (showForm && ['sz', 'zone', 'sector'].includes(activeTab)) {
-      adminAPI.getStaff && adminAPI.getStaff().then(d => {
-        setAvailableStaff(Array.isArray(d) ? d : [])
-      }).catch(() => setAvailableStaff([]))
-    }
-  }, [showForm, activeTab])
-
   const fetchSZ = async () => {
     setLoading(l => ({ ...l, init: true }))
     try {
-      const d = await adminAPI.getSuperZones()
+      const d   = await adminAPI.getSuperZones()
       const arr = Array.isArray(d) ? d : []
       setSzList(arr)
       autoTranslate(arr)
@@ -567,7 +527,7 @@ export default function AdminStructure() {
     finally { setLoading(l => ({ ...l, init: false })) }
   }
 
-  // ── Auto-translate items ─────────────────────────────────────────────────────
+  // ── Auto-translate ──────────────────────────────────────────────────────────
   const autoTranslate = useCallback(async (items) => {
     if (!items?.length) return
     const names = items.flatMap(i => [i.name, i.address, i.hqAddress, i.district, i.block, i.thana].filter(Boolean))
@@ -583,7 +543,7 @@ export default function AdminStructure() {
     if (!force && zoneMap[szId]) return
     setLoading(l => ({ ...l, tab: true }))
     try {
-      const d = await adminAPI.getZones(szId)
+      const d   = await adminAPI.getZones(szId)
       const arr = Array.isArray(d) ? d : []
       setZoneMap(p => ({ ...p, [szId]: arr }))
       autoTranslate(arr)
@@ -596,7 +556,7 @@ export default function AdminStructure() {
     if (!force && sectMap[zId]) return
     setLoading(l => ({ ...l, tab: true }))
     try {
-      const d = await adminAPI.getSectors(zId)
+      const d   = await adminAPI.getSectors(zId)
       const arr = Array.isArray(d) ? d : []
       setSectMap(p => ({ ...p, [zId]: arr }))
       autoTranslate(arr)
@@ -609,7 +569,7 @@ export default function AdminStructure() {
     if (!force && gpMap[sId]) return
     setLoading(l => ({ ...l, tab: true }))
     try {
-      const d = await adminAPI.getGPs(sId)
+      const d   = await adminAPI.getGPs(sId)
       const arr = Array.isArray(d) ? d : []
       setGpMap(p => ({ ...p, [sId]: arr }))
       autoTranslate(arr)
@@ -622,7 +582,7 @@ export default function AdminStructure() {
     if (!force && sthalMap[gpId]) return
     setLoading(l => ({ ...l, tab: true }))
     try {
-      const d = await adminAPI.getCenters(gpId)
+      const d   = await adminAPI.getCenters(gpId)
       const arr = Array.isArray(d) ? d : []
       setSthalMap(p => ({ ...p, [gpId]: arr }))
       autoTranslate(arr)
@@ -635,27 +595,21 @@ export default function AdminStructure() {
     if (!force && boothMap[cId]) return
     setLoading(l => ({ ...l, tab: true }))
     try {
-      const d = await adminAPI.getRooms(cId)
+      const d   = await adminAPI.getRooms(cId)
       const arr = Array.isArray(d) ? d : []
       setBoothMap(p => ({ ...p, [cId]: arr }))
     } catch { toast.error('बूथ लोड नहीं हो सका') }
     finally { setLoading(l => ({ ...l, tab: false })) }
   }, [boothMap])
 
-  // ── Cascade selection handlers ───────────────────────────────────────────────
+  // ── Cascade handlers ─────────────────────────────────────────────────────────
   const onSelectSZ = v => {
-  const selected = szList.find(s => String(s.id) === String(v))
-
-  if (!selected) return
-
-  setSelSZ(selected.id)   // ✅ ALWAYS STORE ID
-  setSelZone('')
-  setSelSect('')
-  setSelGP('')
-  setSelSthal('')
-
-  loadZones(selected.id)
-}
+    const selected = szList.find(s => String(s.id) === String(v))
+    if (!selected) return
+    setSelSZ(selected.id)
+    setSelZone(''); setSelSect(''); setSelGP(''); setSelSthal('')
+    loadZones(selected.id)
+  }
   const onSelectZone = v => {
     setSelZone(v); setSelSect(''); setSelGP(''); setSelSthal('')
     if (v) loadSectors(v)
@@ -677,32 +631,31 @@ export default function AdminStructure() {
   useEffect(() => {
     setShowForm(false)
     setFormVals({})
-    setOfficers([])
+    setRankCounts({})
+    setRankAvailability(null)
     setPages(p => ({ ...p, [activeTab]: 1 }))
   }, [activeTab])
 
-  // ── Derive current list ──────────────────────────────────────────────────────
+  // ── Current list ─────────────────────────────────────────────────────────────
   const getList = () => {
     switch (activeTab) {
       case 'sz':     return szList
-      case 'zone':   return selSZ    ? (zoneMap[selSZ]   || []) : null
-      case 'sector': return selZone  ? (sectMap[selZone] || []) : null
-      case 'gp':     return selSect  ? (gpMap[selSect]   || []) : null
-      case 'sthal':  return selGP    ? (sthalMap[selGP]  || []) : null
+      case 'zone':   return selSZ    ? (zoneMap[selSZ]     || []) : null
+      case 'sector': return selZone  ? (sectMap[selZone]   || []) : null
+      case 'gp':     return selSect  ? (gpMap[selSect]     || []) : null
+      case 'sthal':  return selGP    ? (sthalMap[selGP]    || []) : null
       case 'booth':  return selSthal ? (boothMap[selSthal] || []) : null
       default: return []
     }
   }
-
-console.log("selSZ:", selSZ)
 
   const allItems   = getList()
   const curPage    = pages[activeTab] || 1
   const totalPages = allItems ? Math.max(1, Math.ceil(allItems.length / PAGE_SIZE)) : 1
   const pageItems  = allItems ? allItems.slice((curPage - 1) * PAGE_SIZE, curPage * PAGE_SIZE) : []
   const tabObj     = TABS.find(t => t.key === activeTab)
+  const TabIcon    = tabObj?.icon
 
-  // ── Parent requirement checks ────────────────────────────────────────────────
   const parentMessages = {
     zone:   'पहले ऊपर से सुपर जोन चुनें',
     sector: 'पहले ऊपर से जोन चुनें',
@@ -710,13 +663,42 @@ console.log("selSZ:", selSZ)
     sthal:  'पहले ऊपर से ग्राम पंचायत चुनें',
     booth:  'पहले ऊपर से मतदान स्थल चुनें',
   }
-  const needsParent = allItems === null
+  const needsParent   = allItems === null
+  const hasOfficers   = HAS_OFFICERS.includes(activeTab)
+  const hasDutyAssign = HAS_DUTY_ASSIGN.includes(activeTab)
+  const showRankForm  = hasOfficers || hasDutyAssign
 
-  // ── Has officer section? ─────────────────────────────────────────────────────
-  const hasOfficers = ['sz', 'zone', 'sector'].includes(activeTab)
+  // ── Availability check ───────────────────────────────────────────────────────
+  const doAvailabilityCheck = async () => {
+    const requirements = {}
+    RANKS.forEach(r => {
+      const n = parseInt(rankCounts[r.key]) || 0
+      if (n > 0) requirements[r.key] = n
+    })
+    if (!Object.keys(requirements).length) return true // nothing requested → OK
 
-  // ── Form submission ──────────────────────────────────────────────────────────
-  const handleAdd = async () => {
+    setCheckingAvail(true)
+    try {
+      const res = await adminAPI.checkStaffAvailability(requirements)
+      // adminAPI.checkStaffAvailability: POST /api/admin/staff/check-availability
+      const details = res?.details || res?.data?.details || {}
+      setRankAvailability(details)
+      if (!res?.available && !res?.data?.available) {
+        toast.error('कुछ पद उपलब्ध नहीं हैं — लाल बक्से देखें')
+        return false
+      }
+      return true
+    } catch {
+      toast.error('उपलब्धता जांच में समस्या')
+      return false
+    } finally {
+      setCheckingAvail(false)
+    }
+  }
+
+  // ── Save ─────────────────────────────────────────────────────────────────────
+  const handleSave = async () => {
+    // Validate required fields
     for (const f of FIELDS[activeTab].filter(f => f.required)) {
       if (!formVals[f.key]?.toString().trim()) {
         toast.error(`"${f.label}" आवश्यक है`)
@@ -724,44 +706,39 @@ console.log("selSZ:", selSZ)
       }
     }
 
-    // Validate officers (name required if officer row exists)
-    for (let i = 0; i < officers.length; i++) {
-      if (!officers[i].name?.trim()) {
-        toast.error(`अधिकारी #${i + 1} का नाम आवश्यक है`)
-        return
-      }
-    }
-
-    const parentCheck = {
-      zone: selSZ, sector: selZone, gp: selSect, sthal: selGP, booth: selSthal
-    }
+    // Parent check
+    const parentCheck = { zone: selSZ, sector: selZone, gp: selSect, sthal: selGP, booth: selSthal }
     if (activeTab !== 'sz' && !parentCheck[activeTab]) {
       toast.error(parentMessages[activeTab])
       return
     }
 
+    // Availability check for officer/duty tabs
+    if (showRankForm) {
+      const ok = await doAvailabilityCheck()
+      if (!ok) return
+    }
+
     setSaving(true)
     try {
-      // Include officers in payload for sz/zone/sector
-      const payload = { ...formVals }
-      if (hasOfficers && officers.length > 0) {
-        payload.officers = officers
-      }
-
       let newItem = null
+
       if (activeTab === 'sz') {
+        const payload = { ...formVals, officerRequirements: rankCounts }
         const res = await adminAPI.addSuperZone(payload)
-        newItem = { id: res?.data?.id ?? res?.id, ...formVals, zoneCount: 0, officers }
+        newItem = { id: res?.data?.id ?? res?.id, ...formVals, zoneCount: 0, officers: [] }
         setSzList(p => [...p, newItem])
 
       } else if (activeTab === 'zone') {
+        const payload = { ...formVals, officerRequirements: rankCounts }
         const res = await adminAPI.addZone(selSZ, payload)
-        newItem = { id: res?.data?.id ?? res?.id, ...formVals, sectorCount: 0, officers }
+        newItem = { id: res?.data?.id ?? res?.id, ...formVals, sectorCount: 0, officers: [] }
         setZoneMap(p => ({ ...p, [selSZ]: [...(p[selSZ] || []), newItem] }))
 
       } else if (activeTab === 'sector') {
+        const payload = { ...formVals, officerRequirements: rankCounts }
         const res = await adminAPI.addSector(selZone, payload)
-        newItem = { id: res?.data?.id ?? res?.id, ...formVals, gpCount: 0, officers }
+        newItem = { id: res?.data?.id ?? res?.id, ...formVals, gpCount: 0, officers: [] }
         setSectMap(p => ({ ...p, [selZone]: [...(p[selZone] || []), newItem] }))
 
       } else if (activeTab === 'gp') {
@@ -770,9 +747,20 @@ console.log("selSZ:", selSZ)
         setGpMap(p => ({ ...p, [selSect]: [...(p[selSect] || []), newItem] }))
 
       } else if (activeTab === 'sthal') {
-        const res = await adminAPI.addCenter(selGP, formVals)
-        newItem = { id: res?.data?.id ?? res?.id, ...formVals, dutyCount: 0 }
+        // Pass staffRequirements → backend auto-assigns duties
+        const payload = { ...formVals, staffRequirements: rankCounts }
+        const res = await adminAPI.addCenter(selGP, payload)
+        const assignedCount = res?.data?.assignedCount ?? res?.assignedCount ?? 0
+        newItem = { id: res?.data?.id ?? res?.id, ...formVals, dutyCount: assignedCount }
         setSthalMap(p => ({ ...p, [selGP]: [...(p[selGP] || []), newItem] }))
+        if (assignedCount > 0) {
+          toast.success(`${tabObj.label} जोड़ा गया — ${assignedCount} कर्मचारी स्वतः नियुक्त ✓`)
+        } else {
+          toast.success(`${tabObj.label} सफलतापूर्वक जोड़ा गया ✓`)
+        }
+        setFormVals({}); setRankCounts({}); setRankAvailability(null); setShowForm(false)
+        setSaving(false)
+        return
 
       } else if (activeTab === 'booth') {
         const res = await adminAPI.addRoom(selSthal, formVals)
@@ -782,9 +770,7 @@ console.log("selSZ:", selSZ)
 
       if (newItem) autoTranslate([newItem])
       toast.success(`${tabObj.label} सफलतापूर्वक जोड़ा गया ✓`)
-      setFormVals({})
-      setOfficers([])
-      setShowForm(false)
+      setFormVals({}); setRankCounts({}); setRankAvailability(null); setShowForm(false)
     } catch (e) {
       toast.error(e?.response?.data?.message || 'जोड़ने में समस्या हुई')
     } finally {
@@ -792,7 +778,7 @@ console.log("selSZ:", selSZ)
     }
   }
 
-  // ── Delete handler ───────────────────────────────────────────────────────────
+  // ── Delete ───────────────────────────────────────────────────────────────────
   const handleDelete = item => {
     setConfirm({
       item,
@@ -813,18 +799,17 @@ console.log("selSZ:", selSZ)
 
   const setField = (k, v) => setFormVals(p => ({ ...p, [k]: v }))
   const setPage  = v => setPages(p => ({ ...p, [activeTab]: v }))
-  const TabIcon  = tabObj?.icon
 
-  // ── Refresh current tab ──────────────────────────────────────────────────────
   const handleRefresh = () => {
-    if (activeTab === 'sz') { setSzList([]); fetchSZ() }
-    else if (activeTab === 'zone'   && selSZ)    loadZones(selSZ, true)
-    else if (activeTab === 'sector' && selZone)  loadSectors(selZone, true)
-    else if (activeTab === 'gp'     && selSect)  loadGPs(selSect, true)
-    else if (activeTab === 'sthal'  && selGP)    loadSthal(selGP, true)
-    else if (activeTab === 'booth'  && selSthal) loadBooths(selSthal, true)
+    if (activeTab === 'sz')                        { setSzList([]); fetchSZ() }
+    else if (activeTab === 'zone'   && selSZ)      loadZones(selSZ, true)
+    else if (activeTab === 'sector' && selZone)    loadSectors(selZone, true)
+    else if (activeTab === 'gp'     && selSect)    loadGPs(selSect, true)
+    else if (activeTab === 'sthal'  && selGP)      loadSthal(selGP, true)
+    else if (activeTab === 'booth'  && selSthal)   loadBooths(selSthal, true)
   }
 
+  // ── Loading screen ───────────────────────────────────────────────────────────
   if (loading.init) {
     return (
       <div className="flex items-center justify-center h-64">
@@ -836,10 +821,11 @@ console.log("selSZ:", selSZ)
     )
   }
 
+  // ════════════════════════════════════════════════════════════════════════════
   return (
     <div className="min-h-screen bg-[#f7f3ec]">
 
-      {/* ━━━━ PAGE HEADER ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {/* ── PAGE HEADER ──────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-[#e8d9c0] px-4 sm:px-6 lg:px-8 py-4">
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
           <div>
@@ -864,13 +850,12 @@ console.log("selSZ:", selSZ)
         </div>
       </div>
 
-      {/* ━━━━ TAB BAR ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {/* ── TAB BAR ──────────────────────────────────────────────────────── */}
       <div className="bg-white border-b border-[#e8d9c0] px-2 sm:px-6 lg:px-8 sticky top-0 z-10 shadow-sm">
         <div className="flex overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
           {TABS.map(tab => {
-            const TIcon = tab.icon
+            const TIcon  = tab.icon
             const active = activeTab === tab.key
-            const isSearch = tab.key === 'search'
             return (
               <button
                 key={tab.key}
@@ -878,9 +863,9 @@ console.log("selSZ:", selSZ)
                 className="flex items-center gap-1.5 sm:gap-2 px-3 sm:px-5 py-3.5 text-xs sm:text-sm font-medium whitespace-nowrap border-b-[3px] transition-all flex-shrink-0"
                 style={{
                   borderColor: active ? tab.color : 'transparent',
-                  color: active ? tab.color : '#7a6a50',
-                  background: active ? tab.light : 'transparent',
-                  marginLeft: isSearch ? 'auto' : 0,
+                  color:       active ? tab.color : '#7a6a50',
+                  background:  active ? tab.light : 'transparent',
+                  marginLeft:  tab.key === 'search' ? 'auto' : 0,
                 }}
               >
                 <TIcon size={14} />
@@ -891,24 +876,20 @@ console.log("selSZ:", selSZ)
         </div>
       </div>
 
-      {/* ━━━━ CONTENT ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {/* ── CONTENT ──────────────────────────────────────────────────────── */}
       <div className="px-4 sm:px-6 lg:px-8 py-5 max-w-7xl mx-auto space-y-4">
 
-        {/* ── SEARCH TAB ────────────────────────────────────────────────── */}
+        {/* SEARCH TAB */}
         {activeTab === 'search' && (
           <SearchTab
-            szList={szList}
-            zoneMap={zoneMap}
-            sectMap={sectMap}
-            gpMap={gpMap}
-            sthalMap={sthalMap}
-            boothMap={boothMap}
+            szList={szList} zoneMap={zoneMap} sectMap={sectMap}
+            gpMap={gpMap} sthalMap={sthalMap} boothMap={boothMap}
           />
         )}
 
         {activeTab !== 'search' && (
           <>
-            {/* ── FILTER / PARENT SELECTOR PANEL ──────────────────────── */}
+            {/* ── FILTER PANEL ───────────────────────────────────────── */}
             {activeTab !== 'sz' && (
               <div className="bg-white rounded-2xl border border-[#e8d9c0] shadow-sm overflow-hidden">
                 <div className="flex items-center gap-2 px-4 sm:px-5 py-3 border-b border-[#f0e8d8]">
@@ -923,25 +904,33 @@ console.log("selSZ:", selSZ)
                       <HindiSelect label="सुपर जोन" value={selSZ} onChange={onSelectSZ} options={szList} color={TABS[0].color} />
                     )}
                     {['sector','gp','sthal','booth'].includes(activeTab) && (
-                      <HindiSelect label="जोन" value={selZone} onChange={onSelectZone} options={selSZ ? (zoneMap[selSZ] || []) : []} disabled={!selSZ} color={TABS[1].color} placeholder={!selSZ ? 'पहले सुपर जोन चुनें' : 'जोन'} />
+                      <HindiSelect label="जोन" value={selZone} onChange={onSelectZone}
+                        options={selSZ ? (zoneMap[selSZ] || []) : []} disabled={!selSZ} color={TABS[1].color}
+                        placeholder={!selSZ ? 'पहले सुपर जोन चुनें' : 'जोन'} />
                     )}
                     {['gp','sthal','booth'].includes(activeTab) && (
-                      <HindiSelect label="सेक्टर" value={selSect} onChange={onSelectSect} options={selZone ? (sectMap[selZone] || []) : []} disabled={!selZone} color={TABS[2].color} placeholder={!selZone ? 'पहले जोन चुनें' : 'सेक्टर'} />
+                      <HindiSelect label="सेक्टर" value={selSect} onChange={onSelectSect}
+                        options={selZone ? (sectMap[selZone] || []) : []} disabled={!selZone} color={TABS[2].color}
+                        placeholder={!selZone ? 'पहले जोन चुनें' : 'सेक्टर'} />
                     )}
                     {['sthal','booth'].includes(activeTab) && (
-                      <HindiSelect label="ग्राम पंचायत" value={selGP} onChange={onSelectGP} options={selSect ? (gpMap[selSect] || []) : []} disabled={!selSect} color={TABS[3].color} placeholder={!selSect ? 'पहले सेक्टर चुनें' : 'ग्राम पंचायत'} />
+                      <HindiSelect label="ग्राम पंचायत" value={selGP} onChange={onSelectGP}
+                        options={selSect ? (gpMap[selSect] || []) : []} disabled={!selSect} color={TABS[3].color}
+                        placeholder={!selSect ? 'पहले सेक्टर चुनें' : 'ग्राम पंचायत'} />
                     )}
                     {activeTab === 'booth' && (
-                      <HindiSelect label="मतदान स्थल" value={selSthal} onChange={onSelectSthal} options={selGP ? (sthalMap[selGP] || []) : []} disabled={!selGP} color={TABS[4].color} placeholder={!selGP ? 'पहले GP चुनें' : 'मतदान स्थल'} />
+                      <HindiSelect label="मतदान स्थल" value={selSthal} onChange={onSelectSthal}
+                        options={selGP ? (sthalMap[selGP] || []) : []} disabled={!selGP} color={TABS[4].color}
+                        placeholder={!selGP ? 'पहले GP चुनें' : 'मतदान स्थल'} />
                     )}
                   </div>
                 </div>
               </div>
             )}
 
-            {/* ── ADD FORM CARD ────────────────────────────────────────── */}
+            {/* ── ADD FORM CARD ───────────────────────────────────────── */}
             <div className="bg-white rounded-2xl border border-[#e8d9c0] shadow-sm overflow-hidden">
-              {/* Form toggle header */}
+              {/* Header */}
               <div className="flex items-center justify-between px-4 sm:px-5 py-3.5">
                 <div className="flex items-center gap-2.5">
                   <div className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0" style={{ background: tabObj.bg }}>
@@ -959,17 +948,17 @@ console.log("selSZ:", selSZ)
                   </div>
                 </div>
                 <button
-                  onClick={() => { setShowForm(f => !f); if (showForm) { setFormVals({}); setOfficers([]) } }}
+                  onClick={() => {
+                    setShowForm(f => !f)
+                    if (showForm) { setFormVals({}); setRankCounts({}); setRankAvailability(null) }
+                  }}
                   className="flex items-center gap-1.5 text-[13px] font-medium px-3.5 py-2 rounded-xl transition-all"
                   style={showForm
                     ? { background: '#fbeaea', color: '#7a2020' }
                     : { background: tabObj.color, color: 'white' }
                   }
                 >
-                  {showForm
-                    ? <><X size={13} /> बंद करें</>
-                    : <><Plus size={13} /> जोड़ें</>
-                  }
+                  {showForm ? <><X size={13} /> बंद करें</> : <><Plus size={13} /> जोड़ें</>}
                 </button>
               </div>
 
@@ -1004,12 +993,12 @@ console.log("selSZ:", selSZ)
                         ))}
                       </div>
 
+                      {/* Map picker for sthal */}
                       {activeTab === 'sthal' && (
                         <div className="mt-4">
                           <label className="block text-[11px] font-semibold mb-2 text-[#6b5c42]">
                             📍 मैप से लोकेशन चुनें
                           </label>
-
                           <div className="mb-2 flex gap-2">
                             <input
                               type="text"
@@ -1017,81 +1006,75 @@ console.log("selSZ:", selSZ)
                               className="flex-1 border px-3 py-2 rounded-lg text-sm"
                               onKeyDown={async (e) => {
                                 if (e.key === 'Enter') {
-                                  const query = e.target.value
-
-                                  const res = await fetch(
-                                    `https://nominatim.openstreetmap.org/search?format=json&q=${query}`
-                                  )
+                                  const res  = await fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${e.target.value}`)
                                   const data = await res.json()
-
-                                  if (data && data.length > 0 && mapRef) {
-                                    const lat = parseFloat(data[0].lat)
-                                    const lon = parseFloat(data[0].lon)
-
-                                    // 🔥 MOVE MAP
-                                    mapRef.setView([lat, lon], 15)
+                                  if (data?.length > 0 && mapRef) {
+                                    mapRef.setView([parseFloat(data[0].lat), parseFloat(data[0].lon)], 15)
                                   }
                                 }
                               }}
                             />
                           </div>
-
                           <div className="h-64 rounded-xl overflow-hidden border">
-                            <MapContainer
-                              center={[28.6139, 77.2090]}
-                              zoom={10}
-                              whenCreated={setMapRef}
-                              style={{ height: '100%', width: '100%' }}
-                            >
-                              <TileLayer
-                                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-                              />
-
-                              <LocationMarker
-                                setLatLng={(lat, lng) => {
-                                  setFormVals(prev => ({
-                                    ...prev,
-                                    latitude: lat,
-                                    longitude: lng,
-                                  }))
-                                }}
-                              />
+                            <MapContainer center={[28.6139, 77.2090]} zoom={10}
+                              whenCreated={setMapRef} style={{ height: '100%', width: '100%' }}>
+                              <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
+                              <LocationMarker setLatLng={(lat, lng) =>
+                                setFormVals(prev => ({ ...prev, latitude: lat, longitude: lng }))
+                              } />
                             </MapContainer>
                           </div>
-
                           <p className="text-xs text-gray-500 mt-1">
                             मैप पर क्लिक करें → latitude/longitude ऑटो भर जाएगा
                           </p>
                         </div>
                       )}
 
-                      {/* Officer section — only for SZ, Zone, Sector */}
-                      {hasOfficers && (
-                        <OfficerForm
-                          officers={officers}
-                          onChange={setOfficers}
+                      {/* ── RANK OFFICER FORM (SZ / Zone / Sector / Sthal) ── */}
+                      {showRankForm && (
+                        <OfficerCountForm
+                          value={rankCounts}
+                          onChange={counts => {
+                            setRankCounts(counts)
+                            setRankAvailability(null) // reset check when counts change
+                          }}
                           color={tabObj.color}
                           bg={tabObj.bg}
                           light={tabObj.light}
-                          availableStaff={availableStaff}
+                          availability={rankAvailability}
+                          label={
+                            hasDutyAssign
+                              ? 'ड्यूटी नियुक्ति — कर्मचारी संख्या'
+                              : 'अधिकारी नियुक्ति'
+                          }
                         />
                       )}
 
-                      {/* Submit buttons */}
-                      <div className="flex flex-wrap gap-3 mt-4">
+                      {/* Sthal hint */}
+                      {hasDutyAssign && (
+                        <p className="text-[11px] text-[#7a6a50] mt-2 flex items-center gap-1.5">
+                          <ShieldCheck size={11} className="text-[#2d6a4f]" />
+                          संख्या दर्ज करने पर उपलब्ध कर्मचारी स्वतः इस मतदान स्थल पर नियुक्त हो जाएंगे
+                        </p>
+                      )}
+
+                      {/* Submit */}
+                      <div className="flex flex-wrap gap-3 mt-5">
                         <button
-                          onClick={handleAdd}
-                          disabled={saving}
+                          onClick={handleSave}
+                          disabled={saving || checkingAvail}
                           className="flex items-center gap-2 text-white text-[13px] font-semibold px-5 py-2.5 rounded-xl transition-opacity disabled:opacity-60 shadow-sm"
                           style={{ background: tabObj.color }}
                         >
-                          {saving
-                            ? <><Spinner color="white" /> सहेज रहे हैं...</>
-                            : <><Check size={14} /> सहेजें</>
+                          {checkingAvail
+                            ? <><Spinner color="white" /> उपलब्धता जांच रहे हैं...</>
+                            : saving
+                              ? <><Spinner color="white" /> सहेज रहे हैं...</>
+                              : <><Check size={14} /> सहेजें</>
                           }
                         </button>
                         <button
-                          onClick={() => { setShowForm(false); setFormVals({}); setOfficers([]) }}
+                          onClick={() => { setShowForm(false); setFormVals({}); setRankCounts({}); setRankAvailability(null) }}
                           className="text-[13px] text-[#7a6a50] px-4 py-2.5 rounded-xl hover:bg-[#f0e8d8] transition-colors font-medium"
                         >
                           रद्द करें
@@ -1107,9 +1090,7 @@ console.log("selSZ:", selSZ)
             <div className="bg-white rounded-2xl border border-[#e8d9c0] shadow-sm overflow-hidden">
               <div className="flex items-center justify-between px-4 sm:px-5 py-3.5 border-b border-[#f0e8d8]">
                 <div className="flex items-center gap-2">
-                  <span className="text-[13px] font-semibold text-[#2c2416]">
-                    {tabObj.label} सूची
-                  </span>
+                  <span className="text-[13px] font-semibold text-[#2c2416]">{tabObj.label} सूची</span>
                   {allItems && allItems.length > 0 && (
                     <span className="text-[11px] font-medium px-2 py-0.5 rounded-full"
                       style={{ background: tabObj.bg, color: tabObj.color }}>
@@ -1117,11 +1098,9 @@ console.log("selSZ:", selSZ)
                     </span>
                   )}
                 </div>
-                <button
-                  onClick={handleRefresh}
+                <button onClick={handleRefresh}
                   className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7a6a50] hover:bg-[#f5f0e8] transition-colors"
-                  title="पुनः लोड करें"
-                >
+                  title="पुनः लोड करें">
                   <RefreshCw size={13} className={loading.tab ? 'animate-spin' : ''} />
                 </button>
               </div>
@@ -1148,7 +1127,6 @@ console.log("selSZ:", selSZ)
                               {col.label}
                             </th>
                           ))}
-                          {/* Officers column for sz/zone/sector */}
                           {hasOfficers && (
                             <th className="text-left px-5 py-3 text-[11px] font-bold text-[#6b5c42] uppercase tracking-wider">
                               अधिकारी
@@ -1188,7 +1166,6 @@ console.log("selSZ:", selSZ)
                                 )}
                               </td>
                             ))}
-                            {/* Officers inline display */}
                             {hasOfficers && (
                               <td className="px-5 py-3.5">
                                 {item.officers && item.officers.length > 0 ? (
@@ -1209,10 +1186,8 @@ console.log("selSZ:", selSZ)
                               </td>
                             )}
                             <td className="px-5 py-3.5 text-right">
-                              <button
-                                onClick={() => handleDelete(item)}
-                                className="w-7 h-7 rounded-lg flex items-center justify-center text-[#a89878] hover:bg-[#fbeaea] hover:text-[#7a2020] transition-all opacity-0 group-hover:opacity-100 ml-auto"
-                              >
+                              <button onClick={() => handleDelete(item)}
+                                className="w-7 h-7 rounded-lg flex items-center justify-center text-[#a89878] hover:bg-[#fbeaea] hover:text-[#7a2020] transition-all opacity-0 group-hover:opacity-100 ml-auto">
                                 <Trash2 size={12} />
                               </button>
                             </td>
@@ -1251,15 +1226,13 @@ console.log("selSZ:", selSZ)
                                 .map(col => (
                                   <span key={col.key} className="text-[11px] text-[#7a6a50]">
                                     <span className="text-[#a89878]">{col.label}: </span>
-                                    {col.badge ? (
-                                      <span className="font-semibold" style={{ color: tabObj.color }}>{item[col.key]}</span>
-                                    ) : (
-                                      tx(item[col.key])
-                                    )}
+                                    {col.badge
+                                      ? <span className="font-semibold" style={{ color: tabObj.color }}>{item[col.key]}</span>
+                                      : tx(item[col.key])
+                                    }
                                   </span>
                                 ))}
                             </div>
-                            {/* Officers on mobile */}
                             {hasOfficers && item.officers && item.officers.length > 0 && (
                               <div className="flex flex-wrap gap-1 mt-1.5">
                                 {item.officers.map((o, oi) => (
@@ -1271,10 +1244,8 @@ console.log("selSZ:", selSZ)
                               </div>
                             )}
                           </div>
-                          <button
-                            onClick={() => handleDelete(item)}
-                            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#a89878] hover:bg-[#fbeaea] hover:text-[#7a2020] transition-all flex-shrink-0"
-                          >
+                          <button onClick={() => handleDelete(item)}
+                            className="w-8 h-8 rounded-lg flex items-center justify-center text-[#a89878] hover:bg-[#fbeaea] hover:text-[#7a2020] transition-all flex-shrink-0">
                             <Trash2 size={13} />
                           </button>
                         </div>
@@ -1294,8 +1265,7 @@ console.log("selSZ:", selSZ)
                         <button
                           onClick={() => setPage(Math.max(1, curPage - 1))}
                           disabled={curPage === 1}
-                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7a6a50] hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-all border border-transparent hover:border-[#ddd0b8]"
-                        >
+                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7a6a50] hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-all border border-transparent hover:border-[#ddd0b8]">
                           <ChevronLeft size={15} />
                         </button>
 
@@ -1314,15 +1284,12 @@ console.log("selSZ:", selSZ)
                             p === '...' ? (
                               <span key={`e${i}`} className="w-8 h-8 flex items-center justify-center text-[12px] text-[#a89878]">…</span>
                             ) : (
-                              <button
-                                key={p}
-                                onClick={() => setPage(p)}
+                              <button key={p} onClick={() => setPage(p)}
                                 className="w-8 h-8 rounded-lg text-[12px] font-medium transition-all"
                                 style={curPage === p
                                   ? { background: tabObj.color, color: 'white' }
                                   : { color: '#7a6a50' }
-                                }
-                              >
+                                }>
                                 {p}
                               </button>
                             )
@@ -1332,8 +1299,7 @@ console.log("selSZ:", selSZ)
                         <button
                           onClick={() => setPage(Math.min(totalPages, curPage + 1))}
                           disabled={curPage === totalPages}
-                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7a6a50] hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-all border border-transparent hover:border-[#ddd0b8]"
-                        >
+                          className="w-8 h-8 rounded-lg flex items-center justify-center text-[#7a6a50] hover:bg-white disabled:opacity-40 disabled:cursor-not-allowed transition-all border border-transparent hover:border-[#ddd0b8]">
                           <ChevronRight size={15} />
                         </button>
                       </div>
@@ -1346,7 +1312,7 @@ console.log("selSZ:", selSZ)
         )}
       </div>
 
-      {/* ━━━━ CONFIRM DELETE DIALOG ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ */}
+      {/* ── CONFIRM DELETE ────────────────────────────────────────────────── */}
       {confirm && (
         <div className="fixed inset-0 bg-black/40 backdrop-blur-sm flex items-end sm:items-center justify-center z-50 p-4">
           <div className="bg-white rounded-2xl p-6 w-full max-w-md shadow-2xl">
@@ -1366,16 +1332,12 @@ console.log("selSZ:", selSZ)
               </div>
             </div>
             <div className="flex gap-3">
-              <button
-                onClick={confirm.action}
-                className="flex-1 bg-[#7a2020] hover:opacity-90 text-white text-[13px] font-semibold py-3 rounded-xl transition-opacity"
-              >
+              <button onClick={confirm.action}
+                className="flex-1 bg-[#7a2020] hover:opacity-90 text-white text-[13px] font-semibold py-3 rounded-xl transition-opacity">
                 हाँ, हटाएं
               </button>
-              <button
-                onClick={() => setConfirm(null)}
-                className="flex-1 bg-[#f5f0e8] hover:bg-[#ede5d8] text-[#5a4a36] text-[13px] font-semibold py-3 rounded-xl transition-colors"
-              >
+              <button onClick={() => setConfirm(null)}
+                className="flex-1 bg-[#f5f0e8] hover:bg-[#ede5d8] text-[#5a4a36] text-[13px] font-semibold py-3 rounded-xl transition-colors">
                 रद्द करें
               </button>
             </div>

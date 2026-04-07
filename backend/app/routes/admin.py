@@ -672,9 +672,25 @@ def add_center(gp_id):
     name = body.get("name", "").strip()
     if not name:
         return err("name required")
+
+    staff_requirements = body.get("staffRequirements", {})  # e.g. {"inspector": 1, "constable": 4}
+    district = request.user.get("district")
+
+    RANK_ALIAS = {
+        "asp":       ["asp", "additional sp", "additional superintendent of police"],
+        "dsp":       ["dsp", "deputy sp", "deputy superintendent of police"],
+        "co":        ["co", "circle officer"],
+        "inspector": ["inspector", "निरीक्षक"],
+        "sho":       ["sho", "station house officer"],
+        "si":        ["si", "sub-inspector", "sub inspector"],
+        "hc":        ["hc", "head constable"],
+        "constable": ["constable", "कांस्टेबल"],
+    }
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            # Insert the center first
             cur.execute("""
                 INSERT INTO matdan_sthal
                     (name, address, gram_panchayat_id, thana, center_type, bus_no, latitude, longitude)
@@ -685,11 +701,49 @@ def add_center(gp_id):
                 body.get("busNo", ""), body.get("latitude"), body.get("longitude"),
             ))
             new_id = cur.lastrowid
+
+            # Auto-assign duties based on staffRequirements
+            assigned_staff = []
+            d_clause = "AND u.district=%s" if district else ""
+            d_param  = (district,) if district else ()
+
+            for rank_key, count in staff_requirements.items():
+                count = int(count or 0)
+                if count <= 0:
+                    continue
+
+                aliases = RANK_ALIAS.get(rank_key, [rank_key])
+                placeholders = ", ".join(["%s"] * len(aliases))
+
+                # Get unassigned staff of this rank
+                cur.execute(f"""
+                    SELECT u.id FROM users u
+                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                    WHERE u.role = 'staff'
+                      AND da.id IS NULL
+                      AND LOWER(TRIM(u.user_rank)) IN ({placeholders})
+                      {d_clause}
+                    LIMIT %s
+                """, tuple(a.lower() for a in aliases) + d_param + (count,))
+
+                staff_rows = cur.fetchall()
+                for s in staff_rows:
+                    cur.execute("""
+                        INSERT INTO duty_assignments (staff_id, sthal_id, bus_no, assigned_by)
+                        VALUES (%s, %s, %s, %s)
+                        ON DUPLICATE KEY UPDATE assigned_by=VALUES(assigned_by)
+                    """, (s["id"], new_id, body.get("busNo", ""), _admin_id()))
+                    assigned_staff.append(s["id"])
+
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id, "name": name}, "Center added", 201)
 
+    return ok({
+        "id": new_id,
+        "name": name,
+        "assignedCount": len(assigned_staff)
+    }, f"Center added, {len(assigned_staff)} staff auto-assigned", 201)
 
 @admin_bp.route("/centers/<int:c_id>", methods=["PUT"])
 @admin_required
@@ -1334,4 +1388,71 @@ def staff_rank_summary():
     } for r in rows])
  
  
-    
+# ══════════════════════════════════════════════════════════════════════════════
+#  STAFF AVAILABILITY CHECK
+# ══════════════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/staff/check-availability", methods=["POST"])
+@admin_required
+def check_staff_availability():
+    """
+    Body: { "requirements": { "inspector": 2, "constable": 4, ... } }
+    Returns: { "available": true/false, "details": { "inspector": { "required": 2, "available": 5 }, ... } }
+    """
+    body = request.get_json() or {}
+    requirements = body.get("requirements", {})
+    district = request.user.get("district")
+
+    RANK_ALIAS = {
+        "asp":       ["asp", "additional sp", "additional superintendent of police"],
+        "dsp":       ["dsp", "deputy sp", "deputy superintendent of police"],
+        "co":        ["co", "circle officer"],
+        "inspector": ["inspector", "निरीक्षक"],
+        "sho":       ["sho", "station house officer"],
+        "si":        ["si", "sub-inspector", "sub inspector"],
+        "hc":        ["hc", "head constable"],
+        "constable": ["constable", "कांस्टेबल"],
+    }
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            d_clause = "AND u.district=%s" if district else ""
+            d_param  = (district,) if district else ()
+
+            details = {}
+            all_ok = True
+
+            for rank_key, required_count in requirements.items():
+                if not required_count or int(required_count) <= 0:
+                    continue
+
+                aliases = RANK_ALIAS.get(rank_key, [rank_key])
+                placeholders = ", ".join(["%s"] * len(aliases))
+
+                # Count unassigned staff of this rank
+                cur.execute(f"""
+                    SELECT COUNT(*) AS cnt
+                    FROM users u
+                    LEFT JOIN duty_assignments da ON da.staff_id = u.id
+                    WHERE u.role = 'staff'
+                      AND da.id IS NULL
+                      AND LOWER(TRIM(u.user_rank)) IN ({placeholders})
+                      {d_clause}
+                """, tuple(a.lower() for a in aliases) + d_param)
+
+                available = cur.fetchone()["cnt"]
+                required  = int(required_count)
+
+                details[rank_key] = {
+                    "required":  required,
+                    "available": available,
+                    "ok":        available >= required,
+                }
+                if available < required:
+                    all_ok = False
+
+    finally:
+        conn.close()
+
+    return ok({"available": all_ok, "details": details})  
