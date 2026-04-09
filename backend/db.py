@@ -68,25 +68,52 @@ def init_db():
                         f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci")
             cur.execute(f"USE `{Config.DB_NAME}`")
 
-            # users
-            cur.execute("""CREATE TABLE IF NOT EXISTS users (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                name VARCHAR(150) NOT NULL,
-                username VARCHAR(100) UNIQUE NOT NULL,
-                password VARCHAR(255) NOT NULL,
-                mobile VARCHAR(15) DEFAULT '',
-                role ENUM('master','super_admin','admin','staff') NOT NULL DEFAULT 'staff',
-                district VARCHAR(100) DEFAULT '',
-                thana VARCHAR(100) DEFAULT '',
-                pno VARCHAR(50) UNIQUE,
-                user_rank VARCHAR(100) DEFAULT  '',
-                is_active TINYINT(1) NOT NULL DEFAULT 1,
-                created_by INT, assigned_by INT,
-                created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-                FOREIGN KEY (created_by)  REFERENCES users(id) ON DELETE SET NULL,
-                FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
-            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4""")
+            # ── Tune InnoDB for bulk-insert performance ───────────────────────
+            # These are session-level and only affect this connection/init run.
+            cur.execute("SET SESSION foreign_key_checks = 0")
+            cur.execute("SET SESSION unique_checks = 0")
+            cur.execute("SET SESSION sql_mode = 'STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,"
+                        "NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'")
+
+            # ─────────────────────────────────────────────────────────────────
+            #  TABLES
+            # ─────────────────────────────────────────────────────────────────
+
+            # ── users ─────────────────────────────────────────────────────────
+            # KEY indexes: pno (bulk-upload dup check), role+district (staff list),
+            # name (LIKE search), username (login lookup)
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS users (
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    name        VARCHAR(150)  NOT NULL,
+                    username    VARCHAR(100)  NOT NULL,
+                    password    VARCHAR(255)  NOT NULL,
+                    mobile      VARCHAR(15)   DEFAULT '',
+                    role        ENUM('master','super_admin','admin','staff') NOT NULL DEFAULT 'staff',
+                    district    VARCHAR(100)  DEFAULT '',
+                    thana       VARCHAR(100)  DEFAULT '',
+                    pno         VARCHAR(50)   DEFAULT NULL,
+                    user_rank   VARCHAR(100)  DEFAULT '',
+                    is_active   TINYINT(1)    NOT NULL DEFAULT 1,
+                    created_by  INT           DEFAULT NULL,
+                    assigned_by INT           DEFAULT NULL,
+                    created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                              ON UPDATE CURRENT_TIMESTAMP,
+
+                    UNIQUE KEY uq_username   (username),
+                    UNIQUE KEY uq_pno        (pno),
+
+                    -- search / filter indexes
+                    INDEX idx_role_district  (role, district),
+                    INDEX idx_role_active    (role, is_active),
+                    INDEX idx_name           (name),
+                    INDEX idx_thana          (thana),
+
+                    FOREIGN KEY (created_by)  REFERENCES users(id) ON DELETE SET NULL,
+                    FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
 
             # ── super_zones ───────────────────────────────────────────────────
             cur.execute("""
