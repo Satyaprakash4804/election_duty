@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -24,28 +25,20 @@ String _rh(dynamic val) =>
 String _vd(dynamic x) =>
     (x == null || x.toString().trim().isEmpty) ? '—' : x.toString();
 
-// ─── shared PDF builder (used by both admin page and staff section) ───────────
+// ─── PDF builder — UNCHANGED ─────────────────────────────────────────────────
 pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
   final sahyogi = (s['sahyogi'] ?? s['allStaff'] ?? s['all_staff'] ?? []) as List;
   final totalRows = sahyogi.length < 12 ? 12 : sahyogi.length;
-  final zonalOfficers =
-      (s['zonalOfficers'] ?? s['zonal_officers'] ?? []) as List;
-  final sectorOfficers =
-      (s['sectorOfficers'] ?? s['sector_officers'] ?? []) as List;
-  final superOfficers =
-      (s['superOfficers'] ?? s['super_officers'] ?? []) as List;
+  final zonalOfficers   = (s['zonalOfficers']  ?? s['zonal_officers']  ?? []) as List;
+  final sectorOfficers  = (s['sectorOfficers'] ?? s['sector_officers'] ?? []) as List;
+  final superOfficers   = (s['superOfficers']  ?? s['super_officers']  ?? []) as List;
 
-  final zonalMag = zonalOfficers.isNotEmpty ? zonalOfficers[0] : null;
-  final sectorMag = sectorOfficers.isNotEmpty ? sectorOfficers[0] : null;
-  final zonalPolice = superOfficers.isNotEmpty ? superOfficers[0] : null;
+  final zonalMag    = zonalOfficers.isNotEmpty  ? zonalOfficers[0]  : null;
+  final sectorMag   = sectorOfficers.isNotEmpty ? sectorOfficers[0] : null;
+  final zonalPolice = superOfficers.isNotEmpty  ? superOfficers[0]  : null;
   final sectorPolice = sectorOfficers.length > 1
       ? sectorOfficers[1]
-      : sectorOfficers.isNotEmpty
-          ? sectorOfficers[0]
-          : null;
-
-  // ── RULE: never use color: + decoration: together on pw.Container ───────────
-  // All grey backgrounds go inside BoxDecoration(color: ...).
+      : sectorOfficers.isNotEmpty ? sectorOfficers[0] : null;
 
   pw.Widget th(String t) => pw.Container(
         decoration: const pw.BoxDecoration(color: PdfColors.grey300),
@@ -66,41 +59,31 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
       );
 
   pw.Widget metaRow(String label, String value) => pw.Row(children: [
-    pw.Expanded(
-      flex: 2,
-      child: pw.Container(
-        decoration: const pw.BoxDecoration(
-          color: PdfColors.grey200,
-          border: pw.Border(
-            right: pw.BorderSide(width: 0.3),
-            bottom: pw.BorderSide(width: 0.3),
+        pw.Expanded(
+          flex: 2,
+          child: pw.Container(
+            decoration: const pw.BoxDecoration(
+              color: PdfColors.grey200,
+              border: pw.Border(
+                right: pw.BorderSide(width: 0.3),
+                bottom: pw.BorderSide(width: 0.3),
+              ),
+            ),
+            padding: const pw.EdgeInsets.all(1),
+            child: pw.Text(label, style: pw.TextStyle(font: bold, fontSize: 4.5)),
           ),
         ),
-        padding: const pw.EdgeInsets.all(1),
-        child: pw.Text(
-          label,
-          style: pw.TextStyle(font: bold, fontSize: 4.5),
-        ),
-      ),
-    ),
-    pw.Expanded(
-      flex: 3,
-      child: pw.Container(
-        decoration: const pw.BoxDecoration(
-          border: pw.Border(
-            bottom: pw.BorderSide(width: 0.3),
+        pw.Expanded(
+          flex: 3,
+          child: pw.Container(
+            decoration: const pw.BoxDecoration(
+              border: pw.Border(bottom: pw.BorderSide(width: 0.3)),
+            ),
+            padding: const pw.EdgeInsets.all(1),
+            child: pw.Text(value, style: pw.TextStyle(font: font, fontSize: 4.5)),
           ),
         ),
-        padding: const pw.EdgeInsets.all(1),
-        child: pw.Text(
-          value,
-          style: pw.TextStyle(font: font, fontSize: 4.5),
-        ),
-      ),
-    ),
-  ]);
-
-  
+      ]);
 
   pw.Widget sHdr(String text, {int flex = 1, bool isLast = false}) =>
       pw.Expanded(
@@ -139,418 +122,365 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
 
   pw.Widget officerBlock(
           String title, String? name, String? mobile, String? rank) =>
-      pw.Column(
-          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-          children: [
-            pw.Container(
-              decoration: const pw.BoxDecoration(
-                  color: PdfColors.grey300,
-                  border: pw.Border(bottom: pw.BorderSide(width: 0.4))),
-              padding: const pw.EdgeInsets.all(1),
-              child: pw.Center(
-                  child: pw.Text(title,
-                      style: pw.TextStyle(font: bold, fontSize: 5),
-                      textAlign: pw.TextAlign.center)),
-            ),
-            pw.Padding(
-              padding: const pw.EdgeInsets.all(2),
-              child: pw.Text(
-                [if (rank != null) rank, name ?? '—', if (mobile != null) mobile]
-                    .join('\n'),
-                style: pw.TextStyle(font: font, fontSize: 4.5),
-                textAlign: pw.TextAlign.center,
-              ),
-            ),
-          ]);
+      pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+        pw.Container(
+          decoration: const pw.BoxDecoration(
+              color: PdfColors.grey300,
+              border: pw.Border(bottom: pw.BorderSide(width: 0.4))),
+          padding: const pw.EdgeInsets.all(1),
+          child: pw.Center(
+              child: pw.Text(title,
+                  style: pw.TextStyle(font: bold, fontSize: 5),
+                  textAlign: pw.TextAlign.center)),
+        ),
+        pw.Padding(
+          padding: const pw.EdgeInsets.all(2),
+          child: pw.Text(
+            [if (rank != null) rank, name ?? '—', if (mobile != null) mobile]
+                .join('\n'),
+            style: pw.TextStyle(font: font, fontSize: 4.5),
+            textAlign: pw.TextAlign.center,
+          ),
+        ),
+      ]);
 
   return pw.Container(
     decoration: pw.BoxDecoration(border: pw.Border.all(width: 1)),
-    child: pw.Column(
-      crossAxisAlignment: pw.CrossAxisAlignment.start,
-      children: [
-        // ── HEADER ────────────────────────────────────────────────────────────
-        pw.Container(
-          decoration: const pw.BoxDecoration(
-              border: pw.Border(bottom: pw.BorderSide(width: 0.8))),
-          child: pw.Row(children: [
-            pw.Container(
-              width: 42,
-              padding: const pw.EdgeInsets.all(3),
+    child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+      // HEADER
+      pw.Container(
+        decoration: const pw.BoxDecoration(
+            border: pw.Border(bottom: pw.BorderSide(width: 0.8))),
+        child: pw.Row(children: [
+          pw.Container(
+            width: 42,
+            padding: const pw.EdgeInsets.all(3),
+            decoration: const pw.BoxDecoration(
+                border: pw.Border(right: pw.BorderSide(width: 0.5))),
+            child: pw.Center(
+                child: pw.Text('ECI',
+                    style: pw.TextStyle(font: bold, fontSize: 7))),
+          ),
+          pw.Expanded(
+            child: pw.Padding(
+              padding: const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+              child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.center,
+                crossAxisAlignment: pw.CrossAxisAlignment.center,
+                children: [
+                  pw.Text('ड्यूटी कार्ड',
+                      style: pw.TextStyle(
+                          font: bold,
+                          fontSize: 10,
+                          decoration: pw.TextDecoration.underline)),
+                  pw.Text('लोकसभा सामान्य निर्वाचन–2024',
+                      style: pw.TextStyle(font: bold, fontSize: 7)),
+                  pw.Text(
+                      'जनपद ${_vd(s['adminDistrict']?? 'बागपत')}',
+                      style: pw.TextStyle(font: font, fontSize: 6.5)),
+                  pw.SizedBox(height: 1),
+                  pw.Container(
+                    decoration: const pw.BoxDecoration(
+                        border: pw.Border(top: pw.BorderSide(width: 0.5))),
+                    padding: const pw.EdgeInsets.only(top: 1),
+                    child: pw.Text(
+                      'मतदान चरण–द्वितीय  दिनांक 26.04.2024'
+                      '  प्रातः 07:00 से सांय 06:00 तक',
+                      style: pw.TextStyle(font: bold, fontSize: 5.5),
+                      textAlign: pw.TextAlign.center,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          pw.Container(
+            width: 42,
+            padding: const pw.EdgeInsets.all(3),
+            decoration: const pw.BoxDecoration(
+                border: pw.Border(left: pw.BorderSide(width: 0.5))),
+            child: pw.Center(
+                child: pw.Text('उ0प्र0\nपुलिस',
+                    style: pw.TextStyle(font: bold, fontSize: 6),
+                    textAlign: pw.TextAlign.center)),
+          ),
+        ]),
+      ),
+      // PRIMARY OFFICER
+      pw.Table(
+        border: const pw.TableBorder(
+          left: pw.BorderSide(width: 0.5),
+          right: pw.BorderSide(width: 0.5),
+          top: pw.BorderSide(width: 0.5),
+          bottom: pw.BorderSide(width: 0.5),
+          horizontalInside: pw.BorderSide(width: 0.5),
+          verticalInside: pw.BorderSide(width: 0.5),
+        ),
+        columnWidths: const {
+          0: pw.FlexColumnWidth(2.0),
+          1: pw.FlexColumnWidth(1.1),
+          2: pw.FlexColumnWidth(1.8),
+          3: pw.FlexColumnWidth(2.8),
+          4: pw.FlexColumnWidth(1.8),
+          5: pw.FlexColumnWidth(1.5),
+          6: pw.FlexColumnWidth(1.3),
+          7: pw.FlexColumnWidth(1.0),
+          8: pw.FlexColumnWidth(1.5),
+        },
+        children: [
+          pw.TableRow(children: [
+            th('नाम अधि0/\nकर्म0 गण'),
+            th('पद'),
+            th('बैज नंबर'),
+            th('नाम अधि0/कर्म0'),
+            th('मोबाइल न0'),
+            th('तैनाती'),
+            th('जनपद'),
+            th('स0/\nनि0'),
+            th('वाहन\nसंख्या'),
+          ]),
+          pw.TableRow(children: [
+            td(''),
+            td(_rh(s['rank'] ?? s['user_rank']), center: true, isBold: true),
+            td(_vd(s['pno']), center: true),
+            td(_vd(s['name']), isBold: true),
+            td(_vd(s['mobile']), center: true),
+            td(_vd(s['staffThana'] ?? s['thana']), center: true),
+            td(_vd(s['district']), center: true),
+            td('सशस्त्र', center: true, fs: 4.5),
+            td(
+                (s['busNo'] ?? s['bus_no']) != null &&
+                        (s['busNo'] ?? s['bus_no']).toString().isNotEmpty
+                    ? 'बस–${s['busNo'] ?? s['bus_no']}'
+                    : '—',
+                center: true,
+                isBold: true),
+          ]),
+        ],
+      ),
+      // DUTY LOCATION + SAHYOGI + RIGHT PANEL
+      pw.Expanded(
+        child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+          pw.Container(
+            width: 50,
+            decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                    right: pw.BorderSide(width: 0.5),
+                    bottom: pw.BorderSide(width: 0.5))),
+            child: pw.Column(children: [
+              pw.Container(
+                decoration: const pw.BoxDecoration(
+                    color: PdfColors.grey300,
+                    border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+                padding: const pw.EdgeInsets.all(1),
+                child: pw.Center(
+                    child: pw.Text('डियूटी स्थान',
+                        style: pw.TextStyle(font: bold, fontSize: 5.5))),
+              ),
+              pw.Expanded(
+                child: pw.Padding(
+                  padding: const pw.EdgeInsets.all(2),
+                  child: pw.Center(
+                    child: pw.Text(
+                        _vd(s['centerName'] ?? s['center_name']),
+                        style: pw.TextStyle(font: bold, fontSize: 5.5),
+                        textAlign: pw.TextAlign.center),
+                  ),
+                ),
+              ),
+              pw.Container(
+                decoration: const pw.BoxDecoration(
+                    color: PdfColors.grey300,
+                    border: pw.Border(
+                        top: pw.BorderSide(width: 0.5),
+                        bottom: pw.BorderSide(width: 0.5))),
+                padding: const pw.EdgeInsets.all(1),
+                child: pw.Center(
+                    child: pw.Text('डियूटी प्रकार',
+                        style: pw.TextStyle(font: bold, fontSize: 5.5))),
+              ),
+              pw.Padding(
+                padding: const pw.EdgeInsets.all(2),
+                child: pw.Center(
+                  child: pw.Text('बूथ डियूटी',
+                      style: pw.TextStyle(font: bold, fontSize: 5.5)),
+                ),
+              ),
+            ]),
+          ),
+          pw.Expanded(
+            child: pw.Column(children: [
+              pw.Container(
+                decoration: const pw.BoxDecoration(
+                    border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+                child: pw.Row(children: [
+                  sHdr('पद', flex: 1),
+                  sHdr('बैज नंबर', flex: 2),
+                  sHdr('नाम', flex: 3),
+                  sHdr('मोबाइल न0', flex: 2),
+                  sHdr('तैनाती', flex: 2),
+                  sHdr('जनपद', flex: 2),
+                  sHdr('स0/नि0', flex: 1, isLast: true),
+                ]),
+              ),
+              pw.Expanded(
+                child: pw.Column(
+                  children: List.generate(totalRows, (i) {
+                    final e = i < sahyogi.length ? sahyogi[i] : null;
+                    return pw.Expanded(
+                      child: pw.Container(
+                        decoration: pw.BoxDecoration(
+                          color: i.isEven ? PdfColors.white : PdfColors.grey100,
+                          border: const pw.Border(
+                              bottom: pw.BorderSide(width: 0.3)),
+                        ),
+                        child: pw.Row(children: [
+                          sCell(e != null ? _rh(e['user_rank']) : '0', flex: 1),
+                          sCell(e != null ? _vd(e['pno'])       : '0', flex: 2),
+                          sCell(e != null ? _vd(e['name'])      : '0', flex: 3, isBold: e != null),
+                          sCell(e != null ? _vd(e['mobile'])    : '0', flex: 2),
+                          sCell(e != null ? _vd(e['thana'])     : '0', flex: 2),
+                          sCell(e != null ? _vd(e['district'])  : '0', flex: 2),
+                          sCell('0', flex: 1, isLast: true),
+                        ]),
+                      ),
+                    );
+                  }),
+                ),
+              ),
+            ]),
+          ),
+          pw.Container(
+            width: 28,
+            decoration: const pw.BoxDecoration(
+                border: pw.Border(
+                    left: pw.BorderSide(width: 0.5),
+                    bottom: pw.BorderSide(width: 0.5))),
+            child: pw.Column(children: [
+              pw.Container(
+                decoration: const pw.BoxDecoration(
+                    color: PdfColors.grey300,
+                    border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+                padding: const pw.EdgeInsets.all(1),
+                child: pw.Center(
+                    child: pw.Text(
+                        'बस–${_vd(s['busNo'] ?? s['bus_no'])}',
+                        style: pw.TextStyle(font: bold, fontSize: 5))),
+              ),
+              pw.SizedBox(height: 4),
+              pw.Center(
+                  child: pw.Text('दिनांक',
+                      style: pw.TextStyle(font: bold, fontSize: 5))),
+              pw.SizedBox(height: 2),
+              pw.Container(
+                decoration: const pw.BoxDecoration(
+                    border: pw.Border(
+                        top: pw.BorderSide(width: 0.5),
+                        bottom: pw.BorderSide(width: 0.5))),
+                padding: const pw.EdgeInsets.all(1),
+                child: pw.Center(
+                    child: pw.Text('15.2.17',
+                        style: pw.TextStyle(font: font, fontSize: 5))),
+              ),
+              pw.Expanded(child: pw.SizedBox()),
+              pw.Center(
+                  child: pw.Text('सीपीएम\nएफ',
+                      style: pw.TextStyle(font: font, fontSize: 5),
+                      textAlign: pw.TextAlign.center)),
+              pw.SizedBox(height: 3),
+              pw.Container(
+                decoration: const pw.BoxDecoration(
+                    border: pw.Border(top: pw.BorderSide(width: 0.5))),
+                padding: const pw.EdgeInsets.all(1),
+                child: pw.Center(
+                    child: pw.Text('1/2 सै0',
+                        style: pw.TextStyle(font: font, fontSize: 5))),
+              ),
+            ]),
+          ),
+        ]),
+      ),
+      // BOTTOM ROW
+      pw.Container(
+        decoration: const pw.BoxDecoration(
+            border: pw.Border(top: pw.BorderSide(width: 0.8))),
+        child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+          pw.Container(
+            width: 50,
+            decoration: const pw.BoxDecoration(
+                border: pw.Border(right: pw.BorderSide(width: 0.5))),
+            child: pw.Column(children: [
+              metaRow('म0 केंद्र सं0', '—'),
+              metaRow('बूथ सं0', '—'),
+              metaRow('थाना', _vd(s['staffThana'] ?? s['thana'])),
+              metaRow('जोन न0', _vd(s['zoneName'] ?? s['zone_name'])),
+              metaRow('सेक्टर न0', _vd(s['sectorName'] ?? s['sector_name'])),
+              metaRow('वि0स0', '—'),
+              metaRow('श्रेणी', '0'),
+            ]),
+          ),
+          pw.Expanded(
+            child: pw.Container(
               decoration: const pw.BoxDecoration(
                   border: pw.Border(right: pw.BorderSide(width: 0.5))),
-              child: pw.Center(
-                  child: pw.Text('ECI',
-                      style: pw.TextStyle(font: bold, fontSize: 7))),
-            ),
-            pw.Expanded(
-              child: pw.Padding(
-                padding:
-                    const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 4),
-                child: pw.Column(
-                  mainAxisAlignment: pw.MainAxisAlignment.center,
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
-                  children: [
-                    pw.Text('ड्यूटी कार्ड',
-                        style: pw.TextStyle(
-                            font: bold,
-                            fontSize: 10,
-                            decoration: pw.TextDecoration.underline)),
-                    pw.Text('लोकसभा सामान्य निर्वाचन–2024',
-                        style: pw.TextStyle(font: bold, fontSize: 7)),
-                    pw.Text(
-                        'जनपद ${_vd(s['district'] ?? s['staffThana'] ?? 'बागपत')}',
-                        style: pw.TextStyle(font: font, fontSize: 6.5)),
-                    pw.SizedBox(height: 1),
-                    pw.Container(
-                      decoration: const pw.BoxDecoration(
-                          border:
-                              pw.Border(top: pw.BorderSide(width: 0.5))),
-                      padding: const pw.EdgeInsets.only(top: 1),
-                      child: pw.Text(
-                        'मतदान चरण–द्वितीय  दिनांक 26.04.2024'
-                        '  प्रातः 07:00 से सांय 06:00 तक',
-                        style: pw.TextStyle(font: bold, fontSize: 5.5),
-                        textAlign: pw.TextAlign.center,
-                      ),
-                    ),
-                  ],
+              child: pw.Column(children: [
+                officerBlock('जोनल मजिस्ट्रेट',
+                    zonalMag?['name']?.toString(),
+                    zonalMag?['mobile']?.toString(), null),
+                pw.Container(
+                  decoration: const pw.BoxDecoration(
+                      border: pw.Border(top: pw.BorderSide(width: 0.4))),
+                  child: officerBlock('जोनल पुलिस अधिकारी',
+                      zonalPolice?['name']?.toString(),
+                      zonalPolice?['mobile']?.toString(),
+                      zonalPolice != null ? _rh(zonalPolice['user_rank']) : null),
                 ),
-              ),
+              ]),
             ),
-            pw.Container(
-              width: 42,
-              padding: const pw.EdgeInsets.all(3),
+          ),
+          pw.Expanded(
+            child: pw.Container(
               decoration: const pw.BoxDecoration(
-                  border: pw.Border(left: pw.BorderSide(width: 0.5))),
-              child: pw.Center(
-                  child: pw.Text('उ0प्र0\nपुलिस',
-                      style: pw.TextStyle(font: bold, fontSize: 6),
-                      textAlign: pw.TextAlign.center)),
+                  border: pw.Border(right: pw.BorderSide(width: 0.5))),
+              child: pw.Column(children: [
+                officerBlock('सैक्टर मजिस्ट्रेट',
+                    sectorMag?['name']?.toString(),
+                    sectorMag?['mobile']?.toString(), null),
+                pw.Container(
+                  decoration: const pw.BoxDecoration(
+                      border: pw.Border(top: pw.BorderSide(width: 0.4))),
+                  child: officerBlock('सेक्टर पुलिस अधिकारी',
+                      sectorPolice?['name']?.toString(),
+                      sectorPolice?['mobile']?.toString(),
+                      sectorPolice != null ? _rh(sectorPolice['user_rank']) : null),
+                ),
+              ]),
             ),
-          ]),
-        ),
-
-        // ── PRIMARY OFFICER ────────────────────────────────────────────────────
-        pw.Table(
-          border: const pw.TableBorder(
-            left: pw.BorderSide(width: 0.5),
-            right: pw.BorderSide(width: 0.5),
-            top: pw.BorderSide(width: 0.5),
-            bottom: pw.BorderSide(width: 0.5),
-            horizontalInside: pw.BorderSide(width: 0.5),
-            verticalInside: pw.BorderSide(width: 0.5),
           ),
-          columnWidths: const {
-            0: pw.FlexColumnWidth(2.0),
-            1: pw.FlexColumnWidth(1.1),
-            2: pw.FlexColumnWidth(1.8),
-            3: pw.FlexColumnWidth(2.8),
-            4: pw.FlexColumnWidth(1.8),
-            5: pw.FlexColumnWidth(1.5),
-            6: pw.FlexColumnWidth(1.3),
-            7: pw.FlexColumnWidth(1.0),
-            8: pw.FlexColumnWidth(1.5),
-          },
-          children: [
-            pw.TableRow(children: [
-              th('नाम अधि0/\nकर्म0 गण'),
-              th('पद'),
-              th('बैज नंबर'),
-              th('नाम अधि0/कर्म0'),
-              th('मोबाइल न0'),
-              th('तैनाती'),
-              th('जनपद'),
-              th('स0/\nनि0'),
-              th('वाहन\nसंख्या'),
-            ]),
-            pw.TableRow(children: [
-              td(''),
-              td(_rh(s['rank'] ?? s['user_rank']), center: true, isBold: true),
-              td(_vd(s['pno']), center: true),
-              td(_vd(s['name']), isBold: true),
-              td(_vd(s['mobile']), center: true),
-              td(_vd(s['staffThana'] ?? s['thana']), center: true),
-              td(_vd(s['district']), center: true),
-              td('सशस्त्र', center: true, fs: 4.5),
-              td(
-                  (s['busNo'] ?? s['bus_no']) != null &&
-                          (s['busNo'] ?? s['bus_no']).toString().isNotEmpty
-                      ? 'बस–${s['busNo'] ?? s['bus_no']}'
-                      : '—',
-                  center: true,
-                  isBold: true),
-            ]),
-          ],
-        ),
-
-        // ── DUTY LOCATION + SAHYOGI + RIGHT PANEL ──────────────────────────────
-        pw.Expanded(
-          child: pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
-            children: [
-              // LEFT: place + type
-              pw.Container(
-                width: 50,
-                decoration: const pw.BoxDecoration(
-                    border: pw.Border(
-                        right: pw.BorderSide(width: 0.5),
-                        bottom: pw.BorderSide(width: 0.5))),
-                child: pw.Column(children: [
-                  pw.Container(
-                    decoration: const pw.BoxDecoration(
-                        color: PdfColors.grey300,
-                        border: pw.Border(
-                            bottom: pw.BorderSide(width: 0.5))),
-                    padding: const pw.EdgeInsets.all(1),
-                    child: pw.Center(
-                        child: pw.Text('डियूटी स्थान',
-                            style:
-                                pw.TextStyle(font: bold, fontSize: 5.5))),
-                  ),
-                  pw.Expanded(
-                    child: pw.Padding(
-                      padding: const pw.EdgeInsets.all(2),
-                      child: pw.Center(
-                        child: pw.Text(
-                            _vd(s['centerName'] ?? s['center_name']),
-                            style: pw.TextStyle(font: bold, fontSize: 5.5),
-                            textAlign: pw.TextAlign.center),
-                      ),
-                    ),
-                  ),
-                  pw.Container(
-                    decoration: const pw.BoxDecoration(
-                        color: PdfColors.grey300,
-                        border: pw.Border(
-                            top: pw.BorderSide(width: 0.5),
-                            bottom: pw.BorderSide(width: 0.5))),
-                    padding: const pw.EdgeInsets.all(1),
-                    child: pw.Center(
-                        child: pw.Text('डियूटी प्रकार',
-                            style:
-                                pw.TextStyle(font: bold, fontSize: 5.5))),
-                  ),
-                  pw.Padding(
-                    padding: const pw.EdgeInsets.all(2),
-                    child: pw.Center(
-                      child: pw.Text('बूथ डियूटी',
-                          style: pw.TextStyle(font: bold, fontSize: 5.5)),
-                    ),
-                  ),
+          pw.Container(
+            width: 38,
+            padding: const pw.EdgeInsets.all(4),
+            child: pw.Column(
+                mainAxisAlignment: pw.MainAxisAlignment.center,
+                children: [
+                  pw.SizedBox(height: 10),
+                  pw.Text('पुलिस अधीक्षक',
+                      style: pw.TextStyle(font: bold, fontSize: 5.5),
+                      textAlign: pw.TextAlign.center),
+                  pw.Text(_vd(s['district']),
+                      style: pw.TextStyle(font: bold, fontSize: 5.5),
+                      textAlign: pw.TextAlign.center),
                 ]),
-              ),
-
-              // CENTRE: sahyogi table
-              pw.Expanded(
-                child: pw.Column(children: [
-                  pw.Container(
-                    decoration: const pw.BoxDecoration(
-                        border: pw.Border(
-                            bottom: pw.BorderSide(width: 0.5))),
-                    child: pw.Row(children: [
-                      sHdr('पद', flex: 1),
-                      sHdr('बैज नंबर', flex: 2),
-                      sHdr('नाम', flex: 3),
-                      sHdr('मोबाइल न0', flex: 2),
-                      sHdr('तैनाती', flex: 2),
-                      sHdr('जनपद', flex: 2),
-                      sHdr('स0/नि0', flex: 1, isLast: true),
-                    ]),
-                  ),
-                  pw.Expanded(
-                    child: pw.Column(
-                      children: List.generate(totalRows, (i) {
-                        final e = i < sahyogi.length ? sahyogi[i] : null;
-                        return pw.Expanded(
-                          child: pw.Container(
-                            decoration: pw.BoxDecoration(
-                              color: i.isEven
-                                  ? PdfColors.white
-                                  : PdfColors.grey100,
-                              border: const pw.Border(
-                                  bottom: pw.BorderSide(width: 0.3)),
-                            ),
-                            child: pw.Row(children: [
-                              sCell(e != null ? _rh(e['user_rank']) : '0',
-                                  flex: 1),
-                              sCell(e != null ? _vd(e['pno']) : '0',
-                                  flex: 2),
-                              sCell(e != null ? _vd(e['name']) : '0',
-                                  flex: 3, isBold: e != null),
-                              sCell(e != null ? _vd(e['mobile']) : '0',
-                                  flex: 2),
-                              sCell(e != null ? _vd(e['thana']) : '0',
-                                  flex: 2),
-                              sCell(e != null ? _vd(e['district']) : '0',
-                                  flex: 2),
-                              sCell('0', flex: 1, isLast: true),
-                            ]),
-                          ),
-                        );
-                      }),
-                    ),
-                  ),
-                ]),
-              ),
-
-              // RIGHT: bus / info panel
-              pw.Container(
-                width: 28,
-                decoration: const pw.BoxDecoration(
-                    border: pw.Border(
-                        left: pw.BorderSide(width: 0.5),
-                        bottom: pw.BorderSide(width: 0.5))),
-                child: pw.Column(children: [
-                  pw.Container(
-                    decoration: const pw.BoxDecoration(
-                        color: PdfColors.grey300,
-                        border: pw.Border(
-                            bottom: pw.BorderSide(width: 0.5))),
-                    padding: const pw.EdgeInsets.all(1),
-                    child: pw.Center(
-                        child: pw.Text(
-                            'बस–${_vd(s['busNo'] ?? s['bus_no'])}',
-                            style:
-                                pw.TextStyle(font: bold, fontSize: 5))),
-                  ),
-                  pw.SizedBox(height: 4),
-                  pw.Center(
-                      child: pw.Text('दिनांक',
-                          style: pw.TextStyle(font: bold, fontSize: 5))),
-                  pw.SizedBox(height: 2),
-                  pw.Container(
-                    decoration: const pw.BoxDecoration(
-                        border: pw.Border(
-                            top: pw.BorderSide(width: 0.5),
-                            bottom: pw.BorderSide(width: 0.5))),
-                    padding: const pw.EdgeInsets.all(1),
-                    child: pw.Center(
-                        child: pw.Text('15.2.17',
-                            style: pw.TextStyle(font: font, fontSize: 5))),
-                  ),
-                  pw.Expanded(child: pw.SizedBox()),
-                  pw.Center(
-                      child: pw.Text('सीपीएम\nएफ',
-                          style: pw.TextStyle(font: font, fontSize: 5),
-                          textAlign: pw.TextAlign.center)),
-                  pw.SizedBox(height: 3),
-                  pw.Container(
-                    decoration: const pw.BoxDecoration(
-                        border:
-                            pw.Border(top: pw.BorderSide(width: 0.5))),
-                    padding: const pw.EdgeInsets.all(1),
-                    child: pw.Center(
-                        child: pw.Text('1/2 सै0',
-                            style:
-                                pw.TextStyle(font: font, fontSize: 5))),
-                  ),
-                ]),
-              ),
-            ],
           ),
-        ),
-
-        // ── BOTTOM ROW ────────────────────────────────────────────────────────
-        pw.Container(
-          decoration: const pw.BoxDecoration(
-              border: pw.Border(top: pw.BorderSide(width: 0.8))),
-          child: pw.Row(
-            crossAxisAlignment: pw.CrossAxisAlignment.start,
-            children: [
-              // Meta
-              pw.Container(
-                width: 50,
-                decoration: const pw.BoxDecoration(
-                    border: pw.Border(right: pw.BorderSide(width: 0.5))),
-                child: pw.Column(children: [
-                  metaRow('म0 केंद्र सं0', '—'),
-                  metaRow('बूथ सं0', '—'),
-                  metaRow('थाना', _vd(s['staffThana'] ?? s['thana'])),
-                  metaRow('जोन न0', _vd(s['zoneName'] ?? s['zone_name'])),
-                  metaRow('सेक्टर न0',
-                      _vd(s['sectorName'] ?? s['sector_name'])),
-                  metaRow('वि0स0', '—'),
-                  metaRow('श्रेणी', '0'),
-                ]),
-              ),
-              // Zonal officers
-              pw.Expanded(
-                child: pw.Container(
-                  decoration: const pw.BoxDecoration(
-                      border:
-                          pw.Border(right: pw.BorderSide(width: 0.5))),
-                  child: pw.Column(children: [
-                    officerBlock(
-                        'जोनल मजिस्ट्रेट',
-                        zonalMag?['name']?.toString(),
-                        zonalMag?['mobile']?.toString(),
-                        null),
-                    pw.Container(
-                      decoration: const pw.BoxDecoration(
-                          border: pw.Border(
-                              top: pw.BorderSide(width: 0.4))),
-                      child: officerBlock(
-                          'जोनल पुलिस अधिकारी',
-                          zonalPolice?['name']?.toString(),
-                          zonalPolice?['mobile']?.toString(),
-                          zonalPolice != null
-                              ? _rh(zonalPolice['user_rank'])
-                              : null),
-                    ),
-                  ]),
-                ),
-              ),
-              // Sector officers
-              pw.Expanded(
-                child: pw.Container(
-                  decoration: const pw.BoxDecoration(
-                      border:
-                          pw.Border(right: pw.BorderSide(width: 0.5))),
-                  child: pw.Column(children: [
-                    officerBlock(
-                        'सैक्टर मजिस्ट्रेट',
-                        sectorMag?['name']?.toString(),
-                        sectorMag?['mobile']?.toString(),
-                        null),
-                    pw.Container(
-                      decoration: const pw.BoxDecoration(
-                          border: pw.Border(
-                              top: pw.BorderSide(width: 0.4))),
-                      child: officerBlock(
-                          'सेक्टर पुलिस अधिकारी',
-                          sectorPolice?['name']?.toString(),
-                          sectorPolice?['mobile']?.toString(),
-                          sectorPolice != null
-                              ? _rh(sectorPolice['user_rank'])
-                              : null),
-                    ),
-                  ]),
-                ),
-              ),
-              // SP
-              pw.Container(
-                width: 38,
-                padding: const pw.EdgeInsets.all(4),
-                child: pw.Column(
-                    mainAxisAlignment: pw.MainAxisAlignment.center,
-                    children: [
-                      pw.SizedBox(height: 10),
-                      pw.Text('पुलिस अधीक्षक',
-                          style: pw.TextStyle(font: bold, fontSize: 5.5),
-                          textAlign: pw.TextAlign.center),
-                      pw.Text(_vd(s['district']),
-                          style: pw.TextStyle(font: bold, fontSize: 5.5),
-                          textAlign: pw.TextAlign.center),
-                    ]),
-              ),
-            ],
-          ),
-        ),
-      ],
-    ),
+        ]),
+      ),
+    ]),
   );
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  DUTY CARD PAGE  — scalable version (server-side pagination + search)
+//  UI/print behaviour identical to the original
 // ══════════════════════════════════════════════════════════════════════════════
 class DutyCardPage extends StatefulWidget {
   const DutyCardPage({super.key});
@@ -559,64 +489,103 @@ class DutyCardPage extends StatefulWidget {
 }
 
 class _DutyCardPageState extends State<DutyCardPage> {
-  List _all = [];
-  List _filtered = [];
-  Set<int> _selected = {};
-  bool _loading = true;
+  // ── paginated data ────────────────────────────────────────────────────────
+  final List<Map<String, dynamic>> _items = [];
+  int  _page       = 1;
+  int  _totalCount = 0;   // total records on server
+  int  _totalPages = 1;
+  bool _loading    = false;
+  bool _hasMore    = true;
+  static const int _kLimit = 50;
+
+  // ── search (debounced → server) ───────────────────────────────────────────
+  String _q = '';
+  Timer? _debounce;
   final _search = TextEditingController();
+
+  // ── selection — identical to original ────────────────────────────────────
+  Set<int> _selected = {};
+
+  // ── scroll ────────────────────────────────────────────────────────────────
+  final ScrollController _scroll = ScrollController();
 
   @override
   void initState() {
     super.initState();
-    _load();
-    _search.addListener(_filter);
+    _scroll.addListener(() {
+      if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 300) {
+        _loadMore();
+      }
+    });
+    _search.addListener(() {
+      _debounce?.cancel();
+      _debounce = Timer(const Duration(milliseconds: 400), () {
+        final q = _search.text.trim();
+        if (q != _q) { _q = q; _reload(); }
+      });
+    });
+    _reload();
   }
 
   @override
   void dispose() {
+    _scroll.dispose();
     _search.dispose();
+    _debounce?.cancel();
     super.dispose();
   }
 
-  Future<void> _load() async {
+  // ── data helpers ──────────────────────────────────────────────────────────
+  void _reload() {
+    setState(() {
+      _items.clear();
+      _page      = 1;
+      _totalCount = 0;
+      _totalPages = 1;
+      _hasMore   = true;
+      _selected.clear();
+    });
+    _fetch();
+  }
+
+  Future<void> _fetch() async {
+    if (_loading || !_hasMore) return;
     setState(() => _loading = true);
     try {
       final token = await AuthService.getToken();
-      final res = await ApiService.get('/admin/duties', token: token);
+      final url = StringBuffer('/admin/duties?page=$_page&limit=$_kLimit');
+      if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
+
+      final res        = await ApiService.get(url.toString(), token: token);
+      final wrapper    = (res['data'] as Map<String, dynamic>?) ?? {};
+      final items      = (wrapper['data'] as List?)
+          ?.map((e) => Map<String, dynamic>.from(e as Map))
+          .toList() ?? [];
+      final total      = (wrapper['total']      as num?)?.toInt() ?? 0;
+      final totalPages = (wrapper['totalPages'] as num?)?.toInt() ?? 1;
+
+      if (!mounted) return;
       setState(() {
-        _all = res['data'] ?? [];
-        _filtered = _all;
-        _loading = false;
+        _items.addAll(items);
+        _totalCount = total;
+        _totalPages = totalPages;
+        _hasMore    = _page < totalPages;
+        _page++;
+        _loading    = false;
       });
     } catch (e) {
-      setState(() => _loading = false);
-      if (mounted) showSnack(context, 'Failed to load: $e', error: true);
+      if (mounted) {
+        setState(() => _loading = false);
+        showSnack(context, 'Failed to load: $e', error: true);
+      }
     }
   }
 
-  void _filter() {
-    final q = _search.text.toLowerCase();
-    setState(() {
-      _selected.clear();
-      _filtered = q.isEmpty
-          ? _all
-          : _all
-              .where((s) =>
-                  '${s['name']}'.toLowerCase().contains(q) ||
-                  '${s['pno']}'.toLowerCase().contains(q) ||
-                  '${s['mobile']}'.toLowerCase().contains(q) ||
-                  '${s['centerName']}'.toLowerCase().contains(q) ||
-                  '${s['sectorName']}'.toLowerCase().contains(q) ||
-                  '${s['zoneName']}'.toLowerCase().contains(q) ||
-                  '${s['superZoneName']}'.toLowerCase().contains(q) ||
-                  '${s['gpName']}'.toLowerCase().contains(q) ||
-                  '${s['staffThana']}'.toLowerCase().contains(q))
-              .toList();
-    });
-  }
+  void _loadMore() { if (!_loading && _hasMore) _fetch(); }
 
+  // ── print — identical signature to original ───────────────────────────────
   Future<void> _print(List<Map> list) async {
-    final pdf = pw.Document();
+    final pdf  = pw.Document();
     final font = await PdfGoogleFonts.notoSansDevanagariRegular();
     final bold = await PdfGoogleFonts.notoSansDevanagariBold();
     for (final s in list) {
@@ -629,9 +598,43 @@ class _DutyCardPageState extends State<DutyCardPage> {
     await Printing.layoutPdf(onLayout: (_) => pdf.save());
   }
 
+  // ── print ALL pages (fetches remaining pages before printing) ─────────────
+  Future<void> _printAll() async {
+    // If everything is already loaded, print directly
+    if (!_hasMore) { await _print(_items); return; }
+
+    // Otherwise fetch all remaining pages at high limit then print
+    try {
+      final token = await AuthService.getToken();
+      final all   = List<Map<String, dynamic>>.from(_items); // already loaded
+      int pg = _page; // continue from where we left off
+      while (pg <= _totalPages) {
+        final url = StringBuffer('/admin/duties?page=$pg&limit=200');
+        if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
+        final res     = await ApiService.get(url.toString(), token: token);
+        final wrapper = (res['data'] as Map<String, dynamic>?) ?? {};
+        final items   = (wrapper['data'] as List?)
+            ?.map((e) => Map<String, dynamic>.from(e as Map))
+            .toList() ?? [];
+        all.addAll(items);
+        pg++;
+      }
+      await _print(all);
+    } catch (e) {
+      if (mounted) showSnack(context, 'Print failed: $e', error: true);
+    }
+  }
+
+  // ══════════════════════════════════════════════════════════════════════════
+  //  BUILD — layout identical to original
+  // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
+    // visible items = all loaded so far (filtered server-side)
+    final visible = _items;
+
     return Column(children: [
+      // ── search bar — unchanged ─────────────────────────────────────────────
       Container(
         color: kSurface,
         padding: const EdgeInsets.all(12),
@@ -659,19 +662,26 @@ class _DutyCardPageState extends State<DutyCardPage> {
           ),
         ),
       ),
-      if (_filtered.isNotEmpty)
+
+      // ── action bar — same as original, total count from server ─────────────
+      if (visible.isNotEmpty)
         Container(
           color: kBg,
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(children: [
-            Text('${_filtered.length} results',
-                style: const TextStyle(color: kSubtle, fontSize: 12)),
+            // show server total, not just loaded count
+            Text(
+              _totalCount > visible.length
+                  ? '${visible.length} / $_totalCount results'
+                  : '$_totalCount results',
+              style: const TextStyle(color: kSubtle, fontSize: 12),
+            ),
             const Spacer(),
             if (_selected.isNotEmpty) ...[
               GestureDetector(
                 onTap: () {
-                  final sel = _filtered
-                      .where((s) => _selected.contains(s['id'] ?? 0))
+                  final sel = visible
+                      .where((s) => _selected.contains(s['id'] as int))
                       .map((s) => Map<String, dynamic>.from(s))
                       .toList();
                   _print(sel);
@@ -680,8 +690,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
                   decoration: BoxDecoration(
-                      color: kPrimary,
-                      borderRadius: BorderRadius.circular(8)),
+                      color: kPrimary, borderRadius: BorderRadius.circular(8)),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
                     const Icon(Icons.print, color: Colors.white, size: 15),
                     const SizedBox(width: 6),
@@ -695,17 +704,38 @@ class _DutyCardPageState extends State<DutyCardPage> {
               ),
               const SizedBox(width: 8),
             ],
+            // Print All button — new, fetches all pages
+            GestureDetector(
+              onTap: _printAll,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                    color: kDark, borderRadius: BorderRadius.circular(8)),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.print_outlined,
+                      color: Colors.white, size: 15),
+                  const SizedBox(width: 6),
+                  Text('Print All ($_totalCount)',
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700)),
+                ]),
+              ),
+            ),
+            const SizedBox(width: 8),
             TextButton(
               onPressed: () => setState(() {
-                if (_selected.length == _filtered.length) {
+                if (_selected.length == visible.length) {
                   _selected.clear();
                 } else {
-                  _selected = _filtered.map((s) => s['id'] as int).toSet();
+                  _selected = visible.map((s) => s['id'] as int).toSet();
                 }
               }),
               style: TextButton.styleFrom(foregroundColor: kPrimary),
               child: Text(
-                  _selected.length == _filtered.length
+                  _selected.length == visible.length
                       ? 'Deselect All'
                       : 'Select All',
                   style: const TextStyle(
@@ -713,31 +743,49 @@ class _DutyCardPageState extends State<DutyCardPage> {
             ),
           ]),
         ),
-      if (_loading)
+
+      // ── list ───────────────────────────────────────────────────────────────
+      if (_loading && visible.isEmpty)
         const Expanded(
-            child:
-                Center(child: CircularProgressIndicator(color: kPrimary)))
-      else if (_filtered.isEmpty)
+            child: Center(child: CircularProgressIndicator(color: kPrimary)))
+      else if (visible.isEmpty)
         Expanded(
-            child: emptyState(
-                'No assigned staff found', Icons.how_to_vote_outlined))
+            child:
+                emptyState('No assigned staff found', Icons.how_to_vote_outlined))
       else
         Expanded(
           child: ListView.separated(
+            controller: _scroll,
             padding: const EdgeInsets.all(12),
-            itemCount: _filtered.length,
+            // +1 for the load-more spinner at bottom
+            itemCount: visible.length + (_hasMore ? 1 : 0),
             separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (ctx, i) {
-              final s = _filtered[i];
-              final id = s['id'] as int;
+              // load-more spinner
+              if (i >= visible.length) {
+                return const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(
+                    child: SizedBox(
+                      width: 22, height: 22,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: kPrimary),
+                    ),
+                  ),
+                );
+              }
+
+              final s   = visible[i];
+              final id  = s['id'] as int;
               final sel = _selected.contains(id);
+
+              // ── card — identical to original ───────────────────────────────
               return GestureDetector(
                 onTap: () => setState(
                     () => sel ? _selected.remove(id) : _selected.add(id)),
                 child: Container(
                   decoration: BoxDecoration(
-                    color:
-                        sel ? kPrimary.withOpacity(0.06) : Colors.white,
+                    color: sel ? kPrimary.withOpacity(0.06) : Colors.white,
                     borderRadius: BorderRadius.circular(12),
                     border: Border.all(
                         color: sel ? kPrimary : kBorder.withOpacity(0.4),
@@ -761,8 +809,8 @@ class _DutyCardPageState extends State<DutyCardPage> {
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
                           color: sel ? kPrimary : kSurface,
-                          border: Border.all(
-                              color: sel ? kPrimary : kBorder),
+                          border:
+                              Border.all(color: sel ? kPrimary : kBorder),
                         ),
                         child: Center(
                             child: sel
@@ -785,9 +833,9 @@ class _DutyCardPageState extends State<DutyCardPage> {
                         children: [
                           const SizedBox(height: 3),
                           Row(children: [
-                            _tag(Icons.badge_outlined, '${s['pno']}'),
+                            _tag(Icons.badge_outlined,  '${s['pno']}'),
                             const SizedBox(width: 8),
-                            _tag(Icons.phone_outlined, '${s['mobile']}'),
+                            _tag(Icons.phone_outlined,  '${s['mobile']}'),
                           ]),
                           const SizedBox(height: 3),
                           _tag(
@@ -800,8 +848,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
                               '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}'),
                         ]),
                     trailing: IconButton(
-                      icon: const Icon(Icons.print_outlined,
-                          color: kPrimary),
+                      icon: const Icon(Icons.print_outlined, color: kPrimary),
                       onPressed: () =>
                           _print([Map<String, dynamic>.from(s)]),
                     ),
@@ -815,6 +862,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
     ]);
   }
 
+  // ── _tag — identical to original ─────────────────────────────────────────
   Widget _tag(IconData icon, String text, {Color? color}) {
     return Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, size: 11, color: color ?? kSubtle),

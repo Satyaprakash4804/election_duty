@@ -1,21 +1,21 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
-import '../../screens/admin/pages/hierarchy_report_page.dart';
+
 // ─────────────────────────────────────────────
 //  PALETTE
 // ─────────────────────────────────────────────
-const kBg      = Color(0xFFFDF6E3);
-const kSurface = Color(0xFFF5E6C8);
-const kPrimary = Color(0xFF8B6914);
-const kAccent  = Color(0xFFB8860B);
-const kDark    = Color(0xFF4A3000);
-const kSubtle  = Color(0xFFAA8844);
-const kBorder  = Color(0xFFD4A843);
-const kError   = Color(0xFFC0392B);
-const kSuccess = Color(0xFF2E7D32);
-const kInfo    = Color(0xFF1565C0);
-const kWarning = Color(0xFFE65100);
+const kBg       = Color(0xFFFDF6E3);
+const kSurface  = Color(0xFFF5E6C8);
+const kPrimary  = Color(0xFF8B6914);
+const kAccent   = Color(0xFFB8860B);
+const kDark     = Color(0xFF4A3000);
+const kSubtle   = Color(0xFFAA8844);
+const kBorder   = Color(0xFFD4A843);
+const kError    = Color(0xFFC0392B);
+const kSuccess  = Color(0xFF2E7D32);
+const kInfo     = Color(0xFF1565C0);
+const kWarning  = Color(0xFFE65100);
 const kDevAccent = Color(0xFF00695C);
 const kDevLight  = Color(0xFFE0F2F1);
 
@@ -23,12 +23,13 @@ const kDevLight  = Color(0xFFE0F2F1);
 //  MODELS
 // ─────────────────────────────────────────────
 class SuperAdminModel {
-  final int id;
+  final int    id;
   final String name;
   final String username;
   final DateTime createdAt;
-  final int adminsUnder;
-  final bool isActive;
+  final int    adminsUnder;
+  final bool   isActive;
+  final Map<String, dynamic> electionInfo;
 
   SuperAdminModel({
     required this.id,
@@ -37,20 +38,55 @@ class SuperAdminModel {
     required this.createdAt,
     required this.adminsUnder,
     required this.isActive,
+    this.electionInfo = const {},
   });
 
   factory SuperAdminModel.fromJson(Map<String, dynamic> j) => SuperAdminModel(
-        id:          j['id'],
-        name:        j['name'],
-        username:    j['username'],
-        createdAt:   DateTime.parse(j['createdAt']),
-        adminsUnder: j['adminsUnder'] ?? 0,
-        isActive:    j['isActive'] ?? true,
+        id:           j['id'],
+        name:         j['name'] ?? '',
+        username:     j['username'] ?? '',
+        createdAt:    DateTime.tryParse(j['createdAt'] ?? '') ?? DateTime.now(),
+        adminsUnder:  j['adminsUnder'] ?? 0,
+        isActive:     j['isActive'] ?? true,
+        electionInfo: Map<String, dynamic>.from(j['electionInfo'] ?? {}),
+      );
+}
+
+class AdminModel {
+  final int    id;
+  final String name;
+  final String username;
+  final String district;
+  final bool   isActive;
+  final DateTime createdAt;
+  final String createdBy;
+  final int    superZoneCount;
+
+  AdminModel({
+    required this.id,
+    required this.name,
+    required this.username,
+    required this.district,
+    required this.isActive,
+    required this.createdAt,
+    required this.createdBy,
+    required this.superZoneCount,
+  });
+
+  factory AdminModel.fromJson(Map<String, dynamic> j) => AdminModel(
+        id:             j['id'],
+        name:           j['name'] ?? '',
+        username:       j['username'] ?? '',
+        district:       j['district'] ?? '',
+        isActive:       j['isActive'] ?? true,
+        createdAt:      DateTime.tryParse(j['createdAt'] ?? '') ?? DateTime.now(),
+        createdBy:      j['createdBy'] ?? 'master',
+        superZoneCount: j['superZoneCount'] ?? 0,
       );
 }
 
 class SystemLogEntry {
-  final int id;
+  final int    id;
   final String level;
   final String message;
   final String module;
@@ -66,28 +102,40 @@ class SystemLogEntry {
 
   factory SystemLogEntry.fromJson(Map<String, dynamic> j) => SystemLogEntry(
         id:      j['id'] ?? 0,
-        level:   j['level'],
-        message: j['message'],
-        module:  j['module'],
-        time:    DateTime.parse(j['time']),
+        level:   j['level'] ?? 'INFO',
+        message: j['message'] ?? '',
+        module:  j['module'] ?? '',
+        time:    DateTime.tryParse(j['time'] ?? '') ?? DateTime.now(),
       );
 }
 
-class ApiHealthItem {
-  final String endpoint;
-  final String status;
-  final int latencyMs;
+class OverviewStats {
+  final int totalSuperAdmins;
+  final int totalAdmins;
+  final int totalStaff;
+  final int totalBooths;
+  final int assignedDuties;
+  final Map<String, String> electionInfo;
 
-  ApiHealthItem({
-    required this.endpoint,
-    required this.status,
-    required this.latencyMs,
+  OverviewStats({
+    this.totalSuperAdmins = 0,
+    this.totalAdmins      = 0,
+    this.totalStaff       = 0,
+    this.totalBooths      = 0,
+    this.assignedDuties   = 0,
+    this.electionInfo     = const {},
   });
 
-  factory ApiHealthItem.fromJson(Map<String, dynamic> j) => ApiHealthItem(
-        endpoint:  j['endpoint'],
-        status:    j['status'],
-        latencyMs: j['latencyMs'] ?? 0,
+  factory OverviewStats.fromJson(Map<String, dynamic> j) => OverviewStats(
+        totalSuperAdmins: j['totalSuperAdmins'] ?? 0,
+        totalAdmins:      j['totalAdmins']      ?? 0,
+        totalStaff:       j['totalStaff']       ?? 0,
+        totalBooths:      j['totalBooths']      ?? 0,
+        assignedDuties:   j['assignedDuties']   ?? 0,
+        electionInfo: Map<String, String>.from(
+          (j['electionInfo'] as Map<String, dynamic>? ?? {})
+              .map((k, v) => MapEntry(k, v?.toString() ?? '')),
+        ),
       );
 }
 
@@ -106,58 +154,98 @@ class _MasterDashboardState extends State<MasterDashboard>
   int _selectedTab = 0;
 
   late final AnimationController _fadeCtrl;
-  late final Animation<double> _fadeAnim;
+  late final Animation<double>   _fadeAnim;
 
-  // ── State ──────────────────────────────────
+  // ── Data ───────────────────────────────────
   List<SuperAdminModel> _superAdmins = [];
+  List<AdminModel>      _admins      = [];
   List<SystemLogEntry>  _logs        = [];
-  List<ApiHealthItem>   _apiHealth   = [];
   Map<String, String>   _sysStats    = {};
   Map<String, dynamic>  _appConfig   = {};
+  OverviewStats         _overview    = OverviewStats();
 
-  bool _loadingAdmins = true;
-  bool _loadingLogs   = true;
-  bool _loadingHealth = true;
-  bool _loadingStats  = true;
+  // ── Loading flags ──────────────────────────
+  bool _loadingOverview    = true;
+  bool _loadingSuperAdmins = true;
+  bool _loadingAdmins      = true;
+  bool _loadingLogs        = true;
+  bool _loadingStats       = true;
+  bool _loadingConfig      = true;
 
-  // ── Init ───────────────────────────────────
+  String _logFilter = 'ALL';
+
+  // ─────────────────────────────────────────
   @override
   void initState() {
     super.initState();
     _fadeCtrl = AnimationController(
-        vsync: this, duration: const Duration(milliseconds: 450));
+        vsync: this, duration: const Duration(milliseconds: 420));
     _fadeAnim = CurvedAnimation(parent: _fadeCtrl, curve: Curves.easeOut);
     _fadeCtrl.forward();
-
     _fetchAll();
   }
 
-  Future<void> _fetchAll() async {
-    await Future.wait([
-      _fetchSuperAdmins(),
-      _fetchLogs(),
-      _fetchApiHealth(),
-      _fetchSystemStats(),
-      _fetchConfig(),
-    ]);
+  @override
+  void dispose() {
+    _fadeCtrl.dispose();
+    super.dispose();
   }
 
-  // ── API Calls ──────────────────────────────
+  // ── FETCH ALL ─────────────────────────────
+  Future<void> _fetchAll() => Future.wait([
+        _fetchOverview(),
+        _fetchSuperAdmins(),
+        _fetchAdmins(),
+        _fetchLogs(),
+        _fetchSystemStats(),
+        _fetchConfig(),
+      ]);
+
+  // ── Individual fetches ────────────────────
+  Future<void> _fetchOverview() async {
+    setState(() => _loadingOverview = true);
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get("/master/overview", token: token);
+      setState(() => _overview = OverviewStats.fromJson(res["data"] ?? {}));
+    } catch (_) {
+      // keep defaults
+    } finally {
+      if (mounted) setState(() => _loadingOverview = false);
+    }
+  }
 
   Future<void> _fetchSuperAdmins() async {
-    setState(() => _loadingAdmins = true);
+    setState(() => _loadingSuperAdmins = true);
     try {
       final token = await AuthService.getToken();
       final res   = await ApiService.get("/master/super-admins", token: token);
       setState(() {
-        _superAdmins = (res["data"] as List)
+        _superAdmins = (res["data"] as List? ?? [])
             .map((e) => SuperAdminModel.fromJson(e))
             .toList();
       });
     } catch (e) {
       _snack("Failed to load Super Admins", kError);
     } finally {
-      setState(() => _loadingAdmins = false);
+      if (mounted) setState(() => _loadingSuperAdmins = false);
+    }
+  }
+
+  Future<void> _fetchAdmins() async {
+    setState(() => _loadingAdmins = true);
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get("/master/admins", token: token);
+      setState(() {
+        _admins = (res["data"] as List? ?? [])
+            .map((e) => AdminModel.fromJson(e))
+            .toList();
+      });
+    } catch (_) {
+      if (mounted) setState(() => _admins = []);
+    } finally {
+      if (mounted) setState(() => _loadingAdmins = false);
     }
   }
 
@@ -168,31 +256,14 @@ class _MasterDashboardState extends State<MasterDashboard>
       final query = level == 'ALL' ? '' : '?level=$level';
       final res   = await ApiService.get("/master/logs$query", token: token);
       setState(() {
-        _logs = (res["data"] as List)
+        _logs = (res["data"] as List? ?? [])
             .map((e) => SystemLogEntry.fromJson(e))
             .toList();
       });
     } catch (e) {
       _snack("Failed to load logs", kError);
     } finally {
-      setState(() => _loadingLogs = false);
-    }
-  }
-
-  Future<void> _fetchApiHealth() async {
-    setState(() => _loadingHealth = true);
-    try {
-      final token = await AuthService.getToken();
-      final res   = await ApiService.get("/master/health", token: token);
-      setState(() {
-        _apiHealth = (res["data"] as List)
-            .map((e) => ApiHealthItem.fromJson(e))
-            .toList();
-      });
-    } catch (e) {
-      _snack("Failed to load API health", kError);
-    } finally {
-      setState(() => _loadingHealth = false);
+      if (mounted) setState(() => _loadingLogs = false);
     }
   }
 
@@ -201,49 +272,48 @@ class _MasterDashboardState extends State<MasterDashboard>
     try {
       final token = await AuthService.getToken();
       final res   = await ApiService.get("/master/system-stats", token: token);
-      final d     = res["data"] as Map<String, dynamic>;
+      final d     = res["data"] as Map<String, dynamic>? ?? {};
       setState(() {
         _sysStats = {
-          'DB Size':       d['dbSize']       ?? 'N/A',
-          'Total Records': '${d['totalRecords'] ?? 0}',
-          'Flutter Build': d['flutterBuild'] ?? 'v1.0.0+1',
-          'Backend':       d['backend']      ?? 'Flask 3.0',
-          'Last Backup':   d['lastBackup']   ?? 'Never',
+          'DB Size':       d['dbSize']?.toString()       ?? 'N/A',
+          'Total Records': '${d['totalRecords']          ?? 0}',
+          'Uptime':        d['uptime']?.toString()       ?? 'N/A',
+          'Last Backup':   d['lastBackup']?.toString()   ?? 'Never',
+          'Backend':       d['backend']?.toString()      ?? 'Flask',
         };
       });
     } catch (_) {
-      setState(() => _sysStats = {
+      if (mounted) setState(() => _sysStats = {
         'DB Size': 'N/A', 'Total Records': 'N/A',
-        'Flutter Build': 'v1.0.0+1', 'Backend': 'Flask 3.0',
-        'Last Backup': 'N/A',
+        'Uptime': 'N/A', 'Last Backup': 'N/A', 'Backend': 'Flask',
       });
     } finally {
-      setState(() => _loadingStats = false);
+      if (mounted) setState(() => _loadingStats = false);
     }
   }
 
   Future<void> _fetchConfig() async {
+    setState(() => _loadingConfig = true);
     try {
       final token = await AuthService.getToken();
       final res   = await ApiService.get("/master/config", token: token);
-      setState(() => _appConfig = res["data"] ?? {});
-    } catch (_) {}
+      setState(() {
+        _appConfig = Map<String, dynamic>.from(res["data"] ?? {});
+      });
+    } catch (_) {} finally {
+      if (mounted) setState(() => _loadingConfig = false);
+    }
   }
 
-  @override
-  void dispose() {
-    _fadeCtrl.dispose();
-    super.dispose();
-  }
-
+  // ─────────────────────────────────────────
   void _switchTab(int i) {
     setState(() => _selectedTab = i);
     _fadeCtrl.forward(from: 0);
   }
 
-  // ──────────────────────────────────────────────
-  //  CREATE SUPER ADMIN DIALOG
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
+  //  DIALOGS — CREATE SUPER ADMIN
+  // ══════════════════════════════════════════
   void _showCreateSuperAdmin() {
     final nameCtrl    = TextEditingController();
     final userCtrl    = TextEditingController();
@@ -257,183 +327,59 @@ class _MasterDashboardState extends State<MasterDashboard>
       context: context,
       barrierColor: Colors.black54,
       builder: (ctx) => StatefulBuilder(
-        builder: (ctx, setDlg) => Dialog(
-          backgroundColor: Colors.transparent,
-          child: ConstrainedBox(
-            constraints: const BoxConstraints(maxWidth: 460),
-            child: Container(
-              decoration: BoxDecoration(
-                color: kBg,
-                borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: kBorder, width: 1.2),
-                boxShadow: [
-                  BoxShadow(
-                    color: kPrimary.withOpacity(0.2),
-                    blurRadius: 28,
-                    offset: const Offset(0, 10),
-                  ),
-                ],
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  _dlgHeader('Create Super Admin',
-                      Icons.supervised_user_circle_outlined, ctx),
-                  Flexible(
-                    child: SingleChildScrollView(
-                      padding: const EdgeInsets.all(20),
-                      child: Form(
-                        key: formKey,
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            _dlgField(nameCtrl, 'Full Name',
-                                Icons.person_outline,
-                                validator: _notEmpty),
-                            const SizedBox(height: 12),
-                            _dlgField(userCtrl, 'Username',
-                                Icons.alternate_email,
-                                validator: _notEmpty),
-                            const SizedBox(height: 12),
-                            _dlgField(passCtrl, 'Password',
-                                Icons.lock_outline,
-                                obscure: obscureP,
-                                suffixIcon: _eyeIcon(obscureP,
-                                    () => setDlg(() => obscureP = !obscureP)),
-                                validator: (v) => (v == null || v.length < 6)
-                                    ? 'Min 6 chars'
-                                    : null),
-                            const SizedBox(height: 12),
-                            _dlgField(confirmCtrl, 'Confirm Password',
-                                Icons.lock_outline,
-                                obscure: obscureC,
-                                suffixIcon: _eyeIcon(obscureC,
-                                    () => setDlg(() => obscureC = !obscureC)),
-                                validator: (v) => v != passCtrl.text
-                                    ? 'Passwords do not match'
-                                    : null),
-                            const SizedBox(height: 20),
-                            _dlgActions(
-                              onCancel: () => Navigator.pop(ctx),
-                              // ✅ FIX 1 — correct async onConfirm (no nested setState)
-                              onConfirm: () async {
-                                if (formKey.currentState!.validate()) {
-                                  try {
-                                    final token =
-                                        await AuthService.getToken();
-                                    await ApiService.post(
-                                      "/master/create-super-admin",
-                                      {
-                                        "name":     nameCtrl.text.trim(),
-                                        "username": userCtrl.text.trim(),
-                                        "password": passCtrl.text,
-                                      },
-                                      token: token,
-                                    );
-                                    Navigator.pop(ctx);
-                                    _snack('Super Admin created', kSuccess);
-                                    _fetchSuperAdmins();
-                                  } catch (e) {
-                                    _snack("Error creating admin", kError);
-                                  }
-                                }
-                              },
-                              confirmLabel: 'Create',
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  // ──────────────────────────────────────────────
-  //  DB TOOLS DIALOG
-  // ──────────────────────────────────────────────
-  void _showDbTools() {
-    showDialog(
-      context: context,
-      builder: (ctx) => Dialog(
-        backgroundColor: Colors.transparent,
-        child: ConstrainedBox(
-          constraints: const BoxConstraints(maxWidth: 420),
-          child: Container(
-            decoration: BoxDecoration(
-              color: kBg,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: kBorder, width: 1.2),
-            ),
+        builder: (ctx, setDlg) => _styledDialog(
+          title: 'Create Super Admin',
+          icon: Icons.supervised_user_circle_outlined,
+          ctx: ctx,
+          child: Form(
+            key: formKey,
             child: Column(
-              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                _dlgHeader('Database Tools', Icons.storage_outlined, ctx),
-                Padding(
-                  padding: const EdgeInsets.all(20),
-                  child: Column(
-                    children: [
-                      _dbToolTile(
-                        Icons.backup_outlined, 'Backup Database',
-                        'Export full MySQL dump to server', kSuccess,
-                        () async {
-                          Navigator.pop(ctx);
-                          try {
-                            final token = await AuthService.getToken();
-                            await ApiService.post("/master/db/backup", {},
-                                token: token);
-                            _snack('Backup completed ✓', kSuccess);
-                            _fetchSystemStats();
-                          } catch (_) {
-                            _snack('Backup failed', kError);
-                          }
+                _dlgField(nameCtrl, 'Full Name', Icons.person_outline,
+                    validator: _notEmpty),
+                const SizedBox(height: 12),
+                _dlgField(userCtrl, 'Username', Icons.alternate_email,
+                    validator: _notEmpty),
+                const SizedBox(height: 12),
+                _dlgField(passCtrl, 'Password', Icons.lock_outline,
+                    obscure: obscureP,
+                    suffixIcon: _eyeIcon(
+                        obscureP, () => setDlg(() => obscureP = !obscureP)),
+                    validator: (v) =>
+                        (v == null || v.length < 6) ? 'Min 6 chars' : null),
+                const SizedBox(height: 12),
+                _dlgField(confirmCtrl, 'Confirm Password', Icons.lock_outline,
+                    obscure: obscureC,
+                    suffixIcon: _eyeIcon(
+                        obscureC, () => setDlg(() => obscureC = !obscureC)),
+                    validator: (v) =>
+                        v != passCtrl.text ? 'Passwords do not match' : null),
+                const SizedBox(height: 20),
+                _dlgActions(
+                  onCancel: () => Navigator.pop(ctx),
+                  onConfirm: () async {
+                    if (!formKey.currentState!.validate()) return;
+                    try {
+                      final token = await AuthService.getToken();
+                      await ApiService.post(
+                        "/master/super-admins",
+                        {
+                          "name":     nameCtrl.text.trim(),
+                          "username": userCtrl.text.trim(),
+                          "password": passCtrl.text,
                         },
-                      ),
-                      _dbToolTile(
-                        Icons.cleaning_services_outlined, 'Flush Cache',
-                        'Clear server-side response cache', kInfo,
-                        () async {
-                          Navigator.pop(ctx);
-                          try {
-                            final token = await AuthService.getToken();
-                            await ApiService.post(
-                                "/master/db/flush-cache", {},
-                                token: token);
-                            _snack('Cache flushed', kInfo);
-                          } catch (_) {
-                            _snack('Failed to flush cache', kError);
-                          }
-                        },
-                      ),
-                      _dbToolTile(
-                        Icons.delete_sweep_outlined, 'Reset All Duties',
-                        'Remove all duty assignments (irreversible)', kError,
-                        () {
-                          Navigator.pop(ctx);
-                          _confirmDestructive(
-                            'Reset all duties?',
-                            'This will delete every duty assignment in the system.',
-                            () async {
-                              try {
-                                final token = await AuthService.getToken();
-                                await ApiService.post(
-                                    "/master/db/reset-duties", {},
-                                    token: token);
-                                _snack('All duties reset', kError);
-                              } catch (_) {
-                                _snack('Reset failed', kError);
-                              }
-                            },
-                          );
-                        },
-                      ),
-                    ],
-                  ),
+                        token: token,
+                      );
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _snack('Super Admin created ✓', kSuccess);
+                      _fetchSuperAdmins();
+                      _fetchOverview();
+                    } catch (e) {
+                      _snack("Error: $e", kError);
+                    }
+                  },
+                  confirmLabel: 'Create',
                 ),
               ],
             ),
@@ -443,9 +389,269 @@ class _MasterDashboardState extends State<MasterDashboard>
     );
   }
 
-  // ──────────────────────────────────────────────
-  //  CONFIRM DESTRUCTIVE
-  // ──────────────────────────────────────────────
+  // ── CREATE ADMIN DIALOG ───────────────────
+  void _showCreateAdmin() {
+    final nameCtrl     = TextEditingController();
+    final userCtrl     = TextEditingController();
+    final districtCtrl = TextEditingController();
+    final passCtrl     = TextEditingController();
+    final confirmCtrl  = TextEditingController();
+    bool  obscureP     = true;
+    bool  obscureC     = true;
+    final formKey      = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => _styledDialog(
+          title: 'Create Admin',
+          icon: Icons.manage_accounts_outlined,
+          ctx: ctx,
+          child: Form(
+            key: formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _dlgField(nameCtrl, 'Full Name', Icons.person_outline,
+                    validator: _notEmpty),
+                const SizedBox(height: 12),
+                _dlgField(userCtrl, 'Username', Icons.alternate_email,
+                    validator: _notEmpty),
+                const SizedBox(height: 12),
+                _dlgField(districtCtrl, 'District', Icons.location_city_outlined,
+                    validator: _notEmpty),
+                const SizedBox(height: 12),
+                _dlgField(passCtrl, 'Password', Icons.lock_outline,
+                    obscure: obscureP,
+                    suffixIcon: _eyeIcon(
+                        obscureP, () => setDlg(() => obscureP = !obscureP)),
+                    validator: (v) =>
+                        (v == null || v.length < 6) ? 'Min 6 chars' : null),
+                const SizedBox(height: 12),
+                _dlgField(confirmCtrl, 'Confirm Password', Icons.lock_outline,
+                    obscure: obscureC,
+                    suffixIcon: _eyeIcon(
+                        obscureC, () => setDlg(() => obscureC = !obscureC)),
+                    validator: (v) =>
+                        v != passCtrl.text ? 'Passwords do not match' : null),
+                const SizedBox(height: 20),
+                _dlgActions(
+                  onCancel: () => Navigator.pop(ctx),
+                  onConfirm: () async {
+                    if (!formKey.currentState!.validate()) return;
+                    try {
+                      final token = await AuthService.getToken();
+                      await ApiService.post(
+                        "/master/admins",
+                        {
+                          "name":     nameCtrl.text.trim(),
+                          "username": userCtrl.text.trim(),
+                          "district": districtCtrl.text.trim(),
+                          "password": passCtrl.text,
+                        },
+                        token: token,
+                      );
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _snack('Admin created ✓', kSuccess);
+                      _fetchAdmins();
+                      _fetchOverview();
+                    } catch (e) {
+                      _snack("Error: $e", kError);
+                    }
+                  },
+                  confirmLabel: 'Create',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── EDIT ELECTION CONFIG DIALOG ───────────
+  void _showEditElectionConfig() {
+    final stateCtrl    = TextEditingController(text: _appConfig['state']         ?? '');
+    final yearCtrl     = TextEditingController(text: _appConfig['electionYear']  ?? '');
+    final dateCtrl     = TextEditingController(text: _appConfig['electionDate']  ?? '');
+    final phaseCtrl    = TextEditingController(text: _appConfig['phase']         ?? '');
+    final formKey      = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => _styledDialog(
+        title: 'Edit Election Settings',
+        icon: Icons.how_to_vote_outlined,
+        ctx: ctx,
+        child: Form(
+          key: formKey,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              _dlgField(stateCtrl, 'State', Icons.map_outlined,
+                  validator: _notEmpty),
+              const SizedBox(height: 12),
+              _dlgField(yearCtrl, 'Election Year', Icons.calendar_today_outlined,
+                  validator: _notEmpty),
+              const SizedBox(height: 12),
+              _dlgField(dateCtrl, 'Election Date (e.g. 15 Apr 2026)',
+                  Icons.event_outlined,
+                  validator: _notEmpty),
+              const SizedBox(height: 12),
+              _dlgField(phaseCtrl, 'Phase (e.g. Phase 1)',
+                  Icons.flag_outlined,
+                  validator: _notEmpty),
+              const SizedBox(height: 20),
+              _dlgActions(
+                onCancel: () => Navigator.pop(ctx),
+                onConfirm: () async {
+                  if (!formKey.currentState!.validate()) return;
+                  try {
+                    final token = await AuthService.getToken();
+                    // Batch update all election keys at once
+                    await ApiService.post(
+                      "/master/config",
+                      {
+                        "state":        stateCtrl.text.trim(),
+                        "electionYear": yearCtrl.text.trim(),
+                        "electionDate": dateCtrl.text.trim(),
+                        "phase":        phaseCtrl.text.trim(),
+                      },
+                      token: token,
+                    );
+                    if (ctx.mounted) Navigator.pop(ctx);
+                    _snack('Election settings updated ✓', kSuccess);
+                    _fetchConfig();
+                    _fetchOverview();
+                  } catch (e) {
+                    _snack("Error: $e", kError);
+                  }
+                },
+                confirmLabel: 'Save',
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── RESET PASSWORD DIALOG ─────────────────
+  void _showResetPassword(int id, String name, String role) {
+    final passCtrl    = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    bool  obscureP    = true;
+    bool  obscureC    = true;
+    final formKey     = GlobalKey<FormState>();
+    final endpoint    = role == 'super_admin'
+        ? "/master/super-admins/$id/reset-password"
+        : "/master/admins/$id/reset-password";
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => _styledDialog(
+          title: 'Reset Password — $name',
+          icon: Icons.lock_reset_outlined,
+          ctx: ctx,
+          child: Form(
+            key: formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _dlgField(passCtrl, 'New Password', Icons.lock_outline,
+                    obscure: obscureP,
+                    suffixIcon: _eyeIcon(
+                        obscureP, () => setDlg(() => obscureP = !obscureP)),
+                    validator: (v) =>
+                        (v == null || v.length < 6) ? 'Min 6 chars' : null),
+                const SizedBox(height: 12),
+                _dlgField(confirmCtrl, 'Confirm Password', Icons.lock_outline,
+                    obscure: obscureC,
+                    suffixIcon: _eyeIcon(
+                        obscureC, () => setDlg(() => obscureC = !obscureC)),
+                    validator: (v) =>
+                        v != passCtrl.text ? 'Passwords do not match' : null),
+                const SizedBox(height: 20),
+                _dlgActions(
+                  onCancel: () => Navigator.pop(ctx),
+                  onConfirm: () async {
+                    if (!formKey.currentState!.validate()) return;
+                    try {
+                      final token = await AuthService.getToken();
+                      await ApiService.patch(endpoint,
+                          {"password": passCtrl.text}, token: token);
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _snack('Password reset ✓', kSuccess);
+                    } catch (e) {
+                      _snack("Error: $e", kError);
+                    }
+                  },
+                  confirmLabel: 'Reset',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── DB TOOLS DIALOG ───────────────────────
+  void _showDbTools() {
+    showDialog(
+      context: context,
+      builder: (ctx) => _styledDialog(
+        title: 'Database Tools',
+        icon: Icons.storage_outlined,
+        ctx: ctx,
+        child: Column(
+          children: [
+            _dbToolTile(Icons.backup_outlined, 'Backup Database',
+                'Export full MySQL dump to server', kSuccess, () async {
+              Navigator.pop(ctx);
+              try {
+                final token = await AuthService.getToken();
+                await ApiService.post("/master/db/backup", {}, token: token);
+                _snack('Backup completed ✓', kSuccess);
+                _fetchSystemStats();
+              } catch (_) {
+                _snack('Backup failed', kError);
+              }
+            }),
+            _dbToolTile(Icons.cleaning_services_outlined, 'Flush Cache',
+                'Clear server-side response cache', kInfo, () async {
+              Navigator.pop(ctx);
+              try {
+                final token = await AuthService.getToken();
+                await ApiService.post("/master/db/flush-cache", {},
+                    token: token);
+                _snack('Cache flushed ✓', kInfo);
+              } catch (_) {
+                _snack('Failed to flush cache', kError);
+              }
+            }),
+            _dbToolTile(Icons.build_outlined, 'Run Migrations',
+                'Apply DB schema updates safely', kWarning, () async {
+              Navigator.pop(ctx);
+              try {
+                final token = await AuthService.getToken();
+                await ApiService.post("/master/migrate", {}, token: token);
+                _snack('Migrations completed ✓', kSuccess);
+              } catch (_) {
+                _snack('Migration failed', kError);
+              }
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── CONFIRM DESTRUCTIVE ───────────────────
   void _confirmDestructive(
       String title, String body, VoidCallback onConfirm) {
     showDialog(
@@ -458,9 +664,13 @@ class _MasterDashboardState extends State<MasterDashboard>
         title: Row(children: [
           const Icon(Icons.warning_amber_rounded, color: kError),
           const SizedBox(width: 8),
-          Text(title,
-              style: const TextStyle(
-                  color: kError, fontWeight: FontWeight.w800, fontSize: 16)),
+          Expanded(
+            child: Text(title,
+                style: const TextStyle(
+                    color: kError,
+                    fontWeight: FontWeight.w800,
+                    fontSize: 16)),
+          ),
         ]),
         content: Text(body,
             style: const TextStyle(color: kDark, fontSize: 13)),
@@ -470,7 +680,10 @@ class _MasterDashboardState extends State<MasterDashboard>
               child: const Text('Cancel',
                   style: TextStyle(color: kSubtle))),
           ElevatedButton(
-            onPressed: () { Navigator.pop(ctx); onConfirm(); },
+            onPressed: () {
+              Navigator.pop(ctx);
+              onConfirm();
+            },
             style: ElevatedButton.styleFrom(
                 backgroundColor: kError, foregroundColor: Colors.white),
             child: const Text('Confirm'),
@@ -480,51 +693,50 @@ class _MasterDashboardState extends State<MasterDashboard>
     );
   }
 
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
   //  BUILD
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: kBg,
-      body: Column(
-        children: [
-          _buildTopBar(),
-          _buildTabBar(),
-          Expanded(
-            child: FadeTransition(
-              opacity: _fadeAnim,
-              child: _buildBody(),
+      body: SafeArea(
+        child: Column(
+          children: [
+            _buildTopBar(),
+            _buildTabBar(),
+            Expanded(
+              child: FadeTransition(
+                opacity: _fadeAnim,
+                child: _buildBody(),
+              ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
 
-  // ── TOP BAR ───────────────────────────────────
+  // ── TOP BAR ───────────────────────────────
   Widget _buildTopBar() {
     return Container(
       color: const Color(0xFF1A0A00),
-      padding: EdgeInsets.only(
-        top: MediaQuery.of(context).padding.top + 6,
-        bottom: 10, left: 16, right: 8,
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
       child: Row(
         children: [
+          // DEV badge
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             decoration: BoxDecoration(
-                color: kDevAccent,
-                borderRadius: BorderRadius.circular(6)),
+                color: kDevAccent, borderRadius: BorderRadius.circular(6)),
             child: const Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.terminal, color: Colors.white, size: 13),
+                Icon(Icons.terminal, color: Colors.white, size: 12),
                 SizedBox(width: 4),
-                Text('DEV',
+                Text('MASTER',
                     style: TextStyle(
-                        color: Colors.white, fontSize: 11,
+                        color: Colors.white, fontSize: 10,
                         fontWeight: FontWeight.w900, letterSpacing: 1.2)),
               ],
             ),
@@ -537,28 +749,24 @@ class _MasterDashboardState extends State<MasterDashboard>
                 Text('MASTER ADMIN CONSOLE',
                     style: TextStyle(
                         color: kBorder, fontSize: 11,
-                        fontWeight: FontWeight.w800, letterSpacing: 1.6)),
-                Text('UP Election Cell — Developer Access',
-                    style: TextStyle(color: Colors.white54, fontSize: 11)),
+                        fontWeight: FontWeight.w800, letterSpacing: 1.4)),
+                Text('Election Management — Developer Access',
+                    style: TextStyle(color: Colors.white54, fontSize: 10)),
               ],
             ),
           ),
-          TextButton.icon(
-            onPressed: _showDbTools,
-            icon: const Icon(Icons.storage, size: 15, color: kBorder),
-            label: const Text('DB Tools',
-                style: TextStyle(
-                    color: kBorder, fontSize: 12,
-                    fontWeight: FontWeight.w700)),
-            style: TextButton.styleFrom(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 6)),
-          ),
-          // ✅ FIX 2 — correct logout (no double onPressed)
+          // DB Tools
+          _topBarBtn(Icons.storage, 'DB', _showDbTools),
+          // Refresh
+          _topBarBtn(Icons.refresh, 'Sync', () {
+            _fetchAll();
+            _snack('Refreshing all data…', kInfo);
+          }),
+          // Logout
           IconButton(
             onPressed: () async {
               await AuthService.logout();
-              Navigator.pushReplacementNamed(context, '/login');
+              if (mounted) Navigator.pushReplacementNamed(context, '/login');
             },
             icon: const Icon(Icons.logout_rounded,
                 color: Colors.white54, size: 20),
@@ -569,49 +777,59 @@ class _MasterDashboardState extends State<MasterDashboard>
     );
   }
 
-  // ── TAB BAR ───────────────────────────────────
+  Widget _topBarBtn(IconData icon, String label, VoidCallback onTap) {
+    return TextButton.icon(
+      onPressed: onTap,
+      icon: Icon(icon, size: 14, color: kBorder),
+      label: Text(label,
+          style: const TextStyle(
+              color: kBorder, fontSize: 11, fontWeight: FontWeight.w700)),
+      style: TextButton.styleFrom(
+          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6)),
+    );
+  }
+
+  // ── TAB BAR ───────────────────────────────
   Widget _buildTabBar() {
     final tabs = [
-      (Icons.dashboard_outlined,          'Overview'),
-      (Icons.supervised_user_circle,      'Super Admins'),
-      (Icons.monitor_heart_outlined,      'API Health'),
-      (Icons.receipt_long_outlined,       'Logs'),
-      (Icons.settings_outlined,           'Config'),
+      (Icons.dashboard_outlined,        'Overview'),
+      (Icons.supervised_user_circle,    'Super Admins'),
+      (Icons.manage_accounts_outlined,  'Admins'),
+      (Icons.receipt_long_outlined,     'Logs'),
+      (Icons.settings_outlined,         'Config'),
     ];
-
     return Container(
       color: kSurface,
       child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(
           children: List.generate(tabs.length, (i) {
-            final selected = _selectedTab == i;
+            final sel = _selectedTab == i;
             return GestureDetector(
               onTap: () => _switchTab(i),
               child: AnimatedContainer(
-                duration: const Duration(milliseconds: 200),
+                duration: const Duration(milliseconds: 180),
                 padding: const EdgeInsets.symmetric(
-                    horizontal: 16, vertical: 12),
+                    horizontal: 16, vertical: 11),
                 decoration: BoxDecoration(
-                  color: selected ? kBg : Colors.transparent,
+                  color: sel ? kBg : Colors.transparent,
                   border: Border(
                     bottom: BorderSide(
-                        color: selected ? kDevAccent : Colors.transparent,
+                        color: sel ? kDevAccent : Colors.transparent,
                         width: 3),
                   ),
                 ),
                 child: Row(
                   children: [
                     Icon(tabs[i].$1,
-                        size: 15,
-                        color: selected ? kDevAccent : kSubtle),
+                        size: 14,
+                        color: sel ? kDevAccent : kSubtle),
                     const SizedBox(width: 6),
                     Text(tabs[i].$2,
                         style: TextStyle(
-                          color: selected ? kDevAccent : kSubtle,
-                          fontWeight: selected
-                              ? FontWeight.w700
-                              : FontWeight.w500,
+                          color: sel ? kDevAccent : kSubtle,
+                          fontWeight:
+                              sel ? FontWeight.w700 : FontWeight.w500,
                           fontSize: 12,
                         )),
                   ],
@@ -628,21 +846,21 @@ class _MasterDashboardState extends State<MasterDashboard>
     switch (_selectedTab) {
       case 0: return _buildOverview();
       case 1: return _buildSuperAdmins();
-      case 2: return _buildApiHealth();
+      case 2: return _buildAdmins();
       case 3: return _buildLogs();
       case 4: return _buildConfig();
       default: return _buildOverview();
     }
   }
 
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
   //  TAB 0 — OVERVIEW
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
   Widget _buildOverview() {
-    if (_loadingAdmins || _loadingStats) {
-      return const Center(child: CircularProgressIndicator(color: kDevAccent));
+    if (_loadingOverview && _loadingStats) {
+      return const Center(
+          child: CircularProgressIndicator(color: kDevAccent));
     }
-
     return RefreshIndicator(
       onRefresh: _fetchAll,
       color: kDevAccent,
@@ -652,6 +870,11 @@ class _MasterDashboardState extends State<MasterDashboard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            // ── Election info banner ──────────
+            _electionBanner(),
+            const SizedBox(height: 14),
+
+            // ── Stat grid ────────────────────
             LayoutBuilder(builder: (ctx, c) {
               final cols = c.maxWidth > 480 ? 4 : 2;
               return GridView.count(
@@ -659,194 +882,171 @@ class _MasterDashboardState extends State<MasterDashboard>
                 crossAxisCount: cols,
                 crossAxisSpacing: 10,
                 mainAxisSpacing: 10,
-                childAspectRatio: 1.45,
+                childAspectRatio: 1.4,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
                   _statCard('Super Admins',
-                      '${_superAdmins.length}',
+                      '${_overview.totalSuperAdmins}',
                       Icons.supervised_user_circle_outlined, kDevAccent),
                   _statCard('Admins',
-                      '${_superAdmins.fold(0, (s, a) => s + a.adminsUnder)}',
+                      '${_overview.totalAdmins}',
                       Icons.manage_accounts, kPrimary),
-                  _statCard('API Endpoints',
-                      '${_apiHealth.where((a) => a.status == "UP").length}/${_apiHealth.length} UP',
-                      Icons.api_outlined, kInfo),
-                  _statCard('System Errors',
+                  _statCard('Staff',
+                      '${_overview.totalStaff}',
+                      Icons.groups_outlined, kInfo),
+                  _statCard('Booths',
+                      '${_overview.totalBooths}',
+                      Icons.how_to_vote_outlined, kSuccess),
+                  _statCard('Assigned',
+                      '${_overview.assignedDuties}',
+                      Icons.assignment_turned_in_outlined, kAccent),
+                  _statCard('Unassigned',
+                      '${_overview.totalStaff - _overview.assignedDuties < 0 ? 0 : _overview.totalStaff - _overview.assignedDuties}',
+                      Icons.assignment_late_outlined, kWarning),
+                  _statCard('Errors',
                       '${_logs.where((l) => l.level == "ERROR").length}',
                       Icons.error_outline, kError),
+                  _statCard('Log Entries',
+                      '${_logs.length}',
+                      Icons.receipt_long_outlined, kSubtle),
                 ],
               );
             }),
 
-             // After the GridView in _buildOverview, add:
-const SizedBox(height: 16),
-GestureDetector(
-  onTap: () => Navigator.push(context,
-      MaterialPageRoute(builder: (_) => const HierarchyReportPage())),
-  child: Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-          colors: [Color(0xFF0F2B5B), Color(0xFF1A3D7C)]),
-      borderRadius: BorderRadius.circular(12),
-      boxShadow: [BoxShadow(
-          color: kPrimary.withOpacity(0.25),
-          blurRadius: 12, offset: const Offset(0, 4))],
-    ),
-    child: const Row(children: [
-      Icon(Icons.table_chart_outlined, color: Colors.white, size: 22),
-      SizedBox(width: 14),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Hierarchy Report', style: TextStyle(
-            color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-        Text('Super Zone · Sector · Panchayat',
-            style: TextStyle(color: Colors.white60, fontSize: 11)),
-      ])),
-      Icon(Icons.chevron_right, color: Colors.white54),
-    ]),
-  ),
-),
-
-
-
             const SizedBox(height: 18),
             _sectionLabel('System Information'),
             const SizedBox(height: 10),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: kBorder.withOpacity(0.4)),
-              ),
-              child: Column(
-                children: _sysStats.entries.toList().asMap().entries.map((e) {
-                  final isLast = e.key == _sysStats.length - 1;
-                  return Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 16, vertical: 11),
-                    decoration: BoxDecoration(
-                      border: isLast
-                          ? null
-                          : Border(
-                              bottom: BorderSide(
-                                  color: kBorder.withOpacity(0.3))),
-                    ),
-                    child: Row(
-                      children: [
-                        Text(e.value.key,
-                            style: const TextStyle(
-                                color: kSubtle,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w600)),
-                        const Spacer(),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 10, vertical: 3),
-                          decoration: BoxDecoration(
-                            color: kSurface,
-                            borderRadius: BorderRadius.circular(6),
-                            border: Border.all(
-                                color: kBorder.withOpacity(0.4)),
-                          ),
-                          child: Text(e.value.value,
-                              style: const TextStyle(
-                                  color: kDark,
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w700,
-                                  fontFamily: 'monospace')),
-                        ),
-                      ],
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
+            _infoTable(_sysStats),
 
             const SizedBox(height: 18),
             _sectionLabel('Recent Activity'),
             const SizedBox(height: 10),
-
             if (_loadingLogs)
-              const Center(child: CircularProgressIndicator(color: kDevAccent))
+              const Center(
+                  child: CircularProgressIndicator(color: kDevAccent))
             else ...[
-              ..._logs.take(4).map((l) => _logTile(l)),
-              const SizedBox(height: 6),
-              GestureDetector(
-                onTap: () => _switchTab(3),
-                child: const Center(
-                  child: Text('View All Logs →',
-                      style: TextStyle(
-                          color: kDevAccent,
-                          fontWeight: FontWeight.w700,
-                          fontSize: 12)),
+              ..._logs.take(5).map(_logTile),
+              if (_logs.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                GestureDetector(
+                  onTap: () => _switchTab(3),
+                  child: const Center(
+                    child: Text('View All Logs →',
+                        style: TextStyle(
+                            color: kDevAccent,
+                            fontWeight: FontWeight.w700,
+                            fontSize: 12)),
+                  ),
                 ),
-              ),
+              ],
             ],
+            const SizedBox(height: 24),
           ],
         ),
       ),
     );
   }
 
- 
-  // ──────────────────────────────────────────────
-  //  TAB 1 — SUPER ADMINS
-  // ──────────────────────────────────────────────
-  Widget _buildSuperAdmins() {
-    if (_loadingAdmins) {
-      return const Center(
-          child: CircularProgressIndicator(color: kDevAccent));
-    }
+  Widget _electionBanner() {
+    final ei = _overview.electionInfo;
+    final state = ei['state'] ?? _appConfig['state'] ?? '';
+    final year  = ei['electionYear'] ?? _appConfig['electionYear'] ?? '';
+    final date  = ei['electionDate'] ?? _appConfig['electionDate'] ?? '';
+    final phase = ei['phase'] ?? _appConfig['phase'] ?? '';
 
+    final hasData = state.isNotEmpty || year.isNotEmpty;
+
+    return Container(
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+            colors: [Color(0xFF1A0A00), Color(0xFF3D1A00)],
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBorder.withOpacity(0.5)),
+      ),
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        children: [
+          const Icon(Icons.how_to_vote, color: kBorder, size: 28),
+          const SizedBox(width: 14),
+          Expanded(
+            child: hasData
+                ? Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('$state Election $year',
+                          style: const TextStyle(
+                              color: kBorder,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800)),
+                      if (phase.isNotEmpty || date.isNotEmpty)
+                        Text('$phase  •  $date',
+                            style: const TextStyle(
+                                color: Colors.white60, fontSize: 11)),
+                    ],
+                  )
+                : const Text('No election details configured yet',
+                    style: TextStyle(color: Colors.white54, fontSize: 13)),
+          ),
+          GestureDetector(
+            onTap: _showEditElectionConfig,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                  color: kDevAccent,
+                  borderRadius: BorderRadius.circular(8)),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: const [
+                  Icon(Icons.edit, color: Colors.white, size: 12),
+                  SizedBox(width: 4),
+                  Text('Edit',
+                      style: TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  TAB 1 — SUPER ADMINS
+  // ══════════════════════════════════════════
+  Widget _buildSuperAdmins() {
     return Column(
       children: [
-        Container(
-          color: kSurface,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-          child: Row(
-            children: [
-              Expanded(
-                child: Text(
-                  '${_superAdmins.length} Super Admin(s)',
-                  style: const TextStyle(
-                      color: kDark,
-                      fontWeight: FontWeight.w700,
-                      fontSize: 14),
-                ),
-              ),
-              ElevatedButton.icon(
-                onPressed: _showCreateSuperAdmin,
-                icon: const Icon(Icons.add, size: 16),
-                label: const Text('New Super Admin'),
-                style: ElevatedButton.styleFrom(
-                  backgroundColor: kDevAccent,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 14, vertical: 10),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  textStyle: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700),
-                ),
-              ),
-            ],
-          ),
+        _listHeader(
+          title: '${_superAdmins.length} Super Admin(s)',   // ← named param
+          onRefresh: _fetchSuperAdmins,
+          buttonLabel: 'New Super Admin',
+          buttonIcon: Icons.add,
+          onButton: _showCreateSuperAdmin,
         ),
         Expanded(
-          child: RefreshIndicator(
-            onRefresh: _fetchSuperAdmins,
-            color: kDevAccent,
-            child: _superAdmins.isEmpty
-                ? const Center(
-                    child: Text('No Super Admins found',
-                        style: TextStyle(color: kSubtle, fontSize: 14)))
-                : ListView.builder(
-                    padding: const EdgeInsets.all(16),
-                    itemCount: _superAdmins.length,
-                    itemBuilder: (_, i) =>
-                        _superAdminCard(_superAdmins[i]),
-                  ),
-          ),
+          child: _loadingSuperAdmins
+              ? const Center(
+                  child: CircularProgressIndicator(color: kDevAccent))
+              : RefreshIndicator(
+                  onRefresh: _fetchSuperAdmins,
+                  color: kDevAccent,
+                  child: _superAdmins.isEmpty
+                      ? _emptyState(
+                          'No Super Admins yet',
+                          'Tap "New Super Admin" to create one',
+                          Icons.supervised_user_circle_outlined)
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _superAdmins.length,
+                          itemBuilder: (_, i) =>
+                              _superAdminCard(_superAdmins[i]),
+                        ),
+                ),
         ),
       ],
     );
@@ -868,13 +1068,13 @@ GestureDetector(
       ),
       child: Column(
         children: [
-          // Header
+          // Header row
           Container(
             padding: const EdgeInsets.symmetric(
                 horizontal: 14, vertical: 10),
             decoration: BoxDecoration(
               color: sa.isActive
-                  ? kDevAccent.withOpacity(0.08)
+                  ? kDevAccent.withOpacity(0.07)
                   : kError.withOpacity(0.06),
               borderRadius: const BorderRadius.only(
                 topLeft: Radius.circular(14),
@@ -883,19 +1083,7 @@ GestureDetector(
             ),
             child: Row(
               children: [
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 3),
-                  decoration: BoxDecoration(
-                      color: kDark,
-                      borderRadius: BorderRadius.circular(6)),
-                  child: Text('SA${sa.id.toString().padLeft(3, '0')}',
-                      style: const TextStyle(
-                          color: kBorder,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          letterSpacing: 0.8)),
-                ),
+                _idBadge('SA', sa.id),
                 const SizedBox(width: 10),
                 Expanded(
                   child: Text(sa.name,
@@ -904,13 +1092,13 @@ GestureDetector(
                           fontWeight: FontWeight.w700,
                           fontSize: 14)),
                 ),
-                // ✅ FIX 3 — correct async onTap for toggle
+                // Status toggle
                 GestureDetector(
                   onTap: () async {
                     try {
                       final token = await AuthService.getToken();
-                      await ApiService.put(
-                        "/master/super-admin/${sa.id}/status",
+                      await ApiService.patch(
+                        "/master/super-admins/${sa.id}/status",
                         {"isActive": !sa.isActive},
                         token: token,
                       );
@@ -919,68 +1107,57 @@ GestureDetector(
                       _snack('Failed to update status', kError);
                     }
                   },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 8, vertical: 3),
-                    decoration: BoxDecoration(
-                      color: sa.isActive
-                          ? kSuccess.withOpacity(0.12)
-                          : kError.withOpacity(0.10),
-                      borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: sa.isActive ? kSuccess : kError,
-                          width: 1),
-                    ),
-                    child: Text(
-                      sa.isActive ? 'ACTIVE' : 'INACTIVE',
-                      style: TextStyle(
-                          color: sa.isActive ? kSuccess : kError,
-                          fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          letterSpacing: 0.8),
-                    ),
-                  ),
+                  child: _statusBadge(sa.isActive),
                 ),
-                const SizedBox(width: 8),
-                // ✅ FIX 4 — correct async delete (no await inside setState)
-                IconButton(
-                  onPressed: () => _confirmDestructive(
-                    'Remove Super Admin?',
-                    'This will also affect all admins under ${sa.name}.',
-                    () async {
-                      try {
-                        final token = await AuthService.getToken();
-                        await ApiService.delete(
-                          "/master/super-admin/${sa.id}",
-                          token: token,
-                        );
-                        _fetchSuperAdmins();
-                        _snack('Super Admin removed', kError);
-                      } catch (_) {
-                        _snack('Failed to delete', kError);
-                      }
-                    },
-                  ),
-                  icon: const Icon(Icons.delete_outline,
-                      color: kError, size: 18),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
+                const SizedBox(width: 6),
+                // Menu
+                PopupMenuButton<String>(
+                  onSelected: (v) {
+                    if (v == 'reset') _showResetPassword(sa.id, sa.name, 'super_admin');
+                    if (v == 'delete') {
+                      _confirmDestructive(
+                        'Remove Super Admin?',
+                        'This will affect all admins under ${sa.name}.',
+                        () async {
+                          try {
+                            final token = await AuthService.getToken();
+                            await ApiService.delete(
+                                "/master/super-admins/${sa.id}",
+                                token: token);
+                            _fetchSuperAdmins();
+                            _fetchOverview();
+                            _snack('Super Admin removed', kError);
+                          } catch (_) {
+                            _snack('Failed to delete', kError);
+                          }
+                        },
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.more_vert,
+                      size: 18, color: kSubtle),
+                  itemBuilder: (_) => [
+                    _menuItem('reset',  'Reset Password', Icons.lock_reset),
+                    _menuItem('delete', 'Delete',         Icons.delete_outline,
+                        color: kError),
+                  ],
                 ),
               ],
             ),
           ),
-
+          // Body
           Padding(
-            padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             child: Row(
               children: [
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      _infoRow(Icons.alternate_email, '@${sa.username}'),
+                      _infoRowWidget(
+                          Icons.alternate_email, '@${sa.username}'),
                       const SizedBox(height: 4),
-                      _infoRow(Icons.calendar_today_outlined,
+                      _infoRowWidget(Icons.calendar_today_outlined,
                           'Created ${_fmt(sa.createdAt)}'),
                     ],
                   ),
@@ -994,254 +1171,239 @@ GestureDetector(
     );
   }
 
-  // ──────────────────────────────────────────────
-  //  TAB 2 — API HEALTH
-  // ──────────────────────────────────────────────
-  Widget _buildApiHealth() {
-    if (_loadingHealth) {
-      return const Center(
-          child: CircularProgressIndicator(color: kDevAccent));
-    }
+  // ══════════════════════════════════════════
+  //  TAB 2 — ADMINS
+  // ══════════════════════════════════════════
+  Widget _buildAdmins() {
+    return Column(
+      children: [
+        _listHeader(
+          title: '${_admins.length} Admin(s)',              // ← named param
+          onRefresh: _fetchAdmins,
+          buttonLabel: 'New Admin',
+          buttonIcon: Icons.add,
+          onButton: _showCreateAdmin,
+        ),
+        Expanded(                                           // ← comma was missing before here
+          child: _loadingAdmins
+              ? const Center(
+                  child: CircularProgressIndicator(color: kDevAccent))
+              : RefreshIndicator(
+                  onRefresh: _fetchAdmins,
+                  color: kDevAccent,
+                  child: _admins.isEmpty
+                      ? _emptyState(
+                          'No Admins yet',
+                          'Tap "New Admin" to create one',
+                          Icons.manage_accounts_outlined)
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(16),
+                          itemCount: _admins.length,
+                          itemBuilder: (_, i) => _adminCard(_admins[i]),
+                        ),
+                ),
+        ),
+      ],
+    );
+  }
 
-    final upCount   = _apiHealth.where((a) => a.status == 'UP').length;
-    final downCount = _apiHealth.where((a) => a.status == 'DOWN').length;
-    final slowCount = _apiHealth.where((a) => a.status == 'SLOW').length;
-
-    return RefreshIndicator(
-      onRefresh: _fetchApiHealth,
-      color: kDevAccent,
-      child: SingleChildScrollView(
-        physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
+  Widget _adminCard(AdminModel admin) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBorder.withOpacity(0.4)),
+        boxShadow: [
+          BoxShadow(
+              color: kPrimary.withOpacity(0.05),
+              blurRadius: 8,
+              offset: const Offset(0, 3)),
+        ],
+      ),
+      child: Column(
+        children: [
+          // Header
+          Container(
+            padding:
+                const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+            decoration: BoxDecoration(
+              color: admin.isActive
+                  ? kPrimary.withOpacity(0.07)
+                  : kError.withOpacity(0.06),
+              borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(14),
+                topRight: Radius.circular(14),
+              ),
+            ),
+            child: Row(
               children: [
-                _healthSummary('$upCount UP',     kSuccess),
-                const SizedBox(width: 8),
-                _healthSummary('$downCount DOWN', kError),
-                const SizedBox(width: 8),
-                _healthSummary('$slowCount SLOW', kWarning),
-                const Spacer(),
-                GestureDetector(
-                  onTap: () {
-                    _fetchApiHealth();
-                    _snack('Pinging all endpoints…', kInfo);
-                  },
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 12, vertical: 6),
-                    decoration: BoxDecoration(
-                        color: kDevAccent,
-                        borderRadius: BorderRadius.circular(8)),
-                    child: const Row(
-                      children: [
-                        Icon(Icons.refresh, color: Colors.white, size: 14),
-                        SizedBox(width: 4),
-                        Text('Ping All',
-                            style: TextStyle(
-                                color: Colors.white,
-                                fontSize: 12,
-                                fontWeight: FontWeight.w700)),
-                      ],
-                    ),
+                _idBadge('AD', admin.id),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(admin.name,
+                          style: const TextStyle(
+                              color: kDark,
+                              fontWeight: FontWeight.w700,
+                              fontSize: 13)),
+                      Text(admin.district,
+                          style: const TextStyle(
+                              color: kSubtle, fontSize: 11)),
+                    ],
                   ),
+                ),
+                GestureDetector(
+                  onTap: () async {
+                    try {
+                      final token = await AuthService.getToken();
+                      await ApiService.patch(
+                        "/master/admins/${admin.id}/status",
+                        {"isActive": !admin.isActive},
+                        token: token,
+                      );
+                      _fetchAdmins();
+                    } catch (_) {
+                      _snack('Failed to update status', kError);
+                    }
+                  },
+                  child: _statusBadge(admin.isActive),
+                ),
+                const SizedBox(width: 6),
+                PopupMenuButton<String>(
+                  onSelected: (v) {
+                    if (v == 'reset')
+                      _showResetPassword(admin.id, admin.name, 'admin');
+                    if (v == 'delete') {
+                      _confirmDestructive(
+                        'Delete Admin?',
+                        'Admin "${admin.name}" will be permanently removed.',
+                        () async {
+                          try {
+                            final token = await AuthService.getToken();
+                            await ApiService.delete(
+                                "/master/admins/${admin.id}",
+                                token: token);
+                            _fetchAdmins();
+                            _fetchOverview();
+                            _snack('Admin deleted', kError);
+                          } catch (_) {
+                            _snack('Failed to delete', kError);
+                          }
+                        },
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.more_vert,
+                      size: 18, color: kSubtle),
+                  itemBuilder: (_) => [
+                    _menuItem('reset',  'Reset Password', Icons.lock_reset),
+                    _menuItem('delete', 'Delete',         Icons.delete_outline,
+                        color: kError),
+                  ],
                 ),
               ],
             ),
-            const SizedBox(height: 14),
-            Container(
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: kBorder.withOpacity(0.4)),
-              ),
-              child: Column(
-                children: _apiHealth.asMap().entries.map((e) {
-                  final isLast = e.key == _apiHealth.length - 1;
-                  return _apiRow(e.value, isLast);
-                }).toList(),
-              ),
-            ),
-            const SizedBox(height: 18),
-            _sectionLabel('Flask Backend Info'),
-            const SizedBox(height: 10),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                  color: const Color(0xFF1A1A2E),
-                  borderRadius: BorderRadius.circular(12)),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _codeRow('Host',    'localhost:5000'),
-                  _codeRow('DB',      'mysql://election_db'),
-                  _codeRow('CORS',    'enabled'),
-                  _codeRow('JWT Exp', '10 hours'),
-                  _codeRow('Mode',    'debug=True'),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _apiRow(ApiHealthItem item, bool isLast) {
-    Color statusColor;
-    IconData statusIcon;
-    switch (item.status) {
-      case 'UP':
-        statusColor = kSuccess;
-        statusIcon  = Icons.check_circle;
-        break;
-      case 'DOWN':
-        statusColor = kError;
-        statusIcon  = Icons.cancel;
-        break;
-      default:
-        statusColor = kWarning;
-        statusIcon  = Icons.warning_amber;
-    }
-
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-      decoration: BoxDecoration(
-        border: isLast
-            ? null
-            : Border(
-                bottom: BorderSide(color: kBorder.withOpacity(0.3))),
-      ),
-      child: Row(
-        children: [
-          Icon(statusIcon, color: statusColor, size: 16),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(item.endpoint,
-                style: const TextStyle(
-                    color: kDark,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w600,
-                    fontFamily: 'monospace')),
           ),
-          if (item.latencyMs > 0)
-            Text('${item.latencyMs} ms',
-                style: TextStyle(
-                    color: item.latencyMs > 500 ? kWarning : kSubtle,
-                    fontSize: 12,
-                    fontWeight: FontWeight.w600)),
-          const SizedBox(width: 10),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-            decoration: BoxDecoration(
-              color: statusColor.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(6),
-              border: Border.all(color: statusColor.withOpacity(0.3)),
-            ),
-            child: Text(item.status,
-                style: TextStyle(
-                    color: statusColor,
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800)),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _codeRow(String key, String val) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 4),
-      child: Row(
-        children: [
-          Text('$key:  ',
-              style: const TextStyle(
-                  color: Color(0xFF64B5F6),
-                  fontSize: 12,
-                  fontFamily: 'monospace',
-                  fontWeight: FontWeight.w600)),
-          Text(val,
-              style: const TextStyle(
-                  color: Color(0xFFA5D6A7),
-                  fontSize: 12,
-                  fontFamily: 'monospace')),
-        ],
-      ),
-    );
-  }
-
-  // ──────────────────────────────────────────────
-  //  TAB 3 — SYSTEM LOGS
-  // ──────────────────────────────────────────────
-  Widget _buildLogs() {
-    return StatefulBuilder(builder: (ctx, setLocal) {
-      String filter = 'ALL';
-
-      void applyFilter(String f) {
-        setLocal(() => filter = f);
-        _fetchLogs(level: f);
-      }
-
-      final filtered = filter == 'ALL'
-          ? _logs
-          : _logs.where((l) => l.level == filter).toList();
-
-      return Column(
-        children: [
-          Container(
-            color: kSurface,
-            padding: const EdgeInsets.symmetric(
-                horizontal: 16, vertical: 8),
+          // Body
+          Padding(
+            padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
             child: Row(
-              children: ['ALL', 'INFO', 'WARN', 'ERROR']
-                  .map((f) => GestureDetector(
-                        onTap: () => applyFilter(f),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 150),
-                          margin: const EdgeInsets.only(right: 8),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: filter == f
-                                ? _logColor(f)
-                                : Colors.white,
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(
-                                color: _logColor(f).withOpacity(0.5)),
-                          ),
-                          child: Text(f,
-                              style: TextStyle(
-                                color: filter == f
-                                    ? Colors.white
-                                    : _logColor(f),
-                                fontSize: 11,
-                                fontWeight: FontWeight.w700,
-                              )),
-                        ),
-                      ))
-                  .toList(),
+              children: [
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _infoRowWidget(
+                          Icons.alternate_email, '@${admin.username}'),
+                      const SizedBox(height: 4),
+                      _infoRowWidget(Icons.person_outline,
+                          'By: ${admin.createdBy}'),
+                      const SizedBox(height: 4),
+                      _infoRowWidget(Icons.calendar_today_outlined,
+                          'Created ${_fmt(admin.createdAt)}'),
+                    ],
+                  ),
+                ),
+                _pill('${admin.superZoneCount} Zones', kAccent),
+              ],
             ),
           ),
-          Expanded(
-            child: _loadingLogs
-                ? const Center(
-                    child:
-                        CircularProgressIndicator(color: kDevAccent))
-                : RefreshIndicator(
-                    onRefresh: () => _fetchLogs(level: filter),
-                    color: kDevAccent,
-                    child: ListView.builder(
-                      padding: const EdgeInsets.all(12),
-                      itemCount: filtered.length,
-                      itemBuilder: (_, i) => _logTile(filtered[i]),
-                    ),
-                  ),
-          ),
         ],
-      );
-    });
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  TAB 3 — LOGS
+  // ══════════════════════════════════════════
+  Widget _buildLogs() {
+    final filtered = _logFilter == 'ALL'
+        ? _logs
+        : _logs.where((l) => l.level == _logFilter).toList();
+
+    return Column(
+      children: [
+        Container(
+          color: kSurface,
+          padding: const EdgeInsets.symmetric(
+              horizontal: 16, vertical: 8),
+          child: Row(
+            children: ['ALL', 'INFO', 'WARN', 'ERROR']
+                .map((f) => GestureDetector(
+                      onTap: () {
+                        setState(() => _logFilter = f);
+                        _fetchLogs(level: f);
+                      },
+                      child: AnimatedContainer(
+                        duration: const Duration(milliseconds: 150),
+                        margin: const EdgeInsets.only(right: 8),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 12, vertical: 5),
+                        decoration: BoxDecoration(
+                          color: _logFilter == f
+                              ? _logColor(f)
+                              : Colors.white,
+                          borderRadius: BorderRadius.circular(20),
+                          border: Border.all(
+                              color:
+                                  _logColor(f).withOpacity(0.5)),
+                        ),
+                        child: Text(f,
+                            style: TextStyle(
+                              color: _logFilter == f
+                                  ? Colors.white
+                                  : _logColor(f),
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                            )),
+                      ),
+                    ))
+                .toList(),
+          ),
+        ),
+        Expanded(
+          child: _loadingLogs
+              ? const Center(
+                  child: CircularProgressIndicator(color: kDevAccent))
+              : RefreshIndicator(
+                  onRefresh: () => _fetchLogs(level: _logFilter),
+                  color: kDevAccent,
+                  child: filtered.isEmpty
+                      ? _emptyState('No ${_logFilter == 'ALL' ? '' : _logFilter} logs',
+                            'Nothing to show for this filter',
+                            Icons.receipt_long_outlined)
+                      : ListView.builder(
+                          padding: const EdgeInsets.all(12),
+                          itemCount: filtered.length,
+                          itemBuilder: (_, i) => _logTile(filtered[i]),
+                        ),
+                ),
+        ),
+      ],
+    );
   }
 
   Widget _logTile(SystemLogEntry log) {
@@ -1259,7 +1421,8 @@ GestureDetector(
         children: [
           Container(
             margin: const EdgeInsets.only(top: 1),
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
             decoration: BoxDecoration(
                 color: color, borderRadius: BorderRadius.circular(4)),
             child: Text(log.level,
@@ -1283,11 +1446,11 @@ GestureDetector(
                 Row(
                   children: [
                     Text('${log.module}  •  ',
-                        style:
-                            const TextStyle(color: kSubtle, fontSize: 11)),
+                        style: const TextStyle(
+                            color: kSubtle, fontSize: 11)),
                     Text(_fmtTime(log.time),
-                        style:
-                            const TextStyle(color: kSubtle, fontSize: 11)),
+                        style: const TextStyle(
+                            color: kSubtle, fontSize: 11)),
                   ],
                 ),
               ],
@@ -1298,79 +1461,193 @@ GestureDetector(
     );
   }
 
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
   //  TAB 4 — CONFIG
-  // ──────────────────────────────────────────────
+  // ══════════════════════════════════════════
   Widget _buildConfig() {
-    return SingleChildScrollView(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          _sectionLabel('Application Settings'),
-          const SizedBox(height: 10),
-          _configGroup([
-            _configToggle(
-              'Maintenance Mode',
-              'Disable app for all users',
-              _appConfig['maintenanceMode'] == 'true',
-              (v) => _updateConfig('maintenanceMode', v),
+    if (_loadingConfig) {
+      return const Center(
+          child: CircularProgressIndicator(color: kDevAccent));
+    }
+    return RefreshIndicator(
+      onRefresh: _fetchConfig,
+      color: kDevAccent,
+      child: SingleChildScrollView(
+        physics: const AlwaysScrollableScrollPhysics(),
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // ── Election Info ─────────────────
+            Row(
+              children: [
+                Expanded(child: _sectionLabel('Election Settings')),
+                GestureDetector(
+                  onTap: _showEditElectionConfig,
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 5),
+                    decoration: BoxDecoration(
+                        color: kDevAccent,
+                        borderRadius: BorderRadius.circular(8)),
+                    child: const Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.edit, color: Colors.white, size: 12),
+                        SizedBox(width: 4),
+                        Text('Edit',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 11,
+                                fontWeight: FontWeight.w700)),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
             ),
-            _configToggle(
-              'Allow Staff Login',
-              'Enable/disable staff access',
-              _appConfig['allowStaffLogin'] != 'false',
-              (v) => _updateConfig('allowStaffLogin', v),
-            ),
-            _configToggle(
-              'Force Password Reset',
-              'Prompt all admins to reset password',
-              _appConfig['forcePasswordReset'] == 'true',
-              (v) => _updateConfig('forcePasswordReset', v),
-            ),
-          ]),
+            const SizedBox(height: 10),
+            _configGroup([
+              _configInfo('State',
+                  _appConfig['state']?.toString()         ?? 'Not set'),
+              _configInfo('Election Year',
+                  _appConfig['electionYear']?.toString()  ?? 'Not set'),
+              _configInfo('Election Date',
+                  _appConfig['electionDate']?.toString()  ?? 'Not set'),
+              _configInfo('Phase',
+                  _appConfig['phase']?.toString()         ?? 'Not set'),
+            ]),
 
-          const SizedBox(height: 18),
-          _sectionLabel('Election Settings'),
-          const SizedBox(height: 10),
-          _configGroup([
-            _configInfo('Election Year', _appConfig['electionYear']  ?? '2026'),
-            _configInfo('State',         _appConfig['state']         ?? 'Uttar Pradesh'),
-            _configInfo('Phase',         _appConfig['phase']         ?? 'Phase 1'),
-            _configInfo('Election Date', _appConfig['electionDate']  ?? '15 Apr 2026'),
-          ]),
-
-          const SizedBox(height: 18),
-          _sectionLabel('Developer Tools'),
-          const SizedBox(height: 10),
-          _configGroup([
-            _devAction(
-              Icons.bug_report_outlined, 'Run Diagnostics',
-              'Check DB, API and storage health',
-              () => _snack('Running diagnostics…', kInfo),
-            ),
-            _devAction(
-              Icons.data_object_outlined, 'Export All Data (JSON)',
-              'Download full system data snapshot',
-              () => _snack('Export initiated…', kSuccess),
-            ),
-            _devAction(
-              Icons.delete_forever_outlined, 'Wipe All Test Data',
-              'Remove all non-production records',
-              () => _confirmDestructive(
-                'Wipe test data?',
-                'This permanently deletes all test records.',
-                () => _snack('Test data wiped', kError),
+            const SizedBox(height: 18),
+            _sectionLabel('Application Settings'),
+            const SizedBox(height: 10),
+            _configGroup([
+              _configToggle(
+                'Maintenance Mode',
+                'Disable app for all users',
+                _appConfig['maintenanceMode']?.toString() == 'true',
+                (v) => _updateConfig('maintenanceMode', v.toString()),
               ),
+              _configToggle(
+                'Allow Staff Login',
+                'Enable/disable staff access',
+                _appConfig['allowStaffLogin']?.toString() != 'false',
+                (v) => _updateConfig('allowStaffLogin', v.toString()),
+              ),
+              _configToggle(
+                'Force Password Reset',
+                'Prompt all admins to reset on next login',
+                _appConfig['forcePasswordReset']?.toString() == 'true',
+                (v) => _updateConfig('forcePasswordReset', v.toString()),
+              ),
+            ]),
+
+            const SizedBox(height: 18),
+            _sectionLabel('All Config Keys'),
+            const SizedBox(height: 10),
+            _configGroup(
+              _appConfig.entries
+                  .map((e) => _configInfo(e.key, e.value?.toString() ?? ''))
+                  .toList(),
             ),
-            _devAction(
-              Icons.info_outline, 'App Version Info',
-              'Flutter 3.x · Flask 3.0 · MySQL 8.0',
-              () {},
+
+            const SizedBox(height: 18),
+            _sectionLabel('Developer Tools'),
+            const SizedBox(height: 10),
+            _configGroup([
+              _devAction(Icons.build_outlined, 'Run DB Migrations',
+                  'Apply schema updates to the database', () async {
+                try {
+                  final token = await AuthService.getToken();
+                  await ApiService.post("/master/migrate", {},
+                      token: token);
+                  _snack('Migrations completed ✓', kSuccess);
+                } catch (_) {
+                  _snack('Migration failed', kError);
+                }
+              }),
+              _devAction(Icons.lock_reset, 'Change Master Password',
+                  'Update master account password', _showChangeMasterPassword),
+              _devAction(
+                  Icons.info_outline,
+                  'System Info',
+                  'Flask · MySQL · SHA256+Salt auth',
+                  () => _snack('Flask · MySQL 8 · SHA256+Salt', kInfo)),
+            ]),
+            const SizedBox(height: 24),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showChangeMasterPassword() {
+    final oldCtrl  = TextEditingController();
+    final newCtrl  = TextEditingController();
+    final confCtrl = TextEditingController();
+    bool  obsOld   = true;
+    bool  obsNew   = true;
+    bool  obsConf  = true;
+    final formKey  = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => _styledDialog(
+          title: 'Change Master Password',
+          icon: Icons.lock_person_outlined,
+          ctx: ctx,
+          child: Form(
+            key: formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _dlgField(oldCtrl, 'Current Password', Icons.lock_outline,
+                    obscure: obsOld,
+                    suffixIcon: _eyeIcon(
+                        obsOld, () => setDlg(() => obsOld = !obsOld)),
+                    validator: _notEmpty),
+                const SizedBox(height: 12),
+                _dlgField(newCtrl, 'New Password', Icons.lock_reset_outlined,
+                    obscure: obsNew,
+                    suffixIcon: _eyeIcon(
+                        obsNew, () => setDlg(() => obsNew = !obsNew)),
+                    validator: (v) =>
+                        (v == null || v.length < 6) ? 'Min 6 chars' : null),
+                const SizedBox(height: 12),
+                _dlgField(confCtrl, 'Confirm New Password', Icons.lock_outline,
+                    obscure: obsConf,
+                    suffixIcon: _eyeIcon(
+                        obsConf, () => setDlg(() => obsConf = !obsConf)),
+                    validator: (v) =>
+                        v != newCtrl.text ? 'Passwords do not match' : null),
+                const SizedBox(height: 20),
+                _dlgActions(
+                  onCancel: () => Navigator.pop(ctx),
+                  onConfirm: () async {
+                    if (!formKey.currentState!.validate()) return;
+                    try {
+                      final token = await AuthService.getToken();
+                      await ApiService.patch(
+                        "/master/change-password",
+                        {
+                          "oldPassword": oldCtrl.text,
+                          "newPassword": newCtrl.text,
+                        },
+                        token: token,
+                      );
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _snack('Password changed ✓', kSuccess);
+                    } catch (e) {
+                      _snack("Error: $e", kError);
+                    }
+                  },
+                  confirmLabel: 'Change',
+                ),
+              ],
             ),
-          ]),
-          const SizedBox(height: 24),
-        ],
+          ),
+        ),
       ),
     );
   }
@@ -1378,20 +1655,280 @@ GestureDetector(
   Future<void> _updateConfig(String key, dynamic value) async {
     try {
       final token = await AuthService.getToken();
-      await ApiService.post(
-        "/master/config",
-        {"key": key, "value": value},
-        token: token,
-      );
+      await ApiService.post("/master/config", {"key": key, "value": value},
+          token: token);
       _fetchConfig();
-      _snack('Config updated', kSuccess);
+      _snack('Config updated ✓', kSuccess);
     } catch (_) {
       _snack('Failed to update config', kError);
     }
   }
 
-  // ── CONFIG HELPERS ────────────────────────────
+  // ══════════════════════════════════════════
+  //  REUSABLE WIDGETS
+  // ══════════════════════════════════════════
+
+  Widget _listHeader({
+    required String title,
+    required VoidCallback onRefresh,
+    required String buttonLabel,
+    required IconData buttonIcon,
+    required VoidCallback onButton,
+  }) {
+    return Container(
+      color: kSurface,
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      child: Row(
+        children: [
+          Expanded(
+            child: Text(title,
+                style: const TextStyle(
+                    color: kDark,
+                    fontWeight: FontWeight.w700,
+                    fontSize: 14)),
+          ),
+          IconButton(
+            onPressed: onRefresh,
+            icon: const Icon(Icons.refresh, color: kSubtle, size: 18),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+          const SizedBox(width: 8),
+          ElevatedButton.icon(
+            onPressed: onButton,
+            icon: Icon(buttonIcon, size: 15),
+            label: Text(buttonLabel),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kDevAccent,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 9),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8)),
+              textStyle: const TextStyle(
+                  fontSize: 12, fontWeight: FontWeight.w700),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _emptyState(String title, String subtitle, IconData icon) {
+    return Center(
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, color: kBorder, size: 48),
+          const SizedBox(height: 12),
+          Text(title,
+              style: const TextStyle(
+                  color: kDark,
+                  fontWeight: FontWeight.w700,
+                  fontSize: 15)),
+          const SizedBox(height: 4),
+          Text(subtitle,
+              style: const TextStyle(color: kSubtle, fontSize: 12)),
+        ],
+      ),
+    );
+  }
+
+  Widget _infoTable(Map<String, String> data) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder.withOpacity(0.4)),
+      ),
+      child: Column(
+        children: data.entries.toList().asMap().entries.map((e) {
+          final isLast = e.key == data.length - 1;
+          final kv     = e.value;
+          return Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 16, vertical: 11),
+            decoration: BoxDecoration(
+              border: isLast
+                  ? null
+                  : Border(
+                      bottom: BorderSide(
+                          color: kBorder.withOpacity(0.3))),
+            ),
+            child: Row(
+              children: [
+                Text(kv.key,
+                    style: const TextStyle(
+                        color: kSubtle,
+                        fontSize: 12,
+                        fontWeight: FontWeight.w600)),
+                const Spacer(),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 10, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: kSurface,
+                    borderRadius: BorderRadius.circular(6),
+                    border: Border.all(
+                        color: kBorder.withOpacity(0.4)),
+                  ),
+                  child: Text(kv.value,
+                      style: const TextStyle(
+                          color: kDark,
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                          fontFamily: 'monospace')),
+                ),
+              ],
+            ),
+          );
+        }).toList(),
+      ),
+    );
+  }
+
+  Widget _statCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder.withOpacity(0.35)),
+        boxShadow: [
+          BoxShadow(
+              color: color.withOpacity(0.07),
+              blurRadius: 8,
+              offset: const Offset(0, 3)),
+        ],
+      ),
+      padding: const EdgeInsets.all(12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 28, height: 28,
+            decoration: BoxDecoration(
+                color: color.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(7)),
+            child: Icon(icon, size: 15, color: color),
+          ),
+          const Spacer(),
+          Text(value,
+              style: TextStyle(
+                  color: color, fontSize: 17, fontWeight: FontWeight.w900)),
+          Text(label,
+              style: const TextStyle(
+                  color: kSubtle, fontSize: 10, fontWeight: FontWeight.w600),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis),
+        ],
+      ),
+    );
+  }
+
+  Widget _sectionLabel(String text) {
+    return Row(
+      children: [
+        Container(
+            width: 4, height: 16,
+            decoration: BoxDecoration(
+                color: kDevAccent,
+                borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 8),
+        Text(text,
+            style: const TextStyle(
+                color: kDark,
+                fontSize: 14,
+                fontWeight: FontWeight.w800)),
+      ],
+    );
+  }
+
+  Widget _infoRowWidget(IconData icon, String text) {
+    return Row(children: [
+      Icon(icon, size: 13, color: kSubtle),
+      const SizedBox(width: 6),
+      Flexible(
+        child: Text(text,
+            style: const TextStyle(color: kSubtle, fontSize: 12),
+            overflow: TextOverflow.ellipsis),
+      ),
+    ]);
+  }
+
+  Widget _pill(String text, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: color.withOpacity(0.3)),
+      ),
+      child: Text(text,
+          style: TextStyle(
+              color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+    );
+  }
+
+  Widget _idBadge(String prefix, int id) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+          color: kDark, borderRadius: BorderRadius.circular(6)),
+      child: Text(
+        '$prefix${id.toString().padLeft(3, '0')}',
+        style: const TextStyle(
+            color: kBorder,
+            fontSize: 10,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8),
+      ),
+    );
+  }
+
+  Widget _statusBadge(bool isActive) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: isActive
+            ? kSuccess.withOpacity(0.1)
+            : kError.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(
+            color: isActive ? kSuccess : kError, width: 1),
+      ),
+      child: Text(
+        isActive ? 'ACTIVE' : 'INACTIVE',
+        style: TextStyle(
+            color: isActive ? kSuccess : kError,
+            fontSize: 10,
+            fontWeight: FontWeight.w800,
+            letterSpacing: 0.8),
+      ),
+    );
+  }
+
+  Color _logColor(String level) {
+    switch (level) {
+      case 'ERROR': return kError;
+      case 'WARN':  return kWarning;
+      default:      return kInfo;
+    }
+  }
+
+  // ── Config helpers ────────────────────────
   Widget _configGroup(List<Widget> children) {
+    if (children.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kBorder.withOpacity(0.4)),
+        ),
+        child: const Text('No config found',
+            style: TextStyle(color: kSubtle, fontSize: 12)),
+      );
+    }
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1406,7 +1943,8 @@ GestureDetector(
               border: isLast
                   ? null
                   : Border(
-                      bottom: BorderSide(color: kBorder.withOpacity(0.25))),
+                      bottom: BorderSide(
+                          color: kBorder.withOpacity(0.25))),
             ),
             child: e.value,
           );
@@ -1415,8 +1953,8 @@ GestureDetector(
     );
   }
 
-  Widget _configToggle(String title, String subtitle, bool value,
-      ValueChanged<bool> onChanged) {
+  Widget _configToggle(
+      String title, String subtitle, bool value, ValueChanged<bool> onChanged) {
     return StatefulBuilder(builder: (ctx, setLocal) {
       bool val = value;
       return ListTile(
@@ -1444,17 +1982,22 @@ GestureDetector(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 11),
       child: Row(
         children: [
-          Text(key,
-              style: const TextStyle(
-                  color: kSubtle,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w600)),
-          const Spacer(),
-          Text(value,
-              style: const TextStyle(
-                  color: kDark,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w800)),
+          Expanded(
+            child: Text(key,
+                style: const TextStyle(
+                    color: kSubtle,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600)),
+          ),
+          const SizedBox(width: 8),
+          Flexible(
+            child: Text(value,
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                    color: kDark,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800)),
+          ),
         ],
       ),
     );
@@ -1501,104 +2044,46 @@ GestureDetector(
     );
   }
 
-  // ── SHARED SMALL WIDGETS ──────────────────────
-  Widget _statCard(String label, String value, IconData icon, Color color) {
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: kBorder.withOpacity(0.4)),
-        boxShadow: [
-          BoxShadow(
-              color: color.withOpacity(0.07),
-              blurRadius: 8,
-              offset: const Offset(0, 3)),
-        ],
-      ),
-      padding: const EdgeInsets.all(12),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Container(
-            width: 30, height: 30,
-            decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
-                borderRadius: BorderRadius.circular(8)),
-            child: Icon(icon, size: 16, color: color),
+  // ── Dialog frame ──────────────────────────
+  Widget _styledDialog({
+    required String title,
+    required IconData icon,
+    required BuildContext ctx,
+    required Widget child,
+  }) {
+    return Dialog(
+      backgroundColor: Colors.transparent,
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 480),
+        child: Container(
+          decoration: BoxDecoration(
+            color: kBg,
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: kBorder, width: 1.2),
+            boxShadow: [
+              BoxShadow(
+                  color: kPrimary.withOpacity(0.2),
+                  blurRadius: 28,
+                  offset: const Offset(0, 10)),
+            ],
           ),
-          const Spacer(),
-          Text(value,
-              style: TextStyle(
-                  color: color, fontSize: 18, fontWeight: FontWeight.w900)),
-          Text(label,
-              style: const TextStyle(
-                  color: kSubtle, fontSize: 10, fontWeight: FontWeight.w600)),
-        ],
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              _dlgHeader(title, icon, ctx),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(20),
+                  child: child,
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
 
-  Widget _sectionLabel(String text) {
-    return Row(
-      children: [
-        Container(
-            width: 4, height: 16,
-            decoration: BoxDecoration(
-                color: kDevAccent,
-                borderRadius: BorderRadius.circular(2))),
-        const SizedBox(width: 8),
-        Text(text,
-            style: const TextStyle(
-                color: kDark, fontSize: 14, fontWeight: FontWeight.w800)),
-      ],
-    );
-  }
-
-  Widget _infoRow(IconData icon, String text) {
-    return Row(children: [
-      Icon(icon, size: 13, color: kSubtle),
-      const SizedBox(width: 6),
-      Text(text, style: const TextStyle(color: kSubtle, fontSize: 12)),
-    ]);
-  }
-
-  Widget _pill(String text, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Text(text,
-          style: TextStyle(
-              color: color, fontSize: 11, fontWeight: FontWeight.w700)),
-    );
-  }
-
-  Widget _healthSummary(String label, Color color) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: color.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3)),
-      ),
-      child: Text(label,
-          style: TextStyle(
-              color: color, fontSize: 12, fontWeight: FontWeight.w800)),
-    );
-  }
-
-  Color _logColor(String level) {
-    switch (level) {
-      case 'ERROR': return kError;
-      case 'WARN':  return kWarning;
-      default:      return kInfo;
-    }
-  }
-
-  // ── DIALOG HELPERS ────────────────────────────
   Widget _dlgHeader(String title, IconData icon, BuildContext ctx) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 14),
@@ -1609,20 +2094,19 @@ GestureDetector(
       ),
       child: Row(
         children: [
-          Icon(icon, color: kBorder, size: 18),
+          Icon(icon, color: kBorder, size: 17),
           const SizedBox(width: 10),
           Expanded(
             child: Text(title,
                 style: const TextStyle(
                     color: Colors.white,
                     fontWeight: FontWeight.w700,
-                    fontSize: 15)),
+                    fontSize: 14)),
           ),
-          IconButton(
-            onPressed: () => Navigator.pop(ctx),
-            icon: const Icon(Icons.close, color: Colors.white70, size: 20),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
+          GestureDetector(
+            onTap: () => Navigator.pop(ctx),
+            child: const Icon(Icons.close,
+                color: Colors.white54, size: 20),
           ),
         ],
       ),
@@ -1712,22 +2196,44 @@ GestureDetector(
     ]);
   }
 
+  PopupMenuItem<String> _menuItem(String value, String label, IconData icon,
+      {Color color = kDark}) {
+    return PopupMenuItem(
+      value: value,
+      child: Row(
+        children: [
+          Icon(icon, size: 16, color: color),
+          const SizedBox(width: 8),
+          Text(label,
+              style: TextStyle(
+                  color: color, fontSize: 13, fontWeight: FontWeight.w600)),
+        ],
+      ),
+    );
+  }
+
+  // ── Utils ─────────────────────────────────
   String? _notEmpty(String? v) =>
       (v == null || v.isEmpty) ? 'Required' : null;
 
   String _fmt(DateTime dt) =>
-      '${dt.day.toString().padLeft(2, '0')}/${dt.month.toString().padLeft(2, '0')}/${dt.year}';
+      '${dt.day.toString().padLeft(2, '0')}/'
+      '${dt.month.toString().padLeft(2, '0')}/'
+      '${dt.year}';
 
   String _fmtTime(DateTime dt) =>
-      '${_fmt(dt)}  ${dt.hour.toString().padLeft(2, '0')}:${dt.minute.toString().padLeft(2, '0')}';
+      '${_fmt(dt)}  '
+      '${dt.hour.toString().padLeft(2, '0')}:'
+      '${dt.minute.toString().padLeft(2, '0')}';
 
   void _snack(String msg, Color color) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-      content: Text(msg),
+      content: Text(msg,
+          style: const TextStyle(fontWeight: FontWeight.w600)),
       backgroundColor: color,
       behavior: SnackBarBehavior.floating,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
       margin: const EdgeInsets.all(16),
     ));
   }

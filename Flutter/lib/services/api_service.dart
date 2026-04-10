@@ -1,3 +1,4 @@
+
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/constants.dart';
@@ -33,7 +34,7 @@ class ApiService {
   }
 
   // 🔹 POST REQUEST
-  static Future<dynamic> post(String endpoint, Map data,
+  static Future<dynamic> post(String endpoint, Map<String, dynamic> data,
       {String? token}) async {
     final url = Uri.parse("${AppConstants.baseUrl}$endpoint");
 
@@ -56,7 +57,7 @@ class ApiService {
   }
 
   // 🔹 PUT REQUEST
-  static Future<dynamic> put(String endpoint, Map data,
+  static Future<dynamic> put(String endpoint, Map<String, dynamic> data,
       {String? token}) async {
     final url = Uri.parse("${AppConstants.baseUrl}$endpoint");
 
@@ -74,6 +75,29 @@ class ApiService {
       return _handleResponse(response);
     } catch (e) {
       throw Exception("PUT Error: $e");
+    }
+  }
+
+  // 🔹 PATCH REQUEST ✅ (FIX ADDED)
+  static Future<dynamic> patch(String endpoint, Map<String, dynamic> data,
+      {String? token}) async {
+    final url = Uri.parse("${AppConstants.baseUrl}$endpoint");
+
+    print("🌐 PATCH: $url");
+    print("📦 BODY: $data");
+
+    try {
+      final response = await http
+          .patch(
+            url,
+            headers: await _headers(token: token),
+            body: jsonEncode(data),
+          )
+          .timeout(const Duration(seconds: 20));
+
+      return _handleResponse(response);
+    } catch (e) {
+      throw Exception("PATCH Error: $e");
     }
   }
 

@@ -1,6 +1,7 @@
 import time
 from flask import Blueprint, request,make_response
 from werkzeug.security import check_password_hash
+import hashlib
 from db import get_db
 from config import Config
 from app.routes import ok, err, write_log
@@ -92,7 +93,11 @@ def login():
     if not user:
         return err("Invalid credentials", 401)
 
-    if not check_password_hash(user["password"], password):
+    SALT = "election_2026_secure_key"
+
+    hashed_input = hashlib.sha256((password + SALT).encode()).hexdigest()
+
+    if hashed_input != user["password"]:
         write_log("WARN", f"Failed login attempt for '{username}'", "Auth")
         return err("Invalid credentials", 401)
 

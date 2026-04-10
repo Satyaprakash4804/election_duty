@@ -494,18 +494,19 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/super-zones', data, token: t);
+      await ApiService.post('/admin/super-zones',
+          Map<String, dynamic>.from(data), token: t);          // ← cast
       _load();
     },
   );
-
   void _editSZ(Map sz) => _openDialog(
     title: 'सुपर जोन संपादित करें', color: _kPrimary, icon: Icons.edit_outlined,
     fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
     initial: {'name': sz['name'], 'district': sz['district'], 'block': sz['block']},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.put('/admin/hierarchy/super-zone/${sz['id']}', data, token: t);
+      await ApiService.put('/admin/hierarchy/super-zone/${sz['id']}',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
@@ -515,7 +516,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'जोन का नाम', 'hqAddress': 'मुख्यालय पता'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/super-zones/${sz['id']}/zones', data, token: t);
+      await ApiService.post('/admin/super-zones/${sz['id']}/zones',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
@@ -526,7 +528,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     initial: {'name': z['name'], 'hqAddress': z['hq_address'] ?? z['hqAddress']},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.put('/admin/zones/${z['id']}', data, token: t);
+      await ApiService.put('/admin/zones/${z['id']}',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
@@ -536,7 +539,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'सैक्टर का नाम'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/zones/${z['id']}/sectors', data, token: t);
+      await ApiService.post('/admin/zones/${z['id']}/sectors',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
@@ -547,7 +551,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     initial: {'name': s['name']},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.put('/admin/hierarchy/sector/${s['id']}', data, token: t);
+      await ApiService.put('/admin/hierarchy/sector/${s['id']}',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
@@ -557,21 +562,23 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'ग्राम पंचायत का नाम', 'address': 'पता'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/sectors/${s['id']}/gram-panchayats', data, token: t);
+      await ApiService.post('/admin/sectors/${s['id']}/gram-panchayats',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
 
   void _addCenter(Map gp) => _openCenterDialog(null, gpId: gp['id']);
-
+ 
   void _editCenter(Map c) => _openCenterDialog(c);
-
+ 
   void _addKendra(Map c) => _openDialog(
     title: 'मतदान केन्द्र (कक्ष) जोड़ें', color: _kPurple, icon: Icons.add,
     fields: {'roomNumber': 'कक्ष संख्या'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/centers/${c['id']}/rooms', data, token: t);
+      await ApiService.post('/admin/centers/${c['id']}/rooms',
+          Map<String, dynamic>.from(data), token: t);           // ← cast
       _load();
     },
   );
@@ -580,60 +587,88 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     final nameCtrl    = TextEditingController(text: center?['name'] ?? '');
     final addressCtrl = TextEditingController(text: center?['address'] ?? '');
     final thanaCtrl   = TextEditingController(text: center?['thana'] ?? '');
-    final busCtrl     = TextEditingController(text: center?['bus_no'] ?? center?['busNo'] ?? '');
+    final busCtrl     = TextEditingController(
+        text: center?['bus_no'] ?? center?['busNo'] ?? '');
     String type       = center?['center_type'] ?? center?['centerType'] ?? 'C';
     final fk          = GlobalKey<FormState>();
-
+ 
     showDialog(
       context: context,
-      builder: (ctx) => StatefulBuilder(builder: (ctx, ss) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Text(center != null ? 'मतदेय स्थल संपादित करें' : 'मतदेय स्थल जोड़ें'),
-        content: SizedBox(width: 360, child: Form(key: fk, child: Column(
-          mainAxisSize: MainAxisSize.min, children: [
-            _field(nameCtrl,    'नाम *',    required: true),
-            const SizedBox(height: 8),
-            _field(addressCtrl, 'पता'),
-            const SizedBox(height: 8),
-            _field(thanaCtrl,   'थाना'),
-            const SizedBox(height: 8),
-            Row(children: ['A','B','C'].map((t) => Padding(
-              padding: const EdgeInsets.only(right: 10),
-              child: ChoiceChip(
-                label: Text(t),
-                selected: type == t,
-                selectedColor: t=='A' ? Colors.red[100] : t=='B' ? Colors.orange[100] : Colors.blue[100],
-                onSelected: (_) => ss(() => type = t),
-              ),
-            )).toList()),
-            const SizedBox(height: 8),
-            _field(busCtrl, 'बस संख्या'),
-          ],
-        ))),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('रद्द')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: _kPurple),
-            onPressed: () async {
-              if (!fk.currentState!.validate()) return;
-              Navigator.pop(ctx);
-              final data = {
-                'name': nameCtrl.text.trim(), 'address': addressCtrl.text.trim(),
-                'thana': thanaCtrl.text.trim(), 'centerType': type,
-                'busNo': busCtrl.text.trim(), 'center_type': type,
-              };
-              final tok = await AuthService.getToken();
-              if (center != null) {
-                await ApiService.put('/admin/hierarchy/sthal/${center['id']}', data, token: tok);
-              } else {
-                await ApiService.post('/admin/gram-panchayats/$gpId/centers', data, token: tok);
-              }
-              _load();
-            },
-            child: const Text('सहेजें', style: TextStyle(color: Colors.white)),
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: Text(center != null
+              ? 'मतदेय स्थल संपादित करें'
+              : 'मतदेय स्थल जोड़ें'),
+          content: SizedBox(
+            width: 360,
+            child: Form(
+              key: fk,
+              child: Column(mainAxisSize: MainAxisSize.min, children: [
+                _field(nameCtrl, 'नाम *', required: true),
+                const SizedBox(height: 8),
+                _field(addressCtrl, 'पता'),
+                const SizedBox(height: 8),
+                _field(thanaCtrl, 'थाना'),
+                const SizedBox(height: 8),
+                Row(
+                  children: ['A', 'B', 'C'].map((t) => Padding(
+                    padding: const EdgeInsets.only(right: 10),
+                    child: ChoiceChip(
+                      label: Text(t),
+                      selected: type == t,
+                      selectedColor: t == 'A'
+                          ? Colors.red[100]
+                          : t == 'B'
+                              ? Colors.orange[100]
+                              : Colors.blue[100],
+                      onSelected: (_) => ss(() => type = t),
+                    ),
+                  )).toList(),
+                ),
+                const SizedBox(height: 8),
+                _field(busCtrl, 'बस संख्या'),
+              ]),
+            ),
           ),
-        ],
-      )),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('रद्द')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(backgroundColor: _kPurple),
+              onPressed: () async {
+                if (!fk.currentState!.validate()) return;
+                Navigator.pop(ctx);
+                // Explicit Map<String,dynamic> — fixes the cast error
+                final data = <String, dynamic>{
+                  'name':        nameCtrl.text.trim(),
+                  'address':     addressCtrl.text.trim(),
+                  'thana':       thanaCtrl.text.trim(),
+                  'centerType':  type,
+                  'busNo':       busCtrl.text.trim(),
+                  'center_type': type,
+                };
+                final tok = await AuthService.getToken();
+                if (center != null) {
+                  await ApiService.put(
+                      '/admin/hierarchy/sthal/${center['id']}',
+                      data,
+                      token: tok);
+                } else {
+                  await ApiService.post(
+                      '/admin/gram-panchayats/$gpId/centers',
+                      data,
+                      token: tok);
+                }
+                _load();
+              },
+              child: const Text('सहेजें',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -670,53 +705,84 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
 
   // Generic text dialog
   void _openDialog({
-    required String title, required Color color, required IconData icon,
+    required String title,
+    required Color color,
+    required IconData icon,
     required Map<String, String> fields,
     Map<String, dynamic>? initial,
-    required Future<void> Function(Map) onSave,
+    required Future<void> Function(Map<String, dynamic>) onSave, // ← typed
   }) {
     final ctrls = fields.map((k, v) =>
         MapEntry(k, TextEditingController(text: '${initial?[k] ?? ''}')));
     final fk = GlobalKey<FormState>();
     bool saving = false;
-
-    showDialog(context: context, builder: (ctx) =>
-      StatefulBuilder(builder: (ctx, ss) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-        title: Row(children: [
-          Icon(icon, color: color, size: 20),
-          const SizedBox(width: 8),
-          Expanded(child: Text(title, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800))),
-        ]),
-        content: SizedBox(width: 340, child: Form(key: fk, child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: fields.entries.map((e) => Padding(
-            padding: const EdgeInsets.only(bottom: 10),
-            child: _field(ctrls[e.key]!, e.value, required: e.key == 'name'),
-          )).toList(),
-        ))),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('रद्द')),
-          ElevatedButton(
-            style: ElevatedButton.styleFrom(backgroundColor: color,
-                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
-            onPressed: saving ? null : () async {
-              if (!fk.currentState!.validate()) return;
-              ss(() => saving = true);
-              try {
-                await onSave(ctrls.map((k, c) => MapEntry(k, c.text.trim())));
-                if (ctx.mounted) Navigator.pop(ctx);
-                _snack('सफलतापूर्वक सहेजा गया', _kGreen);
-              } catch (e) { _snack('त्रुटि: $e', _kRed); }
-              finally { if (ctx.mounted) ss(() => saving = false); }
-            },
-            child: saving
-                ? const SizedBox(width: 16, height: 16,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                : const Text('सहेजें', style: TextStyle(color: Colors.white)),
+ 
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, ss) => AlertDialog(
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          title: Row(children: [
+            Icon(icon, color: color, size: 20),
+            const SizedBox(width: 8),
+            Expanded(child: Text(title,
+                style: const TextStyle(
+                    fontSize: 14, fontWeight: FontWeight.w800))),
+          ]),
+          content: SizedBox(
+            width: 340,
+            child: Form(
+              key: fk,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: fields.entries.map((e) => Padding(
+                  padding: const EdgeInsets.only(bottom: 10),
+                  child: _field(ctrls[e.key]!, e.value,
+                      required: e.key == 'name'),
+                )).toList(),
+              ),
+            ),
           ),
-        ],
-      )),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('रद्द')),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: color,
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8))),
+              onPressed: saving
+                  ? null
+                  : () async {
+                      if (!fk.currentState!.validate()) return;
+                      ss(() => saving = true);
+                      try {
+                        // Build Map<String,dynamic> explicitly — no cast needed
+                        final data = <String, dynamic>{
+                          for (final e in ctrls.entries)
+                            e.key: e.value.text.trim(),
+                        };
+                        await onSave(data);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _snack('सफलतापूर्वक सहेजा गया', _kGreen);
+                      } catch (e) {
+                        _snack('त्रुटि: $e', _kRed);
+                      } finally {
+                        if (ctx.mounted) ss(() => saving = false);
+                      }
+                    },
+              child: saving
+                  ? const SizedBox(
+                      width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Text('सहेजें',
+                      style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
     );
   }
 

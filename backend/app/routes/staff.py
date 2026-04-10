@@ -2,6 +2,7 @@ from flask import Blueprint, request
 from db import get_db
 from app.routes import ok, err, login_required
 from werkzeug.security import check_password_hash, generate_password_hash
+import hashlib
 
 staff_bp = Blueprint("staff", __name__, url_prefix="/api/staff")
 
@@ -180,10 +181,17 @@ def change_password():
         with conn.cursor() as cur:
             cur.execute("SELECT password FROM users WHERE id=%s", (request.user["id"],))
             row = cur.fetchone()
-            if not check_password_hash(row["password"], current):
+            SALT = "election_2026_secure_key"
+
+            current_hash = hashlib.sha256((current + SALT).encode()).hexdigest()
+
+            if current_hash != row["password"]:
                 return err("वर्तमान पासवर्ड गलत है", 401)
+
+            new_hash = hashlib.sha256((new_pass + SALT).encode()).hexdigest()
+
             cur.execute("UPDATE users SET password=%s WHERE id=%s",
-                        (generate_password_hash(new_pass), request.user["id"]))
+                        (new_hash, request.user["id"]))
         conn.commit()
     finally:
         conn.close()
