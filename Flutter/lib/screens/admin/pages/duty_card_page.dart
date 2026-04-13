@@ -8,37 +8,54 @@ import '../../../services/auth_service.dart';
 import '../core/widgets.dart';
 
 const _rankMap = {
-  'constable': 'कां0',
-  'head constable': 'हो0गा0',
-  'si': 'उ0नि0',
-  'sub inspector': 'उ0नि0',
-  'inspector': 'निरीक्षक',
-  'asi': 'स0उ0नि0',
+  'constable':               'कां0',
+  'head constable':          'हो0गा0',
+  'si':                      'उ0नि0',
+  'sub inspector':           'उ0नि0',
+  'inspector':               'निरीक्षक',
+  'asi':                     'स0उ0नि0',
   'assistant sub inspector': 'स0उ0नि0',
-  'dsp': 'उपाधीक्षक',
-  'sp': 'पुलिस अधीक्षक',
-  'circle officer': 'क्षेत्राधिकारी',
-  'co': 'क्षेत्राधिकारी',
+  'dsp':                     'उपाधीक्षक',
+  'asp':                     'सहा0 पुलिस अधीक्षक',
+  'sp':                      'पुलिस अधीक्षक',
+  'circle officer':          'क्षेत्राधिकारी',
+  'co':                      'क्षेत्राधिकारी',
 };
+
+// All available ranks for filter dropdown
+const _kAllRanks = [
+  'SP', 'ASP', 'DSP', 'Inspector', 'SI', 'ASI', 'Head Constable', 'Constable',
+];
+
 String _rh(dynamic val) =>
-    _rankMap[(val ?? '').toString().toLowerCase()] ?? val?.toString() ?? '—';
+    _rankMap[(val ?? '').toString().toLowerCase().trim()] ??
+    val?.toString() ?? '—';
+
 String _vd(dynamic x) =>
     (x == null || x.toString().trim().isEmpty) ? '—' : x.toString();
 
-// ─── PDF builder — UNCHANGED ─────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  PDF BUILDER — format unchanged from original
+// ══════════════════════════════════════════════════════════════════════════════
 pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
-  final sahyogi = (s['sahyogi'] ?? s['allStaff'] ?? s['all_staff'] ?? []) as List;
-  final totalRows = sahyogi.length < 12 ? 12 : sahyogi.length;
-  final zonalOfficers   = (s['zonalOfficers']  ?? s['zonal_officers']  ?? []) as List;
-  final sectorOfficers  = (s['sectorOfficers'] ?? s['sector_officers'] ?? []) as List;
-  final superOfficers   = (s['superOfficers']  ?? s['super_officers']  ?? []) as List;
+  final sahyogi = (s['sahyogi'] ??
+      s['allStaff'] ??
+      s['all_staff'] ??
+      []) as List;
+
+  // minimum 12 rows, expand as needed
+  final int totalRows = sahyogi.length < 12 ? 12 : sahyogi.length;
+
+  final zonalOfficers  = (s['zonalOfficers']  ?? s['zonal_officers']  ?? []) as List;
+  final sectorOfficers = (s['sectorOfficers'] ?? s['sector_officers'] ?? []) as List;
+  final superOfficers  = (s['superOfficers']  ?? s['super_officers']  ?? []) as List;
 
   final zonalMag    = zonalOfficers.isNotEmpty  ? zonalOfficers[0]  : null;
   final sectorMag   = sectorOfficers.isNotEmpty ? sectorOfficers[0] : null;
   final zonalPolice = superOfficers.isNotEmpty  ? superOfficers[0]  : null;
   final sectorPolice = sectorOfficers.length > 1
       ? sectorOfficers[1]
-      : sectorOfficers.isNotEmpty ? sectorOfficers[0] : null;
+      : (sectorOfficers.isNotEmpty ? sectorOfficers[0] : null);
 
   pw.Widget th(String t) => pw.Container(
         decoration: const pw.BoxDecoration(color: PdfColors.grey300),
@@ -65,12 +82,13 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
             decoration: const pw.BoxDecoration(
               color: PdfColors.grey200,
               border: pw.Border(
-                right: pw.BorderSide(width: 0.3),
+                right:  pw.BorderSide(width: 0.3),
                 bottom: pw.BorderSide(width: 0.3),
               ),
             ),
             padding: const pw.EdgeInsets.all(1),
-            child: pw.Text(label, style: pw.TextStyle(font: bold, fontSize: 4.5)),
+            child: pw.Text(label,
+                style: pw.TextStyle(font: bold, fontSize: 4.5)),
           ),
         ),
         pw.Expanded(
@@ -80,12 +98,14 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
               border: pw.Border(bottom: pw.BorderSide(width: 0.3)),
             ),
             padding: const pw.EdgeInsets.all(1),
-            child: pw.Text(value, style: pw.TextStyle(font: font, fontSize: 4.5)),
+            child: pw.Text(value,
+                style: pw.TextStyle(font: font, fontSize: 4.5)),
           ),
         ),
       ]);
 
-  pw.Widget sHdr(String text, {int flex = 1, bool isLast = false}) =>
+  pw.Widget sHdr(String text,
+          {int flex = 1, bool isLast = false}) =>
       pw.Expanded(
         flex: flex,
         child: pw.Container(
@@ -115,14 +135,17 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
           ),
           padding: const pw.EdgeInsets.symmetric(horizontal: 1, vertical: 0.5),
           child: pw.Text(text,
-              style: pw.TextStyle(font: isBold ? bold : font, fontSize: 4.8),
+              style: pw.TextStyle(
+                  font: isBold ? bold : font, fontSize: 4.8),
               overflow: pw.TextOverflow.clip),
         ),
       );
 
   pw.Widget officerBlock(
           String title, String? name, String? mobile, String? rank) =>
-      pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+      pw.Column(
+          crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+          children: [
         pw.Container(
           decoration: const pw.BoxDecoration(
               color: PdfColors.grey300,
@@ -136,8 +159,13 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
         pw.Padding(
           padding: const pw.EdgeInsets.all(2),
           child: pw.Text(
-            [if (rank != null) rank, name ?? '—', if (mobile != null) mobile]
-                .join('\n'),
+            [
+              if (rank != null && rank.isNotEmpty) rank,
+              name ?? '—',
+              if (mobile != null &&
+                  mobile.isNotEmpty &&
+                  mobile != '—') mobile,
+            ].join('\n'),
             style: pw.TextStyle(font: font, fontSize: 4.5),
             textAlign: pw.TextAlign.center,
           ),
@@ -146,8 +174,11 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
 
   return pw.Container(
     decoration: pw.BoxDecoration(border: pw.Border.all(width: 1)),
-    child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
-      // HEADER
+    child: pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+
+      // ── HEADER ───────────────────────────────────────────────────────────
       pw.Container(
         decoration: const pw.BoxDecoration(
             border: pw.Border(bottom: pw.BorderSide(width: 0.8))),
@@ -163,7 +194,8 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
           ),
           pw.Expanded(
             child: pw.Padding(
-              padding: const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+              padding: const pw.EdgeInsets.symmetric(
+                  vertical: 3, horizontal: 4),
               child: pw.Column(
                 mainAxisAlignment: pw.MainAxisAlignment.center,
                 crossAxisAlignment: pw.CrossAxisAlignment.center,
@@ -176,12 +208,13 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
                   pw.Text('लोकसभा सामान्य निर्वाचन–2024',
                       style: pw.TextStyle(font: bold, fontSize: 7)),
                   pw.Text(
-                      'जनपद ${_vd(s['adminDistrict']?? 'बागपत')}',
+                      'जनपद ${_vd(s['adminDistrict'] ?? s['district'] ?? 'बागपत')}',
                       style: pw.TextStyle(font: font, fontSize: 6.5)),
                   pw.SizedBox(height: 1),
                   pw.Container(
                     decoration: const pw.BoxDecoration(
-                        border: pw.Border(top: pw.BorderSide(width: 0.5))),
+                        border: pw.Border(
+                            top: pw.BorderSide(width: 0.5))),
                     padding: const pw.EdgeInsets.only(top: 1),
                     child: pw.Text(
                       'मतदान चरण–द्वितीय  दिनांक 26.04.2024'
@@ -206,15 +239,16 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
           ),
         ]),
       ),
-      // PRIMARY OFFICER
+
+      // ── PRIMARY OFFICER TABLE ─────────────────────────────────────────────
       pw.Table(
         border: const pw.TableBorder(
-          left: pw.BorderSide(width: 0.5),
-          right: pw.BorderSide(width: 0.5),
-          top: pw.BorderSide(width: 0.5),
-          bottom: pw.BorderSide(width: 0.5),
-          horizontalInside: pw.BorderSide(width: 0.5),
-          verticalInside: pw.BorderSide(width: 0.5),
+          left:              pw.BorderSide(width: 0.5),
+          right:             pw.BorderSide(width: 0.5),
+          top:               pw.BorderSide(width: 0.5),
+          bottom:            pw.BorderSide(width: 0.5),
+          horizontalInside:  pw.BorderSide(width: 0.5),
+          verticalInside:    pw.BorderSide(width: 0.5),
         ),
         columnWidths: const {
           0: pw.FlexColumnWidth(2.0),
@@ -241,49 +275,62 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
           ]),
           pw.TableRow(children: [
             td(''),
-            td(_rh(s['rank'] ?? s['user_rank']), center: true, isBold: true),
+            td(_rh(s['rank'] ?? s['user_rank']),
+                center: true, isBold: true),
             td(_vd(s['pno']), center: true),
             td(_vd(s['name']), isBold: true),
             td(_vd(s['mobile']), center: true),
-            td(_vd(s['staffThana'] ?? s['thana']), center: true),
+            td(_vd(s['staffThana'] ?? s['thana']),
+                center: true),
             td(_vd(s['district']), center: true),
             td('सशस्त्र', center: true, fs: 4.5),
             td(
-                (s['busNo'] ?? s['bus_no']) != null &&
-                        (s['busNo'] ?? s['bus_no']).toString().isNotEmpty
-                    ? 'बस–${s['busNo'] ?? s['bus_no']}'
-                    : '—',
-                center: true,
-                isBold: true),
+              (s['busNo'] ?? s['bus_no'] ?? '')
+                      .toString()
+                      .isNotEmpty
+                  ? 'बस–${s['busNo'] ?? s['bus_no']}'
+                  : '—',
+              center: true,
+              isBold: true,
+            ),
           ]),
         ],
       ),
-      // DUTY LOCATION + SAHYOGI + RIGHT PANEL
+
+      // ── MIDDLE: duty location | sahyogi table | right panel ───────────────
       pw.Expanded(
-        child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
+        child: pw.Row(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+
+          // Left: duty location
           pw.Container(
             width: 50,
             decoration: const pw.BoxDecoration(
                 border: pw.Border(
-                    right: pw.BorderSide(width: 0.5),
+                    right:  pw.BorderSide(width: 0.5),
                     bottom: pw.BorderSide(width: 0.5))),
             child: pw.Column(children: [
               pw.Container(
                 decoration: const pw.BoxDecoration(
                     color: PdfColors.grey300,
-                    border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+                    border: pw.Border(
+                        bottom: pw.BorderSide(width: 0.5))),
                 padding: const pw.EdgeInsets.all(1),
                 child: pw.Center(
                     child: pw.Text('डियूटी स्थान',
-                        style: pw.TextStyle(font: bold, fontSize: 5.5))),
+                        style: pw.TextStyle(
+                            font: bold, fontSize: 5.5))),
               ),
               pw.Expanded(
                 child: pw.Padding(
                   padding: const pw.EdgeInsets.all(2),
                   child: pw.Center(
                     child: pw.Text(
-                        _vd(s['centerName'] ?? s['center_name']),
-                        style: pw.TextStyle(font: bold, fontSize: 5.5),
+                        _vd(s['centerName'] ??
+                            s['center_name']),
+                        style: pw.TextStyle(
+                            font: bold, fontSize: 5.5),
                         textAlign: pw.TextAlign.center),
                   ),
                 ),
@@ -292,56 +339,94 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
                 decoration: const pw.BoxDecoration(
                     color: PdfColors.grey300,
                     border: pw.Border(
-                        top: pw.BorderSide(width: 0.5),
-                        bottom: pw.BorderSide(width: 0.5))),
+                      top:    pw.BorderSide(width: 0.5),
+                      bottom: pw.BorderSide(width: 0.5),
+                    )),
                 padding: const pw.EdgeInsets.all(1),
                 child: pw.Center(
                     child: pw.Text('डियूटी प्रकार',
-                        style: pw.TextStyle(font: bold, fontSize: 5.5))),
+                        style: pw.TextStyle(
+                            font: bold, fontSize: 5.5))),
               ),
               pw.Padding(
                 padding: const pw.EdgeInsets.all(2),
                 child: pw.Center(
                   child: pw.Text('बूथ डियूटी',
-                      style: pw.TextStyle(font: bold, fontSize: 5.5)),
+                      style: pw.TextStyle(
+                          font: bold, fontSize: 5.5)),
                 ),
               ),
             ]),
           ),
+
+          // Middle: sahyogi staff table — flexible rows
           pw.Expanded(
             child: pw.Column(children: [
               pw.Container(
                 decoration: const pw.BoxDecoration(
-                    border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+                    border: pw.Border(
+                        bottom: pw.BorderSide(width: 0.5))),
                 child: pw.Row(children: [
-                  sHdr('पद', flex: 1),
+                  sHdr('पद',        flex: 1),
                   sHdr('बैज नंबर', flex: 2),
-                  sHdr('नाम', flex: 3),
+                  sHdr('नाम',      flex: 3),
                   sHdr('मोबाइल न0', flex: 2),
-                  sHdr('तैनाती', flex: 2),
-                  sHdr('जनपद', flex: 2),
-                  sHdr('स0/नि0', flex: 1, isLast: true),
+                  sHdr('तैनाती',   flex: 2),
+                  sHdr('जनपद',     flex: 2),
+                  sHdr('स0/नि0',   flex: 1, isLast: true),
                 ]),
               ),
               pw.Expanded(
                 child: pw.Column(
                   children: List.generate(totalRows, (i) {
-                    final e = i < sahyogi.length ? sahyogi[i] : null;
+                    final e = i < sahyogi.length
+                        ? sahyogi[i]
+                        : null;
                     return pw.Expanded(
                       child: pw.Container(
                         decoration: pw.BoxDecoration(
-                          color: i.isEven ? PdfColors.white : PdfColors.grey100,
+                          color: i.isEven
+                              ? PdfColors.white
+                              : PdfColors.grey100,
                           border: const pw.Border(
-                              bottom: pw.BorderSide(width: 0.3)),
+                              bottom: pw.BorderSide(
+                                  width: 0.3)),
                         ),
                         child: pw.Row(children: [
-                          sCell(e != null ? _rh(e['user_rank']) : '0', flex: 1),
-                          sCell(e != null ? _vd(e['pno'])       : '0', flex: 2),
-                          sCell(e != null ? _vd(e['name'])      : '0', flex: 3, isBold: e != null),
-                          sCell(e != null ? _vd(e['mobile'])    : '0', flex: 2),
-                          sCell(e != null ? _vd(e['thana'])     : '0', flex: 2),
-                          sCell(e != null ? _vd(e['district'])  : '0', flex: 2),
-                          sCell('0', flex: 1, isLast: true),
+                          sCell(
+                              e != null
+                                  ? _rh(e['user_rank'] ??
+                                      e['rank'])
+                                  : '0',
+                              flex: 1),
+                          sCell(
+                              e != null
+                                  ? _vd(e['pno'])
+                                  : '0',
+                              flex: 2),
+                          sCell(
+                              e != null
+                                  ? _vd(e['name'])
+                                  : '0',
+                              flex: 3,
+                              isBold: e != null),
+                          sCell(
+                              e != null
+                                  ? _vd(e['mobile'])
+                                  : '0',
+                              flex: 2),
+                          sCell(
+                              e != null
+                                  ? _vd(e['thana'])
+                                  : '0',
+                              flex: 2),
+                          sCell(
+                              e != null
+                                  ? _vd(e['district'])
+                                  : '0',
+                              flex: 2),
+                          sCell('0',
+                              flex: 1, isLast: true),
                         ]),
                       ),
                     );
@@ -350,90 +435,125 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
               ),
             ]),
           ),
+
+          // Right: bus / date panel
           pw.Container(
             width: 28,
             decoration: const pw.BoxDecoration(
                 border: pw.Border(
-                    left: pw.BorderSide(width: 0.5),
+                    left:   pw.BorderSide(width: 0.5),
                     bottom: pw.BorderSide(width: 0.5))),
             child: pw.Column(children: [
               pw.Container(
                 decoration: const pw.BoxDecoration(
                     color: PdfColors.grey300,
-                    border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+                    border: pw.Border(
+                        bottom: pw.BorderSide(width: 0.5))),
                 padding: const pw.EdgeInsets.all(1),
                 child: pw.Center(
                     child: pw.Text(
                         'बस–${_vd(s['busNo'] ?? s['bus_no'])}',
-                        style: pw.TextStyle(font: bold, fontSize: 5))),
+                        style: pw.TextStyle(
+                            font: bold, fontSize: 5))),
               ),
               pw.SizedBox(height: 4),
               pw.Center(
                   child: pw.Text('दिनांक',
-                      style: pw.TextStyle(font: bold, fontSize: 5))),
+                      style: pw.TextStyle(
+                          font: bold, fontSize: 5))),
               pw.SizedBox(height: 2),
               pw.Container(
                 decoration: const pw.BoxDecoration(
                     border: pw.Border(
-                        top: pw.BorderSide(width: 0.5),
-                        bottom: pw.BorderSide(width: 0.5))),
+                      top:    pw.BorderSide(width: 0.5),
+                      bottom: pw.BorderSide(width: 0.5),
+                    )),
                 padding: const pw.EdgeInsets.all(1),
                 child: pw.Center(
                     child: pw.Text('15.2.17',
-                        style: pw.TextStyle(font: font, fontSize: 5))),
+                        style: pw.TextStyle(
+                            font: font, fontSize: 5))),
               ),
               pw.Expanded(child: pw.SizedBox()),
               pw.Center(
                   child: pw.Text('सीपीएम\nएफ',
-                      style: pw.TextStyle(font: font, fontSize: 5),
+                      style: pw.TextStyle(
+                          font: font, fontSize: 5),
                       textAlign: pw.TextAlign.center)),
               pw.SizedBox(height: 3),
               pw.Container(
                 decoration: const pw.BoxDecoration(
-                    border: pw.Border(top: pw.BorderSide(width: 0.5))),
+                    border: pw.Border(
+                        top: pw.BorderSide(width: 0.5))),
                 padding: const pw.EdgeInsets.all(1),
                 child: pw.Center(
                     child: pw.Text('1/2 सै0',
-                        style: pw.TextStyle(font: font, fontSize: 5))),
+                        style: pw.TextStyle(
+                            font: font, fontSize: 5))),
               ),
             ]),
           ),
         ]),
       ),
-      // BOTTOM ROW
+
+      // ── BOTTOM ROW ────────────────────────────────────────────────────────
       pw.Container(
         decoration: const pw.BoxDecoration(
-            border: pw.Border(top: pw.BorderSide(width: 0.8))),
-        child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+            border: pw.Border(
+                top: pw.BorderSide(width: 0.8))),
+        child: pw.Row(
+            crossAxisAlignment:
+                pw.CrossAxisAlignment.start,
+            children: [
           pw.Container(
             width: 50,
             decoration: const pw.BoxDecoration(
-                border: pw.Border(right: pw.BorderSide(width: 0.5))),
+                border: pw.Border(
+                    right: pw.BorderSide(width: 0.5))),
             child: pw.Column(children: [
-              metaRow('म0 केंद्र सं0', '—'),
-              metaRow('बूथ सं0', '—'),
-              metaRow('थाना', _vd(s['staffThana'] ?? s['thana'])),
-              metaRow('जोन न0', _vd(s['zoneName'] ?? s['zone_name'])),
-              metaRow('सेक्टर न0', _vd(s['sectorName'] ?? s['sector_name'])),
+              metaRow('म0 केंद्र सं0',
+                  _vd(s['centerId'] ??
+                      s['center_id'] ?? '—')),
+              metaRow('बूथ सं0',
+                  _vd(s['boothNo'] ??
+                      s['booth_no'] ?? '—')),
+              metaRow('थाना',
+                  _vd(s['staffThana'] ?? s['thana'])),
+              metaRow('जोन न0',
+                  _vd(s['zoneName'] ??
+                      s['zone_name'])),
+              metaRow('सेक्टर न0',
+                  _vd(s['sectorName'] ??
+                      s['sector_name'])),
               metaRow('वि0स0', '—'),
-              metaRow('श्रेणी', '0'),
+              metaRow('श्रेणी',
+                  _vd(s['centerType'] ??
+                      s['center_type'] ?? '0')),
             ]),
           ),
           pw.Expanded(
             child: pw.Container(
               decoration: const pw.BoxDecoration(
-                  border: pw.Border(right: pw.BorderSide(width: 0.5))),
+                  border: pw.Border(
+                      right: pw.BorderSide(width: 0.5))),
               child: pw.Column(children: [
-                officerBlock('जोनल मजिस्ट्रेट',
+                officerBlock(
+                    'जोनल मजिस्ट्रेट',
                     zonalMag?['name']?.toString(),
-                    zonalMag?['mobile']?.toString(), null),
+                    zonalMag?['mobile']?.toString(),
+                    null),
                 pw.Container(
                   decoration: const pw.BoxDecoration(
-                      border: pw.Border(top: pw.BorderSide(width: 0.4))),
-                  child: officerBlock('जोनल पुलिस अधिकारी',
+                      border: pw.Border(
+                          top: pw.BorderSide(
+                              width: 0.4))),
+                  child: officerBlock(
+                      'जोनल पुलिस अधिकारी',
                       zonalPolice?['name']?.toString(),
                       zonalPolice?['mobile']?.toString(),
-                      zonalPolice != null ? _rh(zonalPolice['user_rank']) : null),
+                      zonalPolice != null
+                          ? _rh(zonalPolice['user_rank'])
+                          : null),
                 ),
               ]),
             ),
@@ -441,18 +561,26 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
           pw.Expanded(
             child: pw.Container(
               decoration: const pw.BoxDecoration(
-                  border: pw.Border(right: pw.BorderSide(width: 0.5))),
+                  border: pw.Border(
+                      right: pw.BorderSide(width: 0.5))),
               child: pw.Column(children: [
-                officerBlock('सैक्टर मजिस्ट्रेट',
+                officerBlock(
+                    'सैक्टर मजिस्ट्रेट',
                     sectorMag?['name']?.toString(),
-                    sectorMag?['mobile']?.toString(), null),
+                    sectorMag?['mobile']?.toString(),
+                    null),
                 pw.Container(
                   decoration: const pw.BoxDecoration(
-                      border: pw.Border(top: pw.BorderSide(width: 0.4))),
-                  child: officerBlock('सेक्टर पुलिस अधिकारी',
+                      border: pw.Border(
+                          top: pw.BorderSide(
+                              width: 0.4))),
+                  child: officerBlock(
+                      'सेक्टर पुलिस अधिकारी',
                       sectorPolice?['name']?.toString(),
                       sectorPolice?['mobile']?.toString(),
-                      sectorPolice != null ? _rh(sectorPolice['user_rank']) : null),
+                      sectorPolice != null
+                          ? _rh(sectorPolice['user_rank'])
+                          : null),
                 ),
               ]),
             ),
@@ -461,16 +589,21 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
             width: 38,
             padding: const pw.EdgeInsets.all(4),
             child: pw.Column(
-                mainAxisAlignment: pw.MainAxisAlignment.center,
+                mainAxisAlignment:
+                    pw.MainAxisAlignment.center,
                 children: [
-                  pw.SizedBox(height: 10),
-                  pw.Text('पुलिस अधीक्षक',
-                      style: pw.TextStyle(font: bold, fontSize: 5.5),
-                      textAlign: pw.TextAlign.center),
-                  pw.Text(_vd(s['district']),
-                      style: pw.TextStyle(font: bold, fontSize: 5.5),
-                      textAlign: pw.TextAlign.center),
-                ]),
+              pw.SizedBox(height: 10),
+              pw.Text('पुलिस अधीक्षक',
+                  style: pw.TextStyle(
+                      font: bold, fontSize: 5.5),
+                  textAlign: pw.TextAlign.center),
+              pw.Text(
+                  _vd(s['adminDistrict'] ??
+                      s['district'] ?? 'बागपत'),
+                  style: pw.TextStyle(
+                      font: bold, fontSize: 5.5),
+                  textAlign: pw.TextAlign.center),
+            ]),
           ),
         ]),
       ),
@@ -478,9 +611,18 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
   );
 }
 
+// Page format: A6 landscape ≤12, A5 landscape ≤20, A4 landscape >20
+PdfPageFormat _pageFormatFor(Map s) {
+  final count = ((s['sahyogi'] ?? s['allStaff'] ??
+          s['all_staff'] ?? []) as List)
+      .length;
+  if (count > 20) return PdfPageFormat.a4.landscape;
+  if (count > 12) return PdfPageFormat.a5.landscape;
+  return PdfPageFormat.a6.landscape;
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
-//  DUTY CARD PAGE  — scalable version (server-side pagination + search)
-//  UI/print behaviour identical to the original
+//  DUTY CARD PAGE
 // ══════════════════════════════════════════════════════════════════════════════
 class DutyCardPage extends StatefulWidget {
   const DutyCardPage({super.key});
@@ -489,39 +631,41 @@ class DutyCardPage extends StatefulWidget {
 }
 
 class _DutyCardPageState extends State<DutyCardPage> {
-  // ── paginated data ────────────────────────────────────────────────────────
   final List<Map<String, dynamic>> _items = [];
   int  _page       = 1;
-  int  _totalCount = 0;   // total records on server
+  int  _totalCount = 0;
   int  _totalPages = 1;
   bool _loading    = false;
   bool _hasMore    = true;
   static const int _kLimit = 50;
 
-  // ── search (debounced → server) ───────────────────────────────────────────
-  String _q = '';
-  Timer? _debounce;
-  final _search = TextEditingController();
+  // search + rank filter
+  String  _q          = '';
+  String? _rankFilter; // null = all ranks
+  Timer?  _debounce;
+  final   _searchCtrl = TextEditingController();
 
-  // ── selection — identical to original ────────────────────────────────────
   Set<int> _selected = {};
-
-  // ── scroll ────────────────────────────────────────────────────────────────
-  final ScrollController _scroll = ScrollController();
+  final    _scroll   = ScrollController();
 
   @override
   void initState() {
     super.initState();
     _scroll.addListener(() {
-      if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 300) {
+      if (_scroll.position.pixels >=
+          _scroll.position.maxScrollExtent - 300) {
         _loadMore();
       }
     });
-    _search.addListener(() {
+    _searchCtrl.addListener(() {
       _debounce?.cancel();
-      _debounce = Timer(const Duration(milliseconds: 400), () {
-        final q = _search.text.trim();
-        if (q != _q) { _q = q; _reload(); }
+      _debounce =
+          Timer(const Duration(milliseconds: 400), () {
+        final q = _searchCtrl.text.trim();
+        if (q != _q) {
+          _q = q;
+          _reload();
+        }
       });
     });
     _reload();
@@ -530,19 +674,18 @@ class _DutyCardPageState extends State<DutyCardPage> {
   @override
   void dispose() {
     _scroll.dispose();
-    _search.dispose();
+    _searchCtrl.dispose();
     _debounce?.cancel();
     super.dispose();
   }
 
-  // ── data helpers ──────────────────────────────────────────────────────────
   void _reload() {
     setState(() {
       _items.clear();
-      _page      = 1;
+      _page       = 1;
       _totalCount = 0;
       _totalPages = 1;
-      _hasMore   = true;
+      _hasMore    = true;
       _selected.clear();
     });
     _fetch();
@@ -553,16 +696,32 @@ class _DutyCardPageState extends State<DutyCardPage> {
     setState(() => _loading = true);
     try {
       final token = await AuthService.getToken();
-      final url = StringBuffer('/admin/duties?page=$_page&limit=$_kLimit');
-      if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
 
-      final res        = await ApiService.get(url.toString(), token: token);
-      final wrapper    = (res['data'] as Map<String, dynamic>?) ?? {};
-      final items      = (wrapper['data'] as List?)
-          ?.map((e) => Map<String, dynamic>.from(e as Map))
-          .toList() ?? [];
-      final total      = (wrapper['total']      as num?)?.toInt() ?? 0;
-      final totalPages = (wrapper['totalPages'] as num?)?.toInt() ?? 1;
+      // Build URL — text search goes to /admin/duties,
+      // rank filter goes to /admin/staff?assigned=yes&rank=X then
+      // we cross-reference. Simpler: backend /admin/duties supports
+      // q= for name/pno/center search. For rank we filter client-side
+      // from already-loaded items OR use a separate endpoint.
+      // Since backend /admin/staff has rank filter, we use duties endpoint
+      // and filter client-side by rank (duties already loaded per page).
+      final url = StringBuffer(
+          '/admin/duties?page=$_page&limit=$_kLimit');
+      if (_q.isNotEmpty)
+        url.write('&q=${Uri.encodeComponent(_q)}');
+
+      final res     = await ApiService.get(
+          url.toString(), token: token);
+      final wrapper =
+          (res['data'] as Map<String, dynamic>?) ?? {};
+      final items = (wrapper['data'] as List?)
+              ?.map((e) =>
+                  Map<String, dynamic>.from(e as Map))
+              .toList() ??
+          [];
+      final total =
+          (wrapper['total'] as num?)?.toInt() ?? 0;
+      final totalPages =
+          (wrapper['totalPages'] as num?)?.toInt() ?? 1;
 
       if (!mounted) return;
       setState(() {
@@ -576,200 +735,341 @@ class _DutyCardPageState extends State<DutyCardPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
-        showSnack(context, 'Failed to load: $e', error: true);
+        showSnack(context, 'Failed to load: $e',
+            error: true);
       }
     }
   }
 
-  void _loadMore() { if (!_loading && _hasMore) _fetch(); }
+  void _loadMore() {
+    if (!_loading && _hasMore) _fetch();
+  }
 
-  // ── print — identical signature to original ───────────────────────────────
+  // Apply rank filter client-side on loaded items
+  List<Map<String, dynamic>> get _visible {
+    if (_rankFilter == null || _rankFilter!.isEmpty) {
+      return _items;
+    }
+    final rf = _rankFilter!.toLowerCase();
+    return _items.where((s) {
+      // Check primary staff rank
+      final primaryRank =
+          (s['rank'] ?? s['user_rank'] ?? '')
+              .toString()
+              .toLowerCase();
+      if (primaryRank == rf) return true;
+      // Check sahyogi ranks
+      final sahyogi =
+          (s['sahyogi'] ?? []) as List;
+      return sahyogi.any((e) =>
+          (e['user_rank'] ?? e['rank'] ?? '')
+              .toString()
+              .toLowerCase() ==
+          rf);
+    }).toList();
+  }
+
   Future<void> _print(List<Map> list) async {
+    if (list.isEmpty) return;
     final pdf  = pw.Document();
-    final font = await PdfGoogleFonts.notoSansDevanagariRegular();
-    final bold = await PdfGoogleFonts.notoSansDevanagariBold();
+    final font =
+        await PdfGoogleFonts.notoSansDevanagariRegular();
+    final bold =
+        await PdfGoogleFonts.notoSansDevanagariBold();
     for (final s in list) {
       pdf.addPage(pw.Page(
-        pageFormat: PdfPageFormat.a6.landscape,
+        pageFormat: _pageFormatFor(s),
         margin: const pw.EdgeInsets.all(4),
         build: (_) => buildDutyCardPdf(s, font, bold),
       ));
     }
-    await Printing.layoutPdf(onLayout: (_) => pdf.save());
+    await Printing.layoutPdf(
+        onLayout: (_) => pdf.save());
   }
 
-  // ── print ALL pages (fetches remaining pages before printing) ─────────────
   Future<void> _printAll() async {
-    // If everything is already loaded, print directly
-    if (!_hasMore) { await _print(_items); return; }
-
-    // Otherwise fetch all remaining pages at high limit then print
+    if (!_hasMore) {
+      await _print(_visible);
+      return;
+    }
     try {
       final token = await AuthService.getToken();
-      final all   = List<Map<String, dynamic>>.from(_items); // already loaded
-      int pg = _page; // continue from where we left off
+      final all =
+          List<Map<String, dynamic>>.from(_items);
+      int pg = _page;
       while (pg <= _totalPages) {
-        final url = StringBuffer('/admin/duties?page=$pg&limit=200');
-        if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
-        final res     = await ApiService.get(url.toString(), token: token);
-        final wrapper = (res['data'] as Map<String, dynamic>?) ?? {};
-        final items   = (wrapper['data'] as List?)
-            ?.map((e) => Map<String, dynamic>.from(e as Map))
-            .toList() ?? [];
+        final url = StringBuffer(
+            '/admin/duties?page=$pg&limit=200');
+        if (_q.isNotEmpty)
+          url.write(
+              '&q=${Uri.encodeComponent(_q)}');
+        final res = await ApiService.get(
+            url.toString(), token: token);
+        final wrapper =
+            (res['data'] as Map<String, dynamic>?) ??
+                {};
+        final items = (wrapper['data'] as List?)
+                ?.map((e) =>
+                    Map<String, dynamic>.from(
+                        e as Map))
+                .toList() ??
+            [];
         all.addAll(items);
         pg++;
       }
-      await _print(all);
+      // Apply rank filter to full list before printing
+      final toPrint = _rankFilter == null
+          ? all
+          : all.where((s) {
+              final rf = _rankFilter!.toLowerCase();
+              final pr =
+                  (s['rank'] ?? s['user_rank'] ?? '')
+                      .toString()
+                      .toLowerCase();
+              if (pr == rf) return true;
+              final sah =
+                  (s['sahyogi'] ?? []) as List;
+              return sah.any((e) =>
+                  (e['user_rank'] ?? e['rank'] ?? '')
+                      .toString()
+                      .toLowerCase() ==
+                  rf);
+            }).toList();
+      await _print(toPrint);
     } catch (e) {
-      if (mounted) showSnack(context, 'Print failed: $e', error: true);
+      if (mounted)
+        showSnack(context, 'Print failed: $e',
+            error: true);
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  //  BUILD — layout identical to original
-  // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
-    // visible items = all loaded so far (filtered server-side)
-    final visible = _items;
+    final visible = _visible;
 
     return Column(children: [
-      // ── search bar — unchanged ─────────────────────────────────────────────
+
+      // ── Search + Rank filter bar ────────────────────────────────────────
       Container(
         color: kSurface,
-        padding: const EdgeInsets.all(12),
-        child: TextField(
-          controller: _search,
-          style: const TextStyle(color: kDark, fontSize: 13),
-          decoration: InputDecoration(
-            hintText: 'Search by PNO, name, center, zone, GP, thana...',
-            hintStyle: const TextStyle(color: kSubtle, fontSize: 13),
-            prefixIcon: const Icon(Icons.search, color: kSubtle, size: 18),
-            filled: true,
-            fillColor: Colors.white,
-            contentPadding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kBorder)),
-            enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kBorder)),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: kPrimary, width: 2)),
-            isDense: true,
+        padding: const EdgeInsets.fromLTRB(
+            12, 10, 12, 10),
+        child: Column(children: [
+          // Text search
+          TextField(
+            controller: _searchCtrl,
+            style: const TextStyle(
+                color: kDark, fontSize: 13),
+            decoration: InputDecoration(
+              hintText:
+                  'नाम, PNO, केंद्र, जोन, थाना से खोजें...',
+              hintStyle: const TextStyle(
+                  color: kSubtle, fontSize: 13),
+              prefixIcon: const Icon(Icons.search,
+                  color: kSubtle, size: 18),
+              suffixIcon: _searchCtrl.text.isNotEmpty
+                  ? IconButton(
+                      icon: const Icon(Icons.clear,
+                          color: kSubtle, size: 16),
+                      onPressed: () {
+                        _searchCtrl.clear();
+                        _q = '';
+                        _reload();
+                      },
+                    )
+                  : null,
+              filled: true,
+              fillColor: Colors.white,
+              contentPadding:
+                  const EdgeInsets.symmetric(
+                      horizontal: 12, vertical: 10),
+              border: OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius.circular(10),
+                  borderSide: const BorderSide(
+                      color: kBorder)),
+              enabledBorder: OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius.circular(10),
+                  borderSide: const BorderSide(
+                      color: kBorder)),
+              focusedBorder: OutlineInputBorder(
+                  borderRadius:
+                      BorderRadius.circular(10),
+                  borderSide: const BorderSide(
+                      color: kPrimary, width: 2)),
+              isDense: true,
+            ),
           ),
-        ),
+
+          const SizedBox(height: 8),
+
+          // Rank filter chips
+          SizedBox(
+            height: 32,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                // "All" chip
+                _RankChip(
+                  label: 'सभी पद',
+                  selected: _rankFilter == null,
+                  color: kPrimary,
+                  onTap: () {
+                    if (_rankFilter != null) {
+                      setState(
+                          () => _rankFilter = null);
+                    }
+                  },
+                ),
+                const SizedBox(width: 6),
+                ..._kAllRanks.map((rank) {
+                  final selected =
+                      _rankFilter == rank;
+                  return Padding(
+                    padding: const EdgeInsets.only(
+                        right: 6),
+                    child: _RankChip(
+                      label: rank,
+                      selected: selected,
+                      color: _rankColor(rank),
+                      onTap: () => setState(() =>
+                          _rankFilter =
+                              selected ? null : rank),
+                    ),
+                  );
+                }),
+              ],
+            ),
+          ),
+        ]),
       ),
 
-      // ── action bar — same as original, total count from server ─────────────
+      // ── Action bar ────────────────────────────────────────────────────────
       if (visible.isNotEmpty)
         Container(
           color: kBg,
-          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(
+              horizontal: 16, vertical: 8),
           child: Row(children: [
-            // show server total, not just loaded count
-            Text(
-              _totalCount > visible.length
-                  ? '${visible.length} / $_totalCount results'
-                  : '$_totalCount results',
-              style: const TextStyle(color: kSubtle, fontSize: 12),
-            ),
+            // Count display
+            Column(
+                crossAxisAlignment:
+                    CrossAxisAlignment.start,
+                children: [
+              Text(
+                _rankFilter != null
+                    ? '${visible.length} / $_totalCount'
+                    : _totalCount > _items.length
+                        ? '${_items.length} / $_totalCount'
+                        : '$_totalCount',
+                style: const TextStyle(
+                    color: kDark,
+                    fontSize: 13,
+                    fontWeight: FontWeight.w700),
+              ),
+              Text(
+                _rankFilter != null
+                    ? 'पद: $_rankFilter'
+                    : 'कुल ड्यूटी',
+                style: const TextStyle(
+                    color: kSubtle, fontSize: 10),
+              ),
+            ]),
             const Spacer(),
             if (_selected.isNotEmpty) ...[
-              GestureDetector(
+              _ActionBtn(
+                label:
+                    'Print (${_selected.length})',
+                icon: Icons.print,
+                color: kPrimary,
                 onTap: () {
                   final sel = visible
-                      .where((s) => _selected.contains(s['id'] as int))
-                      .map((s) => Map<String, dynamic>.from(s))
+                      .where((s) => _selected
+                          .contains(s['id'] as int))
+                      .map((s) =>
+                          Map<String, dynamic>.from(
+                              s))
                       .toList();
                   _print(sel);
                 },
-                child: Container(
-                  padding:
-                      const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                  decoration: BoxDecoration(
-                      color: kPrimary, borderRadius: BorderRadius.circular(8)),
-                  child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.print, color: Colors.white, size: 15),
-                    const SizedBox(width: 6),
-                    Text('Print (${_selected.length})',
-                        style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.w700)),
-                  ]),
-                ),
               ),
-              const SizedBox(width: 8),
+              const SizedBox(width: 6),
             ],
-            // Print All button — new, fetches all pages
-            GestureDetector(
+            _ActionBtn(
+              label:
+                  'Print All (${visible.length})',
+              icon: Icons.print_outlined,
+              color: kDark,
               onTap: _printAll,
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
-                decoration: BoxDecoration(
-                    color: kDark, borderRadius: BorderRadius.circular(8)),
-                child: Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.print_outlined,
-                      color: Colors.white, size: 15),
-                  const SizedBox(width: 6),
-                  Text('Print All ($_totalCount)',
-                      style: const TextStyle(
-                          color: Colors.white,
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700)),
-                ]),
-              ),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 6),
             TextButton(
               onPressed: () => setState(() {
-                if (_selected.length == visible.length) {
+                if (_selected.length ==
+                    visible.length) {
                   _selected.clear();
                 } else {
-                  _selected = visible.map((s) => s['id'] as int).toSet();
+                  _selected = visible
+                      .map((s) => s['id'] as int)
+                      .toSet();
                 }
               }),
-              style: TextButton.styleFrom(foregroundColor: kPrimary),
+              style: TextButton.styleFrom(
+                  foregroundColor: kPrimary,
+                  padding:
+                      const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 4)),
               child: Text(
-                  _selected.length == visible.length
-                      ? 'Deselect All'
-                      : 'Select All',
-                  style: const TextStyle(
-                      fontSize: 12, fontWeight: FontWeight.w700)),
+                _selected.length == visible.length
+                    ? 'Deselect'
+                    : 'Select All',
+                style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700),
+              ),
             ),
           ]),
         ),
 
-      // ── list ───────────────────────────────────────────────────────────────
-      if (_loading && visible.isEmpty)
+      // ── List ─────────────────────────────────────────────────────────────
+      if (_loading && _items.isEmpty)
         const Expanded(
-            child: Center(child: CircularProgressIndicator(color: kPrimary)))
-      else if (visible.isEmpty)
+            child: Center(
+                child: CircularProgressIndicator(
+                    color: kPrimary)))
+      else if (visible.isEmpty && !_loading)
         Expanded(
-            child:
-                emptyState('No assigned staff found', Icons.how_to_vote_outlined))
+            child: emptyState(
+                _rankFilter != null
+                    ? 'पद "$_rankFilter" के लिए कोई ड्यूटी नहीं'
+                    : 'No assigned staff found',
+                Icons.how_to_vote_outlined))
       else
         Expanded(
           child: ListView.separated(
             controller: _scroll,
             padding: const EdgeInsets.all(12),
-            // +1 for the load-more spinner at bottom
-            itemCount: visible.length + (_hasMore ? 1 : 0),
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
+            itemCount: visible.length +
+                (_hasMore && _rankFilter == null
+                    ? 1
+                    : 0),
+            separatorBuilder: (_, __) =>
+                const SizedBox(height: 8),
             itemBuilder: (ctx, i) {
-              // load-more spinner
+              // Load-more spinner
               if (i >= visible.length) {
                 return const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 16),
+                  padding: EdgeInsets.symmetric(
+                      vertical: 16),
                   child: Center(
                     child: SizedBox(
                       width: 22, height: 22,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: kPrimary),
+                      child:
+                          CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: kPrimary),
                     ),
                   ),
                 );
@@ -778,79 +1078,184 @@ class _DutyCardPageState extends State<DutyCardPage> {
               final s   = visible[i];
               final id  = s['id'] as int;
               final sel = _selected.contains(id);
+              final sahyogiCount =
+                  ((s['sahyogi'] ?? []) as List)
+                      .length;
+              final primaryRank =
+                  s['rank'] ?? s['user_rank'] ?? '';
+              final rankHindi = _rh(primaryRank);
 
-              // ── card — identical to original ───────────────────────────────
               return GestureDetector(
-                onTap: () => setState(
-                    () => sel ? _selected.remove(id) : _selected.add(id)),
+                onTap: () => setState(() =>
+                    sel
+                        ? _selected.remove(id)
+                        : _selected.add(id)),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: sel ? kPrimary.withOpacity(0.06) : Colors.white,
-                    borderRadius: BorderRadius.circular(12),
+                    color: sel
+                        ? kPrimary.withOpacity(0.06)
+                        : Colors.white,
+                    borderRadius:
+                        BorderRadius.circular(12),
                     border: Border.all(
-                        color: sel ? kPrimary : kBorder.withOpacity(0.4),
-                        width: sel ? 1.5 : 1),
+                      color: sel
+                          ? kPrimary
+                          : kBorder.withOpacity(0.4),
+                      width: sel ? 1.5 : 1,
+                    ),
                     boxShadow: [
                       BoxShadow(
-                          color: kPrimary.withOpacity(0.05),
-                          blurRadius: 8,
-                          offset: const Offset(0, 3))
+                        color: kPrimary
+                            .withOpacity(0.05),
+                        blurRadius: 8,
+                        offset: const Offset(0, 3),
+                      )
                     ],
                   ),
                   child: ListTile(
-                    contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 14, vertical: 6),
+                    contentPadding:
+                        const EdgeInsets.symmetric(
+                            horizontal: 14,
+                            vertical: 6),
                     leading: GestureDetector(
                       onTap: () => setState(() =>
-                          sel ? _selected.remove(id) : _selected.add(id)),
+                          sel
+                              ? _selected.remove(id)
+                              : _selected.add(id)),
                       child: Container(
                         width: 40,
                         height: 40,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: sel ? kPrimary : kSurface,
-                          border:
-                              Border.all(color: sel ? kPrimary : kBorder),
+                          color: sel
+                              ? kPrimary
+                              : kSurface,
+                          border: Border.all(
+                              color: sel
+                                  ? kPrimary
+                                  : kBorder),
                         ),
                         child: Center(
-                            child: sel
-                                ? const Icon(Icons.check,
-                                    color: Colors.white, size: 18)
-                                : Text('${i + 1}',
-                                    style: const TextStyle(
-                                        color: kPrimary,
-                                        fontWeight: FontWeight.w800,
-                                        fontSize: 12))),
+                          child: sel
+                              ? const Icon(
+                                  Icons.check,
+                                  color:
+                                      Colors.white,
+                                  size: 18)
+                              : Text('${i + 1}',
+                                  style: const TextStyle(
+                                      color: kPrimary,
+                                      fontWeight:
+                                          FontWeight
+                                              .w800,
+                                      fontSize: 12)),
+                        ),
                       ),
                     ),
-                    title: Text('${s['name']}',
-                        style: const TextStyle(
-                            color: kDark,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 14)),
+                    title: Row(children: [
+                      Expanded(
+                        child: Text(
+                            '${s['name']}',
+                            style: const TextStyle(
+                                color: kDark,
+                                fontWeight:
+                                    FontWeight.w700,
+                                fontSize: 14)),
+                      ),
+                      // Rank badge
+                      Container(
+                        padding:
+                            const EdgeInsets.symmetric(
+                                horizontal: 7,
+                                vertical: 2),
+                        decoration: BoxDecoration(
+                          color: _rankColor(
+                                  primaryRank)
+                              .withOpacity(0.1),
+                          borderRadius:
+                              BorderRadius.circular(
+                                  6),
+                          border: Border.all(
+                              color: _rankColor(
+                                      primaryRank)
+                                  .withOpacity(0.3)),
+                        ),
+                        child: Text(rankHindi,
+                            style: TextStyle(
+                                color: _rankColor(
+                                    primaryRank),
+                                fontSize: 10,
+                                fontWeight:
+                                    FontWeight.w700)),
+                      ),
+                      const SizedBox(width: 4),
+                      // Staff count badge
+                      if (sahyogiCount > 0)
+                        Container(
+                          padding:
+                              const EdgeInsets.symmetric(
+                                  horizontal: 7,
+                                  vertical: 2),
+                          decoration: BoxDecoration(
+                            color: kSuccess
+                                .withOpacity(0.1),
+                            borderRadius:
+                                BorderRadius.circular(
+                                    6),
+                            border: Border.all(
+                                color: kSuccess
+                                    .withOpacity(
+                                        0.3)),
+                          ),
+                          child: Text(
+                              '$sahyogiCount कर्मचारी',
+                              style: const TextStyle(
+                                  color: kSuccess,
+                                  fontSize: 10,
+                                  fontWeight:
+                                      FontWeight
+                                          .w700)),
+                        ),
+                    ]),
                     subtitle: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const SizedBox(height: 3),
-                          Row(children: [
-                            _tag(Icons.badge_outlined,  '${s['pno']}'),
-                            const SizedBox(width: 8),
-                            _tag(Icons.phone_outlined,  '${s['mobile']}'),
-                          ]),
-                          const SizedBox(height: 3),
-                          _tag(
-                              Icons.location_on_outlined,
-                              '${s['centerName']} • ${s['gpName']}',
-                              color: kInfo),
-                          const SizedBox(height: 2),
-                          _tag(
-                              Icons.layers_outlined,
-                              '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}'),
+                      crossAxisAlignment:
+                          CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 3),
+                        Row(children: [
+                          _tag(Icons.badge_outlined,
+                              '${s['pno']}'),
+                          const SizedBox(width: 8),
+                          _tag(Icons.phone_outlined,
+                              '${s['mobile']}'),
+                          const SizedBox(width: 8),
+                          if ((s['busNo'] ?? '')
+                              .toString()
+                              .isNotEmpty)
+                            _tag(Icons.directions_bus,
+                                'बस–${s['busNo']}',
+                                color: kAccent),
                         ]),
+                        const SizedBox(height: 3),
+                        _tag(
+                          Icons.location_on_outlined,
+                          '${s['centerName']} • ${s['gpName']}',
+                          color: kInfo,
+                        ),
+                        const SizedBox(height: 2),
+                        _tag(
+                          Icons.layers_outlined,
+                          '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}',
+                        ),
+                      ],
+                    ),
                     trailing: IconButton(
-                      icon: const Icon(Icons.print_outlined, color: kPrimary),
-                      onPressed: () =>
-                          _print([Map<String, dynamic>.from(s)]),
+                      icon: const Icon(
+                          Icons.print_outlined,
+                          color: kPrimary),
+                      onPressed: () => _print([
+                        Map<String, dynamic>.from(s)
+                      ]),
                     ),
                     isThreeLine: true,
                   ),
@@ -862,18 +1267,134 @@ class _DutyCardPageState extends State<DutyCardPage> {
     ]);
   }
 
-  // ── _tag — identical to original ─────────────────────────────────────────
-  Widget _tag(IconData icon, String text, {Color? color}) {
-    return Row(mainAxisSize: MainAxisSize.min, children: [
+  Widget _tag(IconData icon, String text,
+      {Color? color}) {
+    return Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
       Icon(icon, size: 11, color: color ?? kSubtle),
       const SizedBox(width: 3),
       Flexible(
-          child: Text(text,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                  color: color ?? kSubtle,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w500))),
+        child: Text(text,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(
+                color: color ?? kSubtle,
+                fontSize: 11,
+                fontWeight: FontWeight.w500)),
+      ),
     ]);
   }
 }
+
+// ── Rank → color mapping ──────────────────────────────────────────────────────
+Color _rankColor(String rank) {
+  switch (rank.toUpperCase()) {
+    case 'SP':             return const Color(0xFF6C3483);
+    case 'ASP':            return const Color(0xFF1A5276);
+    case 'DSP':            return const Color(0xFF0E6655);
+    case 'INSPECTOR':      return const Color(0xFF1F618D);
+    case 'SI':             return const Color(0xFF117A65);
+    case 'ASI':            return const Color(0xFFB7950B);
+    case 'HEAD CONSTABLE': return const Color(0xFFBA4A00);
+    case 'CONSTABLE':      return const Color(0xFF6E2F1A);
+    default:               return kPrimary;
+  }
+}
+
+// ── Rank chip widget ──────────────────────────────────────────────────────────
+class _RankChip extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _RankChip({
+    required this.label,
+    required this.selected,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(
+            horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color:
+              selected ? color : color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+              color: selected
+                  ? color
+                  : color.withOpacity(0.3),
+              width: selected ? 1.5 : 1),
+        ),
+        child: Text(
+          label,
+          style: TextStyle(
+            color:
+                selected ? Colors.white : color,
+            fontSize: 11,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+// ── Action button ─────────────────────────────────────────────────────────────
+class _ActionBtn extends StatelessWidget {
+  final String label;
+  final IconData icon;
+  final Color color;
+  final VoidCallback onTap;
+
+  const _ActionBtn({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(
+            horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(
+            color: color,
+            borderRadius: BorderRadius.circular(8)),
+        child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+          Icon(icon, color: Colors.white, size: 14),
+          const SizedBox(width: 5),
+          Text(label,
+              style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    );
+  }
+}
+
+// ── Shared palette (in case not imported from widgets.dart) ───────────────────
+const kBg      = Color(0xFFFDF6E3);
+const kSurface = Color(0xFFF5E6C8);
+const kPrimary = Color(0xFF8B6914);
+const kAccent  = Color(0xFFB8860B);
+const kDark    = Color(0xFF4A3000);
+const kSubtle  = Color(0xFFAA8844);
+const kBorder  = Color(0xFFD4A843);
+const kError   = Color(0xFFC0392B);
+const kSuccess = Color(0xFF2D6A1E);
+const kInfo    = Color(0xFF1A5276);

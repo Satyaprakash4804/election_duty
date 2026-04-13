@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
@@ -16,6 +17,17 @@ const _kSubtle  = Color(0xFF6B7C93);
 const _kBorder  = Color(0xFFDDE3EE);
 const _kAccent  = Color(0xFFFBBF24);
 const _kGold    = Color(0xFFFFF8E7);
+const _kOrange  = Color(0xFFE67E22);
+
+// Sensitivity color map — now includes A++
+Color _sensitivityColor(String? t) {
+  switch (t) {
+    case 'A++': return const Color(0xFF6C3483);
+    case 'A':   return _kRed;
+    case 'B':   return _kOrange;
+    default:    return const Color(0xFF1A5276);
+  }
+}
 
 // ── Cell border helper ────────────────────────────────────────────────────────
 BoxDecoration _cellDec({bool right = true, bool bottom = true, Color? bg}) =>
@@ -26,6 +38,21 @@ BoxDecoration _cellDec({bool right = true, bool bottom = true, Color? bg}) =>
         bottom: bottom ? const BorderSide(color: _kBorder) : BorderSide.none,
       ),
     );
+
+// ── Rank list ─────────────────────────────────────────────────────────────────
+const _kRanks = [
+  {'en': 'SP',             'hi': 'पुलिस अधीक्षक'},
+  {'en': 'ASP',            'hi': 'सह0 पुलिस अधीक्षक'},
+  {'en': 'DSP',            'hi': 'पुलिस उपाधीक्षक'},
+  {'en': 'Inspector',      'hi': 'निरीक्षक'},
+  {'en': 'SI',             'hi': 'उप निरीक्षक'},
+  {'en': 'ASI',            'hi': 'सह0 उप निरीक्षक'},
+  {'en': 'Head Constable', 'hi': 'मुख्य आरक्षी'},
+  {'en': 'Constable',      'hi': 'आरक्षी'},
+];
+
+// ── Sensitivity options ───────────────────────────────────────────────────────
+const _kCenterTypes = ['A++', 'A', 'B', 'C'];
 
 // ══════════════════════════════════════════════════════════════════════════════
 class HierarchyReportPage extends StatefulWidget {
@@ -74,26 +101,20 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
 
   // ── Filtered lists ────────────────────────────────────────────────────────
   List get _szList => _data;
-
   List get _filteredSZ => _fSZ == null ? _data
       : _data.where((s) => '${s['id']}' == _fSZ).toList();
-
   List get _allZones =>
       _filteredSZ.expand((s) => (s['zones'] as List? ?? [])).toList();
-
   List get _filteredZones => _fZone == null ? _allZones
       : _allZones.where((z) => '${z['id']}' == _fZone).toList();
-
   List get _allSectors =>
       _allZones.expand((z) => (z['sectors'] as List? ?? [])).toList();
-
   List get _filteredSectors => _fSector == null ? _allSectors
       : _allSectors.where((s) => '${s['id']}' == _fSector).toList();
-
   List get _allGPs =>
       _allSectors.expand((s) => (s['panchayats'] as List? ?? [])).toList();
 
-  // ── CRUD ─────────────────────────────────────────────────────────────────
+  // ── CRUD helpers ─────────────────────────────────────────────────────────
   Future<void> _delete(String ep, int id, String name) async {
     final ok = await _confirm('हटाएं', '"$name" को हटाना चाहते हैं?');
     if (ok != true) return;
@@ -123,11 +144,13 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     ),
   );
 
-  void _snack(String msg, Color color) =>
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text(msg), backgroundColor: color,
-          behavior: SnackBarBehavior.floating,
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))));
+  void _snack(String msg, Color color) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(msg), backgroundColor: color,
+        behavior: SnackBarBehavior.floating,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))));
+  }
 
   // ── Print ─────────────────────────────────────────────────────────────────
   Future<void> _print() async {
@@ -137,13 +160,19 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     final idx  = _tab.index;
 
     if (idx == 0) {
-      for (final sz in _filteredSZ) {
-        doc.addPage(pw.MultiPage(
-          pageFormat: PdfPageFormat.a4.landscape,
-          margin: const pw.EdgeInsets.all(14),
-          build: (_) => _pdfTab1(sz, font, bold),
-        ));
-      }
+      // FIX: ALL super zones on a SINGLE landscape page
+      doc.addPage(pw.MultiPage(
+        pageFormat: PdfPageFormat.a4.landscape,
+        margin: const pw.EdgeInsets.all(14),
+        build: (_) {
+          final widgets = <pw.Widget>[];
+          for (final sz in _filteredSZ) {
+            widgets.addAll(_pdfTab1(sz, font, bold));
+            widgets.add(pw.SizedBox(height: 10));
+          }
+          return widgets;
+        },
+      ));
     } else if (idx == 1) {
       for (final sz in _filteredSZ) {
         for (final z in (sz['zones'] as List? ?? [])) {
@@ -180,8 +209,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     await Printing.layoutPdf(onLayout: (_) async => doc.save());
   }
 
-  // ─── PDF Tab 1 ─────────────────────────────────────────────────────────────
-  // Matches Image 1: super zone title + table
+  // ─── PDF Tab 1 — all super zones on one page ──────────────────────────────
   List<pw.Widget> _pdfTab1(Map sz, pw.Font font, pw.Font bold) {
     final zones = sz['zones'] as List? ?? [];
     int globalSector = 0;
@@ -206,7 +234,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
         final sOffStr  = sOff.isNotEmpty
             ? sOff.map((o) => '${o['name'] ?? ''} ${o['user_rank'] ?? ''} ${o['mobile'] ?? ''}').join(', ')
             : '—';
-
         rows.add([
           '${zi + 1}', zOffStr, '$hq',
           '$globalSector', sOffStr, s['name'] ?? '—',
@@ -216,25 +243,23 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       }
     }
 
-    // GP count
     int gpTotal = 0;
     for (final z in zones) for (final s in (z['sectors'] as List? ?? []))
       gpTotal += ((s['panchayats'] as List?)?.length ?? 0);
 
-    pw.Widget _th(String t) => pw.Container(
+    pw.Widget th(String t) => pw.Container(
       decoration: const pw.BoxDecoration(color: PdfColors.grey200),
       padding: const pw.EdgeInsets.all(3),
       child: pw.Text(t, style: pw.TextStyle(font: bold, fontSize: 7),
           textAlign: pw.TextAlign.center),
     );
-    pw.Widget _td(String t, {bool center = false}) => pw.Padding(
+    pw.Widget td(String t, {bool center = false}) => pw.Padding(
       padding: const pw.EdgeInsets.all(3),
       child: pw.Text(t, style: pw.TextStyle(font: font, fontSize: 7),
           textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
     );
 
     return [
-      // Title matching Image 1
       pw.RichText(text: pw.TextSpan(children: [
         pw.TextSpan(text: 'सुपर जोन–${sz['name']}  ब्लाक ${sz['block'] ?? ''}  ',
             style: pw.TextStyle(font: bold, fontSize: 11)),
@@ -245,61 +270,52 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       pw.Table(
         border: pw.TableBorder.all(width: 0.5),
         columnWidths: const {
-          0: pw.FixedColumnWidth(28),
-          1: pw.FlexColumnWidth(2.0),
-          2: pw.FlexColumnWidth(1.5),
-          3: pw.FixedColumnWidth(28),
-          4: pw.FlexColumnWidth(2.5),
-          5: pw.FlexColumnWidth(1.5),
-          6: pw.FlexColumnWidth(3.0),
-          7: pw.FlexColumnWidth(1.2),
+          0: pw.FixedColumnWidth(28), 1: pw.FlexColumnWidth(2.0),
+          2: pw.FlexColumnWidth(1.5), 3: pw.FixedColumnWidth(28),
+          4: pw.FlexColumnWidth(2.5), 5: pw.FlexColumnWidth(1.5),
+          6: pw.FlexColumnWidth(3.0), 7: pw.FlexColumnWidth(1.2),
         },
         children: [
           pw.TableRow(children: [
-            _th('सुपर\nजोन'), _th('जोनल अधिकारी'), _th('मुख्यालय'),
-            _th('सैक्टर'), _th('सैक्टर पुलिस अधिकारी का नाम'),
-            _th('मुख्यालय'), _th('सैक्टर में लगने वाले ग्राम पंचायत का नाम'),
-            _th('थाना'),
+            th('सुपर\nजोन'), th('जोनल अधिकारी'), th('मुख्यालय'),
+            th('सैक्टर'), th('सैक्टर पुलिस अधिकारी का नाम'),
+            th('मुख्यालय'), th('सैक्टर में लगने वाले ग्राम पंचायत का नाम'), th('थाना'),
           ]),
           ...rows.map((r) => pw.TableRow(children: [
-            _td(r[0], center: true), _td(r[1]), _td(r[2]),
-            _td(r[3], center: true), _td(r[4]), _td(r[5]),
-            _td(r[6]), _td(r[7]),
+            td(r[0], center: true), td(r[1]), td(r[2]),
+            td(r[3], center: true), td(r[4]), td(r[5]), td(r[6]), td(r[7]),
           ])),
         ],
       ),
     ];
   }
 
-  // ─── PDF Tab 2 ─────────────────────────────────────────────────────────────
-  // Matches Image 2
+  // ─── PDF Tab 2 ────────────────────────────────────────────────────────────
   List<pw.Widget> _pdfTab2(Map sz, Map z, pw.Font font, pw.Font bold) {
     final sectors = z['sectors'] as List? ?? [];
     final zOff    = (z['officers'] as List? ?? []);
     final szOff   = (sz['officers'] as List? ?? []);
 
-    pw.Widget _th(String t) => pw.Container(
+    pw.Widget th(String t) => pw.Container(
       decoration: const pw.BoxDecoration(color: PdfColors.grey200),
       padding: const pw.EdgeInsets.all(3),
       child: pw.Text(t, style: pw.TextStyle(font: bold, fontSize: 7),
           textAlign: pw.TextAlign.center),
     );
-    pw.Widget _td(String t) => pw.Padding(
+    pw.Widget td(String t) => pw.Padding(
       padding: const pw.EdgeInsets.all(3),
       child: pw.Text(t, style: pw.TextStyle(font: font, fontSize: 7)),
     );
 
-    // Build rows: sector × gp × sthal/kendra
     final rows = <List<String>>[];
     int sSeq = 0;
     for (final s in sectors) {
       sSeq++;
-      final sOff    = (s['officers'] as List? ?? []);
-      // magistrate = first officer, police = second (or same if only one)
-      final magStr  = sOff.isNotEmpty
+      final sOff   = (s['officers'] as List? ?? []);
+      final magStr = sOff.isNotEmpty
           ? '${sOff[0]['name'] ?? ''} ${sOff[0]['user_rank'] ?? ''}\n${sOff[0]['mobile'] ?? ''}'
           : '—';
-      final polStr  = sOff.length > 1
+      final polStr = sOff.length > 1
           ? '${sOff[1]['name'] ?? ''} ${sOff[1]['user_rank'] ?? ''}\n${sOff[1]['mobile'] ?? ''}'
           : magStr;
 
@@ -308,13 +324,12 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
         rows.add(['$sSeq', magStr, polStr, '—', '—', '—']);
       } else {
         for (final gp in gps) {
-          final centers = gp['centers'] as List? ?? [];
+          final centers    = gp['centers'] as List? ?? [];
           final sthalNames = centers.map((c) => '${c['name']}').join('\n');
           final kendraStrs = centers.expand((c) => (c['kendras'] as List? ?? []))
               .map((k) => '${k['room_number']}').join(', ');
           rows.add([
-            '$sSeq', magStr, polStr,
-            '${gp['name']}',
+            '$sSeq', magStr, polStr, '${gp['name']}',
             sthalNames.isEmpty ? '—' : sthalNames,
             kendraStrs.isEmpty ? '—' : kendraStrs,
           ]);
@@ -322,8 +337,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       }
     }
 
-    // Zone officer string
-    final zOffStr = zOff.map((o) =>
+    final zOffStr  = zOff.map((o) =>
         '${o['name'] ?? ''} (${o['user_rank'] ?? ''}) मो: ${o['mobile'] ?? ''}').join('\n');
     final szOffStr = szOff.map((o) =>
         '${o['name'] ?? ''} (${o['user_rank'] ?? ''}) मो: ${o['mobile'] ?? ''}').join('\n');
@@ -343,51 +357,43 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       pw.Table(
         border: pw.TableBorder.all(width: 0.5),
         columnWidths: const {
-          0: pw.FixedColumnWidth(28),
-          1: pw.FlexColumnWidth(2.5),
-          2: pw.FlexColumnWidth(2.5),
-          3: pw.FlexColumnWidth(1.8),
-          4: pw.FlexColumnWidth(2.5),
-          5: pw.FlexColumnWidth(1.2),
+          0: pw.FixedColumnWidth(28), 1: pw.FlexColumnWidth(2.5),
+          2: pw.FlexColumnWidth(2.5), 3: pw.FlexColumnWidth(1.8),
+          4: pw.FlexColumnWidth(2.5), 5: pw.FlexColumnWidth(1.2),
         },
         children: [
           pw.TableRow(children: [
-            _th('सैक्टर\nसं.'), _th('सैक्टर मजिस्ट्रेट\n(नाम/पद/मोबाइल)'),
-            _th('सैक्टर पुलिस अधिकारी\n(नाम/पद/मोबाइल)'),
-            _th('ग्राम पंचायत'), _th('मतदेय स्थल'), _th('मतदान केन्द्र'),
+            th('सैक्टर\nसं.'), th('सैक्टर मजिस्ट्रेट\n(नाम/पद/मोबाइल)'),
+            th('सैक्टर पुलिस अधिकारी\n(नाम/पद/मोबाइल)'),
+            th('ग्राम पंचायत'), th('मतदेय स्थल'), th('मतदान केन्द्र'),
           ]),
-          ...rows.map((r) => pw.TableRow(children: r.map(_td).toList())),
+          ...rows.map((r) => pw.TableRow(children: r.map(td).toList())),
         ],
       ),
     ];
   }
 
-  // ─── PDF Tab 3 ─────────────────────────────────────────────────────────────
-  // Matches Image 3 exactly
-  List<pw.Widget> _pdfTab3(Map sz, Map z, Map s, Map gp,
-      pw.Font font, pw.Font bold) {
+  // ─── PDF Tab 3 ────────────────────────────────────────────────────────────
+  List<pw.Widget> _pdfTab3(Map sz, Map z, Map s, Map gp, pw.Font font, pw.Font bold) {
     final centers = gp['centers'] as List? ?? [];
-
-    pw.Widget _th(String t) => pw.Container(
+    pw.Widget th(String t) => pw.Container(
       decoration: const pw.BoxDecoration(color: PdfColors.grey200),
       padding: const pw.EdgeInsets.all(2),
       child: pw.Text(t, style: pw.TextStyle(font: bold, fontSize: 6.5),
           textAlign: pw.TextAlign.center),
     );
-    pw.Widget _td(String t, {bool center = false}) => pw.Padding(
+    pw.Widget td(String t, {bool center = false}) => pw.Padding(
       padding: const pw.EdgeInsets.all(2),
       child: pw.Text(t, style: pw.TextStyle(font: font, fontSize: 6.5),
           textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
     );
 
-    // Count totals for header
     int totalKendra = 0;
     for (final c in centers) {
       final k = (c['kendras'] as List? ?? []);
       totalKendra += k.isEmpty ? 1 : k.length;
     }
 
-    // Build rows — exactly as Image 3
     final rows = <List<String>>[];
     int sthalNo = 1, kendraGlobal = 1;
     for (final c in centers) {
@@ -403,13 +409,9 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
 
       if (kendras.isEmpty) {
         rows.add([
-          '$kendraGlobal',
-          '${c['name']}\n${c['center_type'] ?? 'C'}',
-          '$sthalNo',
-          '${c['name']}',
-          '${z['name']}', '${s['name']}',
-          '${c['thana'] ?? gp['thana'] ?? '—'}',
-          dutyText, mobileText,
+          '$kendraGlobal', '${c['name']}\n${c['center_type'] ?? 'C'}',
+          '$sthalNo', '${c['name']}', '${z['name']}', '${s['name']}',
+          '${c['thana'] ?? gp['thana'] ?? '—'}', dutyText, mobileText,
           '${c['bus_no'] ?? '—'}',
         ]);
         sthalNo++; kendraGlobal++;
@@ -418,12 +420,10 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           rows.add([
             '$kendraGlobal',
             '${c['name']} क.नं. ${kendras[ki]['room_number']}\n${c['center_type'] ?? 'C'}',
-            ki == 0 ? '$sthalNo' : '',
-            ki == 0 ? '${c['name']}' : '',
+            ki == 0 ? '$sthalNo' : '', ki == 0 ? '${c['name']}' : '',
             '${z['name']}', '${s['name']}',
             '${c['thana'] ?? gp['thana'] ?? '—'}',
-            ki == 0 ? dutyText : '',
-            ki == 0 ? mobileText : '',
+            ki == 0 ? dutyText : '', ki == 0 ? mobileText : '',
             ki == 0 ? '${c['bus_no'] ?? '—'}' : '',
           ]);
           kendraGlobal++;
@@ -441,10 +441,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       ])),
       pw.SizedBox(height: 2),
       pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
-        pw.Text('मतदान केन्द्र–$totalKendra',
-            style: pw.TextStyle(font: bold, fontSize: 9)),
-        pw.Text('मतदेय स्थल–${centers.length}',
-            style: pw.TextStyle(font: bold, fontSize: 9)),
+        pw.Text('मतदान केन्द्र–$totalKendra', style: pw.TextStyle(font: bold, fontSize: 9)),
+        pw.Text('मतदेय स्थल–${centers.length}', style: pw.TextStyle(font: bold, fontSize: 9)),
       ]),
       pw.Text('ग्राम पंचायत: ${gp['name']}  |  सैक्टर: ${s['name']}  |  जोन: ${z['name']}',
           style: pw.TextStyle(font: font, fontSize: 8)),
@@ -452,61 +450,48 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       pw.Table(
         border: pw.TableBorder.all(width: 0.5),
         columnWidths: const {
-          0: pw.FixedColumnWidth(24),
-          1: pw.FlexColumnWidth(2.2),
-          2: pw.FixedColumnWidth(24),
-          3: pw.FlexColumnWidth(2.0),
-          4: pw.FixedColumnWidth(30),
-          5: pw.FixedColumnWidth(30),
-          6: pw.FlexColumnWidth(1.2),
-          7: pw.FlexColumnWidth(2.5),
-          8: pw.FlexColumnWidth(1.4),
-          9: pw.FixedColumnWidth(28),
+          0: pw.FixedColumnWidth(24), 1: pw.FlexColumnWidth(2.2),
+          2: pw.FixedColumnWidth(24), 3: pw.FlexColumnWidth(2.0),
+          4: pw.FixedColumnWidth(30), 5: pw.FixedColumnWidth(30),
+          6: pw.FlexColumnWidth(1.2), 7: pw.FlexColumnWidth(2.5),
+          8: pw.FlexColumnWidth(1.4), 9: pw.FixedColumnWidth(28),
         },
         children: [
           pw.TableRow(children: [
-            _th('मतदान\nकेन्द्र की\nसंख्या'),
-            _th('मतदान केन्द्र\nका नाम'),
-            _th('मतदेय\nसं.'),
-            _th('मतदान स्थल\nका नाम'),
-            _th('जोन\nसंख्या'),
-            _th('सैक्टर\nसंख्या'),
-            _th('थाना'),
-            _th('ड्यूटी पर लगाया\nपुलिस का नाम'),
-            _th('मोबाईल\nनम्बर'),
-            _th('बस\nनं.'),
+            th('मतदान\nकेन्द्र की\nसंख्या'), th('मतदान केन्द्र\nका नाम'),
+            th('मतदेय\nसं.'), th('मतदान स्थल\nका नाम'),
+            th('जोन\nसंख्या'), th('सैक्टर\nसंख्या'), th('थाना'),
+            th('ड्यूटी पर लगाया\nपुलिस का नाम'), th('मोबाईल\nनम्बर'), th('बस\nनं.'),
           ]),
           ...rows.map((r) => pw.TableRow(children: [
-            _td(r[0], center: true), _td(r[1]),
-            _td(r[2], center: true), _td(r[3]),
-            _td(r[4], center: true), _td(r[5], center: true),
-            _td(r[6]), _td(r[7]), _td(r[8]),
-            _td(r[9], center: true),
+            td(r[0], center: true), td(r[1]), td(r[2], center: true), td(r[3]),
+            td(r[4], center: true), td(r[5], center: true), td(r[6]),
+            td(r[7]), td(r[8]), td(r[9], center: true),
           ])),
         ],
       ),
     ];
   }
 
-  // ── Dialogs ───────────────────────────────────────────────────────────────
+  // ── CRUD dialogs ──────────────────────────────────────────────────────────
+
   void _addSuperZone() => _openDialog(
     title: 'सुपर जोन जोड़ें', color: _kPrimary, icon: Icons.layers_outlined,
     fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/super-zones',
-          Map<String, dynamic>.from(data), token: t);          // ← cast
+      await ApiService.post('/admin/super-zones', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
+
   void _editSZ(Map sz) => _openDialog(
     title: 'सुपर जोन संपादित करें', color: _kPrimary, icon: Icons.edit_outlined,
     fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
     initial: {'name': sz['name'], 'district': sz['district'], 'block': sz['block']},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.put('/admin/hierarchy/super-zone/${sz['id']}',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.put('/admin/hierarchy/super-zone/${sz['id']}', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
@@ -516,8 +501,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'जोन का नाम', 'hqAddress': 'मुख्यालय पता'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/super-zones/${sz['id']}/zones',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.post('/admin/super-zones/${sz['id']}/zones', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
@@ -528,8 +512,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     initial: {'name': z['name'], 'hqAddress': z['hq_address'] ?? z['hqAddress']},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.put('/admin/zones/${z['id']}',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.put('/admin/zones/${z['id']}', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
@@ -539,8 +522,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'सैक्टर का नाम'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/zones/${z['id']}/sectors',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.post('/admin/zones/${z['id']}/sectors', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
@@ -551,8 +533,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     initial: {'name': s['name']},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.put('/admin/hierarchy/sector/${s['id']}',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.put('/admin/hierarchy/sector/${s['id']}', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
@@ -562,109 +543,110 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     fields: {'name': 'ग्राम पंचायत का नाम', 'address': 'पता'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/sectors/${s['id']}/gram-panchayats',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.post('/admin/sectors/${s['id']}/gram-panchayats', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
 
   void _addCenter(Map gp) => _openCenterDialog(null, gpId: gp['id']);
- 
-  void _editCenter(Map c) => _openCenterDialog(c);
- 
+  void _editCenter(Map c)  => _openCenterDialog(c);
+
   void _addKendra(Map c) => _openDialog(
-    title: 'मतदान केन्द्र (कक्ष) जोड़ें', color: _kPurple, icon: Icons.add,
+    title: 'मतदेय स्थल (कक्ष) जोड़ें', color: _kPurple, icon: Icons.add,
     fields: {'roomNumber': 'कक्ष संख्या'},
     onSave: (data) async {
       final t = await AuthService.getToken();
-      await ApiService.post('/admin/centers/${c['id']}/rooms',
-          Map<String, dynamic>.from(data), token: t);           // ← cast
+      await ApiService.post('/admin/centers/${c['id']}/rooms', Map<String, dynamic>.from(data), token: t);
       _load();
     },
   );
+
+  // ── Officers dialog ───────────────────────────────────────────────────────
+  void _manageOfficers(String title, Color color, String endpoint,
+      List currentOfficers, VoidCallback onDone) {
+    showDialog(
+      context: context,
+      builder: (ctx) => _OfficersDialog(
+        title: title, color: color,
+        endpoint: endpoint, officers: List<Map>.from(currentOfficers),
+        onSave: (officers) async {
+          onDone();
+        },
+      ),
+    );
+  }
 
   void _openCenterDialog(Map? center, {int? gpId}) {
     final nameCtrl    = TextEditingController(text: center?['name'] ?? '');
     final addressCtrl = TextEditingController(text: center?['address'] ?? '');
     final thanaCtrl   = TextEditingController(text: center?['thana'] ?? '');
-    final busCtrl     = TextEditingController(
-        text: center?['bus_no'] ?? center?['busNo'] ?? '');
-    String type       = center?['center_type'] ?? center?['centerType'] ?? 'C';
-    final fk          = GlobalKey<FormState>();
- 
+    final busCtrl     = TextEditingController(text: center?['bus_no'] ?? center?['busNo'] ?? '');
+    // Support A++ now
+    String type = center?['center_type'] ?? center?['centerType'] ?? 'C';
+    if (!_kCenterTypes.contains(type)) type = 'C';
+    final fk = GlobalKey<FormState>();
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, ss) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-          title: Text(center != null
-              ? 'मतदेय स्थल संपादित करें'
-              : 'मतदेय स्थल जोड़ें'),
+          title: Text(center != null ? 'मतदेय स्थल संपादित करें' : 'मतदेय स्थल जोड़ें'),
           content: SizedBox(
-            width: 360,
-            child: Form(
-              key: fk,
-              child: Column(mainAxisSize: MainAxisSize.min, children: [
+            width: 380,
+            child: Form(key: fk, child: SingleChildScrollView(child: Column(
+              mainAxisSize: MainAxisSize.min, children: [
                 _field(nameCtrl, 'नाम *', required: true),
                 const SizedBox(height: 8),
                 _field(addressCtrl, 'पता'),
                 const SizedBox(height: 8),
                 _field(thanaCtrl, 'थाना'),
                 const SizedBox(height: 8),
-                Row(
-                  children: ['A', 'B', 'C'].map((t) => Padding(
-                    padding: const EdgeInsets.only(right: 10),
-                    child: ChoiceChip(
-                      label: Text(t),
-                      selected: type == t,
-                      selectedColor: t == 'A'
-                          ? Colors.red[100]
-                          : t == 'B'
-                              ? Colors.orange[100]
-                              : Colors.blue[100],
-                      onSelected: (_) => ss(() => type = t),
+                // Sensitivity chips — now includes A++
+                Wrap(
+                  spacing: 6, runSpacing: 6,
+                  children: _kCenterTypes.map((t) => GestureDetector(
+                    onTap: () => ss(() => type = t),
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 150),
+                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      decoration: BoxDecoration(
+                        color: type == t ? _sensitivityColor(t) : Colors.grey[100],
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: _sensitivityColor(t)),
+                      ),
+                      child: Text(t, style: TextStyle(
+                          color: type == t ? Colors.white : _sensitivityColor(t),
+                          fontWeight: FontWeight.w800, fontSize: 12)),
                     ),
                   )).toList(),
                 ),
                 const SizedBox(height: 8),
                 _field(busCtrl, 'बस संख्या'),
-              ]),
-            ),
+              ],
+            ))),
           ),
           actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('रद्द')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('रद्द')),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: _kPurple),
               onPressed: () async {
                 if (!fk.currentState!.validate()) return;
                 Navigator.pop(ctx);
-                // Explicit Map<String,dynamic> — fixes the cast error
                 final data = <String, dynamic>{
-                  'name':        nameCtrl.text.trim(),
-                  'address':     addressCtrl.text.trim(),
-                  'thana':       thanaCtrl.text.trim(),
-                  'centerType':  type,
-                  'busNo':       busCtrl.text.trim(),
-                  'center_type': type,
+                  'name': nameCtrl.text.trim(), 'address': addressCtrl.text.trim(),
+                  'thana': thanaCtrl.text.trim(), 'centerType': type,
+                  'busNo': busCtrl.text.trim(), 'center_type': type,
                 };
                 final tok = await AuthService.getToken();
                 if (center != null) {
-                  await ApiService.put(
-                      '/admin/hierarchy/sthal/${center['id']}',
-                      data,
-                      token: tok);
+                  await ApiService.put('/admin/hierarchy/sthal/${center['id']}', data, token: tok);
                 } else {
-                  await ApiService.post(
-                      '/admin/gram-panchayats/$gpId/centers',
-                      data,
-                      token: tok);
+                  await ApiService.post('/admin/gram-panchayats/$gpId/centers', data, token: tok);
                 }
                 _load();
               },
-              child: const Text('सहेजें',
-                  style: TextStyle(color: Colors.white)),
+              child: const Text('सहेजें', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -672,113 +654,74 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     );
   }
 
-  // Staff assignment on election center
-  void _openStaffDialog(Map center) async {
-    final tok   = await AuthService.getToken();
-    final sRes  = await ApiService.get('/admin/staff', token: tok);
-    final all   = (sRes['data'] ?? []) as List;
-    final unassigned = all.where((s) => s['isAssigned'] != true).toList();
-    final assigned = (center['duty_officers'] as List? ?? []);
-
-    if (!mounted) return;
+  // ── Staff assignment dialog — PAGINATED ───────────────────────────────────
+  void _openStaffDialog(Map center) {
     showDialog(
       context: context,
-      builder: (ctx) => _StaffAssignDialog(
+      builder: (ctx) => _PaginatedStaffDialog(
         center: center,
-        unassigned: unassigned,
-        assigned: assigned,
-        onAssign: (staffId, busNo) async {
-          final t = await AuthService.getToken();
-          await ApiService.post('/admin/duties', {
-            'staffId': staffId, 'centerId': center['id'], 'busNo': busNo,
-          }, token: t);
-          _load();
-        },
-        onRemove: (dutyId) async {
-          final t = await AuthService.getToken();
-          await ApiService.delete('/admin/duties/$dutyId', token: t);
-          _load();
-        },
+        onChanged: _load,
       ),
     );
   }
 
-  // Generic text dialog
+  // ── Generic text dialog ───────────────────────────────────────────────────
   void _openDialog({
-    required String title,
-    required Color color,
-    required IconData icon,
+    required String title, required Color color, required IconData icon,
     required Map<String, String> fields,
     Map<String, dynamic>? initial,
-    required Future<void> Function(Map<String, dynamic>) onSave, // ← typed
+    required Future<void> Function(Map<String, dynamic>) onSave,
   }) {
     final ctrls = fields.map((k, v) =>
         MapEntry(k, TextEditingController(text: '${initial?[k] ?? ''}')));
     final fk = GlobalKey<FormState>();
     bool saving = false;
- 
+
     showDialog(
       context: context,
       builder: (ctx) => StatefulBuilder(
         builder: (ctx, ss) => AlertDialog(
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
           title: Row(children: [
-            Icon(icon, color: color, size: 20),
-            const SizedBox(width: 8),
+            Icon(icon, color: color, size: 20), const SizedBox(width: 8),
             Expanded(child: Text(title,
-                style: const TextStyle(
-                    fontSize: 14, fontWeight: FontWeight.w800))),
+                style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800))),
           ]),
           content: SizedBox(
             width: 340,
-            child: Form(
-              key: fk,
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: fields.entries.map((e) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: _field(ctrls[e.key]!, e.value,
-                      required: e.key == 'name'),
-                )).toList(),
-              ),
-            ),
+            child: Form(key: fk, child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: fields.entries.map((e) => Padding(
+                padding: const EdgeInsets.only(bottom: 10),
+                child: _field(ctrls[e.key]!, e.value, required: e.key == 'name'),
+              )).toList(),
+            )),
           ),
           actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(ctx),
-                child: const Text('रद्द')),
+            TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('रद्द')),
             ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: color,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8))),
-              onPressed: saving
-                  ? null
-                  : () async {
-                      if (!fk.currentState!.validate()) return;
-                      ss(() => saving = true);
-                      try {
-                        // Build Map<String,dynamic> explicitly — no cast needed
-                        final data = <String, dynamic>{
-                          for (final e in ctrls.entries)
-                            e.key: e.value.text.trim(),
-                        };
-                        await onSave(data);
-                        if (ctx.mounted) Navigator.pop(ctx);
-                        _snack('सफलतापूर्वक सहेजा गया', _kGreen);
-                      } catch (e) {
-                        _snack('त्रुटि: $e', _kRed);
-                      } finally {
-                        if (ctx.mounted) ss(() => saving = false);
-                      }
-                    },
+              style: ElevatedButton.styleFrom(backgroundColor: color,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+              onPressed: saving ? null : () async {
+                if (!fk.currentState!.validate()) return;
+                ss(() => saving = true);
+                try {
+                  final data = <String, dynamic>{
+                    for (final e in ctrls.entries) e.key: e.value.text.trim(),
+                  };
+                  await onSave(data);
+                  if (ctx.mounted) Navigator.pop(ctx);
+                  _snack('सफलतापूर्वक सहेजा गया', _kGreen);
+                } catch (e) {
+                  _snack('त्रुटि: $e', _kRed);
+                } finally {
+                  if (ctx.mounted) ss(() => saving = false);
+                }
+              },
               child: saving
-                  ? const SizedBox(
-                      width: 16, height: 16,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: Colors.white))
-                  : const Text('सहेजें',
-                      style: TextStyle(color: Colors.white)),
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Text('सहेजें', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -841,12 +784,9 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           : _error != null
               ? _ErrorView(error: _error!, onRetry: _load)
               : Column(children: [
-                  // Filter bar
                   _buildFilterBar(),
                   Expanded(child: TabBarView(controller: _tab, children: [
-                    _buildTab1(),
-                    _buildTab2(),
-                    _buildTab3(),
+                    _buildTab1(), _buildTab2(), _buildTab3(),
                   ])),
                 ]),
     );
@@ -884,9 +824,9 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // TAB 1 — Super Zone view (Image 1)
-  // ══════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // TAB 1
+  // ══════════════════════════════════════════════════════════════════════════
   Widget _buildTab1() {
     if (_filteredSZ.isEmpty) return const _Empty(text: 'कोई सुपर जोन नहीं मिला');
     return ListView.builder(
@@ -897,13 +837,19 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
         onEdit:    () => _editSZ(_filteredSZ[i]),
         onDelete:  () => _delete('/admin/hierarchy/super-zone', _filteredSZ[i]['id'], '${_filteredSZ[i]['name']}'),
         onAddZone: () => _addZone(_filteredSZ[i]),
+        onManageOfficers: () => _openOfficerDialog(
+          'सुपर जोन अधिकारी',
+          _kPrimary,
+          '/admin/super-zones/${_filteredSZ[i]['id']}/officers',
+          (_filteredSZ[i]['officers'] as List? ?? []),
+        ),
       ),
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // TAB 2 — Zone/Sector view (Image 2)
-  // ══════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // TAB 2
+  // ══════════════════════════════════════════════════════════════════════════
   Widget _buildTab2() {
     final items = <Map>[];
     for (final sz in _filteredSZ) {
@@ -918,19 +864,29 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       itemCount: items.length,
       itemBuilder: (_, i) => _Tab2Card(
         sz: items[i]['sz'], z: items[i]['z'],
-        onEditZone:    () => _editZone(items[i]['z']),
-        onDeleteZone:  () => _delete('/admin/zones', items[i]['z']['id'], '${items[i]['z']['name']}'),
-        onAddSector:   () => _addSector(items[i]['z']),
-        onEditSector:  _editSector,
+        onEditZone:   () => _editZone(items[i]['z']),
+        onDeleteZone: () => _delete('/admin/zones', items[i]['z']['id'], '${items[i]['z']['name']}'),
+        onAddSector:  () => _addSector(items[i]['z']),
+        onManageZoneOfficers: () => _openOfficerDialog(
+          'जोनल अधिकारी', _kGreen,
+          '/admin/zones/${items[i]['z']['id']}/officers',
+          (items[i]['z']['officers'] as List? ?? []),
+        ),
+        onEditSector:   _editSector,
         onDeleteSector: (s) => _delete('/admin/hierarchy/sector', s['id'], '${s['name']}'),
-        onAddGP:       _addGP,
+        onAddGP:        _addGP,
+        onManageSectorOfficers: (s) => _openOfficerDialog(
+          'सैक्टर अधिकारी', _kGreen,
+          '/admin/sectors/${s['id']}/officers',
+          (s['officers'] as List? ?? []),
+        ),
       ),
     );
   }
 
-  // ══════════════════════════════════════════════════════════════════
-  // TAB 3 — Booth Duty view (Image 3)
-  // ══════════════════════════════════════════════════════════════════
+  // ══════════════════════════════════════════════════════════════════════════
+  // TAB 3
+  // ══════════════════════════════════════════════════════════════════════════
   Widget _buildTab3() {
     final items = <Map>[];
     for (final sz in _filteredSZ) {
@@ -952,25 +908,581 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       itemBuilder: (_, i) => _Tab3Card(
         sz: items[i]['sz'], z: items[i]['z'],
         s: items[i]['s'],   gp: items[i]['gp'],
-        onAddCenter:  () => _addCenter(items[i]['gp']),
-        onEditCenter: _editCenter,
+        onAddCenter:    () => _addCenter(items[i]['gp']),
+        onEditCenter:   _editCenter,
         onDeleteCenter: (c) => _delete('/admin/hierarchy/sthal', c['id'], '${c['name']}'),
-        onAddKendra:  _addKendra,
+        onAddKendra:    _addKendra,
         onDeleteKendra: (k) => _delete('/admin/rooms', k['id'], '${k['room_number']}'),
-        onManageStaff: _openStaffDialog,
+        onManageStaff:  _openStaffDialog,
+      ),
+    );
+  }
+
+  // ── Officer management dialog ─────────────────────────────────────────────
+  void _openOfficerDialog(String title, Color color, String endpoint, List officers) {
+    showDialog(
+      context: context,
+      builder: (ctx) => _OfficersDialog(
+        title: title, color: color, endpoint: endpoint,
+        officers: List<Map>.from(officers),
+        onSave: (_) => _load(),
       ),
     );
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB 1 CARD — matches Image 1 table layout
+// PAGINATED STAFF DIALOG — handles 1000s of centers
+// ══════════════════════════════════════════════════════════════════════════════
+class _PaginatedStaffDialog extends StatefulWidget {
+  final Map center;
+  final VoidCallback onChanged;
+  const _PaginatedStaffDialog({required this.center, required this.onChanged});
+  @override
+  State<_PaginatedStaffDialog> createState() => _PaginatedStaffDialogState();
+}
+
+class _PaginatedStaffDialogState extends State<_PaginatedStaffDialog> {
+  final List<Map> _staff    = [];
+  int  _page                = 1;
+  int  _total               = 0;
+  bool _loading             = false;
+  bool _hasMore             = true;
+  String _q                 = '';
+  Timer? _debounce;
+  final _searchCtrl         = TextEditingController();
+  final _scroll             = ScrollController();
+  final _busCtrl            = TextEditingController();
+  int? _selectedId;
+  bool _saving              = false;
+
+  List _assigned = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _assigned = List.from(widget.center['duty_officers'] as List? ?? []);
+    _busCtrl.text = '${widget.center['bus_no'] ?? ''}';
+    _scroll.addListener(_onScroll);
+    _searchCtrl.addListener(_onSearch);
+    _loadStaff(reset: true);
+  }
+
+  @override
+  void dispose() {
+    _scroll.removeListener(_onScroll);
+    _searchCtrl.removeListener(_onSearch);
+    _scroll.dispose();
+    _searchCtrl.dispose();
+    _busCtrl.dispose();
+    _debounce?.cancel();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 150
+        && !_loading && _hasMore) {
+      _loadStaff();
+    }
+  }
+
+  void _onSearch() {
+    _debounce?.cancel();
+    _debounce = Timer(const Duration(milliseconds: 300), () {
+      final q = _searchCtrl.text.trim();
+      if (q != _q) { _q = q; _loadStaff(reset: true); }
+    });
+  }
+
+  Future<void> _loadStaff({bool reset = false}) async {
+    if (_loading) return;
+    if (!reset && !_hasMore) return;
+    if (reset) setState(() { _staff.clear(); _page = 1; _hasMore = true; });
+    setState(() => _loading = true);
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get(
+        '/admin/staff?assigned=no&page=$_page&limit=30&q=${Uri.encodeComponent(_q)}',
+        token: token,
+      );
+      final wrapper    = (res['data'] as Map<String, dynamic>?) ?? {};
+      final items      = List<Map>.from((wrapper['data'] as List?) ?? []);
+      final total      = (wrapper['total']      as num?)?.toInt() ?? 0;
+      final totalPages = (wrapper['totalPages'] as num?)?.toInt() ?? 1;
+      if (!mounted) return;
+      setState(() {
+        _staff.addAll(items);
+        _total   = total;
+        _hasMore = _page < totalPages;
+        _page++;
+        _loading = false;
+      });
+    } catch (e) {
+      if (mounted) setState(() => _loading = false);
+    }
+  }
+
+  Future<void> _assign() async {
+    if (_selectedId == null || _saving) return;
+    setState(() => _saving = true);
+    try {
+      final token = await AuthService.getToken();
+      await ApiService.post('/admin/duties', {
+        'staffId': _selectedId, 'centerId': widget.center['id'],
+        'busNo': _busCtrl.text.trim(),
+      }, token: token);
+      widget.onChanged();
+      if (mounted) Navigator.pop(context);
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('त्रुटि: $e'), backgroundColor: _kRed,
+            behavior: SnackBarBehavior.floating));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  Future<void> _removeDuty(Map d) async {
+    try {
+      final token = await AuthService.getToken();
+      await ApiService.delete('/admin/duties/${d['id']}', token: token);
+      widget.onChanged();
+      setState(() => _assigned.removeWhere((a) => a['id'] == d['id']));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('त्रुटि: $e'), backgroundColor: _kRed));
+      }
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxWidth: 500,
+            maxHeight: MediaQuery.of(context).size.height * 0.88),
+        child: Column(children: [
+          // Header
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+            decoration: const BoxDecoration(color: _kPurple,
+                borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
+            child: Row(children: [
+              const Icon(Icons.people_alt_outlined, color: Colors.white, size: 20),
+              const SizedBox(width: 10),
+              Expanded(child: Text('स्टाफ – ${widget.center['name']}',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
+                  overflow: TextOverflow.ellipsis)),
+              IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                  onPressed: () => Navigator.pop(context)),
+            ]),
+          ),
+
+          Expanded(child: SingleChildScrollView(
+            padding: const EdgeInsets.all(14),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+
+              // Assigned staff
+              if (_assigned.isNotEmpty) ...[
+                const Text('असाइन किए गए स्टाफ:',
+                    style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: _kSubtle)),
+                const SizedBox(height: 6),
+                ..._assigned.map((d) => Container(
+                  margin: const EdgeInsets.only(bottom: 6),
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  decoration: BoxDecoration(color: const Color(0xFFF3E5F5),
+                      borderRadius: BorderRadius.circular(8),
+                      border: Border.all(color: _kPurple.withOpacity(0.3))),
+                  child: Row(children: [
+                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                      Text('${d['name']}', style: const TextStyle(
+                          fontWeight: FontWeight.w700, fontSize: 13, color: _kDark)),
+                      Text('PNO: ${d['pno']}  •  ${d['user_rank'] ?? ''}  •  ${d['mobile'] ?? ''}',
+                          style: const TextStyle(color: _kSubtle, fontSize: 11)),
+                    ])),
+                    IconButton(
+                      icon: const Icon(Icons.remove_circle_outline, color: _kRed, size: 20),
+                      onPressed: () => _removeDuty(d),
+                    ),
+                  ]),
+                )),
+                const Divider(height: 20),
+              ],
+
+              // Search
+              const Text('नया स्टाफ जोड़ें:',
+                  style: TextStyle(fontWeight: FontWeight.w700, fontSize: 12, color: _kSubtle)),
+              const SizedBox(height: 8),
+              TextField(
+                controller: _searchCtrl,
+                decoration: InputDecoration(
+                  hintText: 'नाम, PNO, थाना से खोजें... ($_total उपलब्ध)',
+                  prefixIcon: const Icon(Icons.search, size: 18, color: _kSubtle),
+                  isDense: true, fillColor: const Color(0xFFF8F9FC), filled: true,
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: _kBorder)),
+                  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
+                      borderSide: const BorderSide(color: _kBorder)),
+                  suffixIcon: _q.isNotEmpty
+                      ? IconButton(icon: const Icon(Icons.clear, size: 16, color: _kSubtle),
+                          onPressed: () { _searchCtrl.clear(); })
+                      : null,
+                  contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
+                ),
+              ),
+              const SizedBox(height: 8),
+
+              // Staff list — fixed height with scroll
+              SizedBox(
+                height: 200,
+                child: ClipRRect(
+                  borderRadius: BorderRadius.circular(8),
+                  child: Container(
+                    decoration: BoxDecoration(
+                        border: Border.all(color: _kBorder),
+                        borderRadius: BorderRadius.circular(8)),
+                    child: _loading && _staff.isEmpty
+                        ? const Center(child: CircularProgressIndicator(
+                            color: _kPurple, strokeWidth: 2))
+                        : _staff.isEmpty
+                            ? Center(child: Text(
+                                _q.isNotEmpty ? '"$_q" नहीं मिला' : 'सभी स्टाफ असाइन किए जा चुके हैं',
+                                style: const TextStyle(color: _kSubtle, fontSize: 12)))
+                            : ListView.separated(
+                                controller: _scroll,
+                                itemCount: _staff.length + (_hasMore ? 1 : 0),
+                                separatorBuilder: (_, __) => const Divider(height: 1, color: _kBorder),
+                                itemBuilder: (_, i) {
+                                  if (i >= _staff.length) {
+                                    return const Padding(padding: EdgeInsets.all(8),
+                                        child: Center(child: SizedBox(width: 16, height: 16,
+                                            child: CircularProgressIndicator(
+                                                strokeWidth: 2, color: _kPurple))));
+                                  }
+                                  final s   = _staff[i];
+                                  final sel = _selectedId == s['id'];
+                                  return InkWell(
+                                    onTap: () => setState(() =>
+                                        _selectedId = sel ? null : s['id'] as int),
+                                    child: Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 12, vertical: 9),
+                                      color: sel ? _kPurple.withOpacity(0.07) : Colors.transparent,
+                                      child: Row(children: [
+                                        AnimatedContainer(
+                                          duration: const Duration(milliseconds: 150),
+                                          width: 24, height: 24,
+                                          decoration: BoxDecoration(
+                                              color: sel ? _kPurple : const Color(0xFFF5EAD0),
+                                              shape: BoxShape.circle,
+                                              border: Border.all(color: sel ? _kPurple : _kBorder)),
+                                          child: sel
+                                              ? const Icon(Icons.check, color: Colors.white, size: 13)
+                                              : null),
+                                        const SizedBox(width: 10),
+                                        Expanded(child: Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start, children: [
+                                          Text('${s['name']}', style: TextStyle(
+                                              color: sel ? _kPurple : _kDark,
+                                              fontWeight: FontWeight.w600, fontSize: 13)),
+                                          Text('PNO: ${s['pno']}  •  ${s['thana'] ?? ''}  •  ${s['rank'] ?? ''}',
+                                              style: const TextStyle(color: _kSubtle, fontSize: 10),
+                                              overflow: TextOverflow.ellipsis),
+                                        ])),
+                                      ]),
+                                    ),
+                                  );
+                                },
+                              ),
+                  ),
+                ),
+              ),
+              if (_hasMore && !_loading)
+                const Padding(padding: EdgeInsets.only(top: 4),
+                    child: Text('↓ स्क्रॉल करें — और स्टाफ लोड होंगे',
+                        style: TextStyle(color: _kSubtle, fontSize: 10))),
+
+              const SizedBox(height: 10),
+              TextFormField(
+                controller: _busCtrl,
+                decoration: InputDecoration(
+                  labelText: 'बस संख्या', isDense: true,
+                  prefixIcon: const Icon(Icons.directions_bus_outlined, size: 18),
+                  border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                ),
+              ),
+            ]),
+          )),
+
+          // Footer
+          Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 14), child:
+            Row(children: [
+              Expanded(child: OutlinedButton(
+                onPressed: () => Navigator.pop(context), child: const Text('बंद करें'))),
+              if (_selectedId != null) ...[
+                const SizedBox(width: 10),
+                Expanded(child: ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: _kPurple),
+                  onPressed: _saving ? null : _assign,
+                  child: _saving
+                      ? const SizedBox(width: 16, height: 16,
+                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      : const Text('असाइन करें', style: TextStyle(color: Colors.white)),
+                )),
+              ],
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// OFFICERS MANAGEMENT DIALOG
+// ══════════════════════════════════════════════════════════════════════════════
+class _OfficersDialog extends StatefulWidget {
+  final String title, endpoint;
+  final Color color;
+  final List<Map> officers;
+  final void Function(List<Map>) onSave;
+  const _OfficersDialog({required this.title, required this.color,
+      required this.endpoint, required this.officers, required this.onSave});
+  @override
+  State<_OfficersDialog> createState() => _OfficersDialogState();
+}
+
+class _OfficersDialogState extends State<_OfficersDialog> {
+  late List<Map<String, dynamic>> _officers;
+  bool _saving = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _officers = widget.officers.map((o) => Map<String, dynamic>.from(o)).toList();
+  }
+
+  void _add() => setState(() => _officers.add({
+    'name': '', 'pno': '', 'mobile': '', 'user_rank': '',
+  }));
+
+  Future<void> _save() async {
+    setState(() => _saving = true);
+    try {
+      final token = await AuthService.getToken();
+
+      // Build payload
+      final payload = _officers
+          .where((o) => (o['name'] ?? '').toString().isNotEmpty)
+          .map((o) => {
+                'name': o['name'] ?? '',
+                'pno': o['pno'] ?? '',
+                'mobile': o['mobile'] ?? '',
+                'rank': o['user_rank'] ?? '',
+              })
+          .toList();
+
+      // 🔥 Convert OLD endpoint → NEW replace endpoint
+      // Example:
+      // /admin/zones/5/officers
+      // → /admin/hierarchy/zone/5/officers/replace
+
+      final parts = widget.endpoint.split('/');
+
+      String type = '';
+      String id = '';
+
+      if (widget.endpoint.contains('super-zones')) {
+        type = 'super-zone';
+        id = parts[3];
+      } else if (widget.endpoint.contains('zones')) {
+        type = 'zone';
+        id = parts[3];
+      } else if (widget.endpoint.contains('sectors')) {
+        type = 'sector';
+        id = parts[3];
+      }
+
+      final newEndpoint =
+          '/admin/hierarchy/$type/$id/officers/replace';
+
+      // 🚀 SINGLE API CALL
+      await ApiService.post(newEndpoint, {
+        'officers': payload,
+      }, token: token);
+
+      widget.onSave(_officers);
+
+      if (mounted) {
+        Navigator.pop(context);
+        ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+          content: Text('अधिकारी अपडेट किए गए'),
+          backgroundColor: _kGreen,
+        ));
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('त्रुटि: $e'),
+          backgroundColor: _kRed,
+        ));
+      }
+    } finally {
+      if (mounted) setState(() => _saving = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      child: ConstrainedBox(
+        constraints: BoxConstraints(
+            maxWidth: 480,
+            maxHeight: MediaQuery.of(context).size.height * 0.85),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
+            decoration: BoxDecoration(color: widget.color,
+                borderRadius: const BorderRadius.vertical(top: Radius.circular(14))),
+            child: Row(children: [
+              const Icon(Icons.people_outlined, color: Colors.white, size: 18),
+              const SizedBox(width: 8),
+              Expanded(child: Text(widget.title,
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 14))),
+              IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 18),
+                  onPressed: () => Navigator.pop(context)),
+            ]),
+          ),
+          Flexible(child: SingleChildScrollView(
+            padding: const EdgeInsets.all(14),
+            child: Column(children: [
+              ..._officers.asMap().entries.map((e) {
+                final i = e.key;
+                final o = e.value;
+                return Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: _kBg, borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: _kBorder.withOpacity(0.5)),
+                  ),
+                  child: Column(children: [
+                    Row(children: [
+                      Container(
+                        width: 24, height: 24,
+                        decoration: BoxDecoration(color: widget.color.withOpacity(0.15),
+                            shape: BoxShape.circle),
+                        child: Center(child: Text('${i + 1}',
+                            style: TextStyle(color: widget.color,
+                                fontSize: 10, fontWeight: FontWeight.w900))),
+                      ),
+                      const Spacer(),
+                      GestureDetector(
+                        onTap: () => setState(() => _officers.removeAt(i)),
+                        child: Container(
+                          padding: const EdgeInsets.all(4),
+                          decoration: BoxDecoration(color: _kRed.withOpacity(0.08),
+                              borderRadius: BorderRadius.circular(6)),
+                          child: const Icon(Icons.delete_outline, color: _kRed, size: 16),
+                        ),
+                      ),
+                    ]),
+                    const SizedBox(height: 8),
+                    _officerField(o, 'name', 'नाम', Icons.person_outline),
+                    const SizedBox(height: 6),
+                    Row(children: [
+                      Expanded(child: _officerField(o, 'pno', 'PNO', Icons.badge_outlined)),
+                      const SizedBox(width: 8),
+                      Expanded(child: _officerField(o, 'mobile', 'मोबाइल', Icons.phone_outlined)),
+                    ]),
+                    const SizedBox(height: 6),
+                    // Rank dropdown
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 10),
+                      decoration: BoxDecoration(
+                          color: Colors.white, borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _kBorder)),
+                      child: DropdownButtonHideUnderline(
+                        child: DropdownButton<String>(
+                          value: _kRanks.any((r) => r['en'] == o['user_rank'])
+                              ? o['user_rank'] as String? : null,
+                          isExpanded: true, isDense: true,
+                          hint: const Text('पद चुनें', style: TextStyle(fontSize: 12, color: _kSubtle)),
+                          style: const TextStyle(color: _kDark, fontSize: 12),
+                          items: _kRanks.map((r) => DropdownMenuItem<String>(
+                            value: r['en'],
+                            child: Text('${r['hi']} (${r['en']})',
+                                style: const TextStyle(fontSize: 12)),
+                          )).toList(),
+                          onChanged: (v) => setState(() => o['user_rank'] = v ?? ''),
+                        ),
+                      ),
+                    ),
+                  ]),
+                );
+              }),
+              OutlinedButton.icon(
+                onPressed: _add,
+                icon: Icon(Icons.add, color: widget.color),
+                label: Text('अधिकारी जोड़ें', style: TextStyle(color: widget.color)),
+                style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: widget.color),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+              ),
+            ]),
+          )),
+          Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 14),
+            child: Row(children: [
+              Expanded(child: OutlinedButton(
+                  onPressed: () => Navigator.pop(context), child: const Text('रद्द'))),
+              const SizedBox(width: 10),
+              Expanded(child: ElevatedButton(
+                style: ElevatedButton.styleFrom(backgroundColor: widget.color),
+                onPressed: _saving ? null : _save,
+                child: _saving
+                    ? const SizedBox(width: 16, height: 16,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                    : const Text('सहेजें', style: TextStyle(color: Colors.white)),
+              )),
+            ]),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  Widget _officerField(Map<String, dynamic> o, String key, String label, IconData icon) {
+    return TextFormField(
+      initialValue: '${o[key] ?? ''}',
+      style: const TextStyle(fontSize: 12, color: _kDark),
+      decoration: InputDecoration(
+        labelText: label, isDense: true,
+        prefixIcon: Icon(icon, size: 16, color: _kSubtle),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+        labelStyle: const TextStyle(fontSize: 11, color: _kSubtle),
+      ),
+      onChanged: (v) => o[key] = v,
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// TAB 1 CARD
 // ══════════════════════════════════════════════════════════════════════════════
 class _Tab1Card extends StatelessWidget {
   final Map sz;
-  final VoidCallback onEdit, onDelete, onAddZone;
+  final VoidCallback onEdit, onDelete, onAddZone, onManageOfficers;
   const _Tab1Card({required this.sz, required this.onEdit,
-      required this.onDelete, required this.onAddZone});
+      required this.onDelete, required this.onAddZone,
+      required this.onManageOfficers});
 
   @override
   Widget build(BuildContext context) {
@@ -982,21 +1494,20 @@ class _Tab1Card extends StatelessWidget {
       for (final s in secs) gpTotal += ((s['panchayats'] as List?)?.length ?? 0);
     }
 
-    // Build flat rows for table
     final rows = <_R1>[];
     int globalSec = 0;
     for (int zi = 0; zi < zones.length; zi++) {
-      final z = zones[zi] as Map;
+      final z       = zones[zi] as Map;
       final sectors = z['sectors'] as List? ?? [];
-      final zOff = z['officers'] as List? ?? [];
+      final zOff    = z['officers'] as List? ?? [];
       for (int si = 0; si < (sectors.isEmpty ? 1 : sectors.length); si++) {
         if (sectors.isEmpty) {
           rows.add(_R1(zi: zi, z: z, s: null, sGlobal: null,
               zOff: zOff, gpNames: '—', thanas: '—'));
         } else {
-          final s    = sectors[si] as Map;
+          final s   = sectors[si] as Map;
           globalSec++;
-          final gps  = s['panchayats'] as List? ?? [];
+          final gps = s['panchayats'] as List? ?? [];
           rows.add(_R1(
             zi: zi, z: z, s: s, sGlobal: globalSec, zOff: zOff,
             gpNames: gps.map((g) => '${g['name']}').join('، '),
@@ -1016,7 +1527,6 @@ class _Tab1Card extends StatelessWidget {
             blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // ── Header (matches Image 1 title row)
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
           decoration: const BoxDecoration(
@@ -1032,7 +1542,10 @@ class _Tab1Card extends StatelessWidget {
                 Text('जिला: ${sz['district'] ?? '—'}  |  कुल ग्राम पंचायत: $gpTotal',
                     style: const TextStyle(color: Colors.white60, fontSize: 11)),
               ])),
-              _IAB(icon: Icons.add_circle_outline, color: _kAccent, onTap: onAddZone, tooltip: 'जोन जोड़ें'),
+              _IAB(icon: Icons.person_add_outlined, color: Colors.teal[200]!,
+                  onTap: onManageOfficers, tooltip: 'अधिकारी'),
+              _IAB(icon: Icons.add_circle_outline, color: _kAccent,
+                  onTap: onAddZone, tooltip: 'जोन जोड़ें'),
               _IAB(icon: Icons.edit_outlined, color: _kAccent, onTap: onEdit),
               _IAB(icon: Icons.delete_outline, color: Colors.red[300]!, onTap: onDelete),
             ]),
@@ -1047,7 +1560,6 @@ class _Tab1Card extends StatelessWidget {
           ]),
         ),
 
-        // ── Kshetra officers
         if ((sz['officers'] as List?)?.isNotEmpty == true)
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
@@ -1071,16 +1583,11 @@ class _Tab1Card extends StatelessWidget {
             ]),
           ),
 
-        // ── Table matching Image 1
         if (rows.isEmpty)
-          const Padding(padding: EdgeInsets.all(16),
-              child: _Empty(text: 'कोई जोन/सैक्टर नहीं'))
+          const Padding(padding: EdgeInsets.all(16), child: _Empty(text: 'कोई जोन/सैक्टर नहीं'))
         else
-          Padding(
-            padding: const EdgeInsets.all(8),
-            child: _Tab1Table(rows: rows,
-  sz: sz,)
-          ),
+          Padding(padding: const EdgeInsets.all(8),
+              child: _Tab1Table(rows: rows, sz: sz)),
       ]),
     );
   }
@@ -1097,7 +1604,6 @@ class _R1 {
 class _Tab1Table extends StatelessWidget {
   final List<_R1> rows; final Map sz;
   const _Tab1Table({required this.rows, required this.sz});
-
   static const _ws = <int, double>{
     0: 54, 1: 40, 2: 155, 3: 110, 4: 44, 5: 165, 6: 115, 7: 230, 8: 88,
   };
@@ -1109,12 +1615,10 @@ class _Tab1Table extends StatelessWidget {
       scrollDirection: Axis.horizontal,
       child: ConstrainedBox(
         constraints: BoxConstraints(minWidth: totalW),
-        child: Column(
-          children: [
-            _header(),
-            ...rows.asMap().entries.map((e) => _row(e.key, rows, sz)),
-          ],
-        ),
+        child: Column(children: [
+          _header(),
+          ...rows.asMap().entries.map((e) => _row(e.key, rows, sz)),
+        ]),
       ),
     );
   }
@@ -1142,7 +1646,6 @@ class _Tab1Table extends StatelessWidget {
     final r = rows[i];
     final isFirstInZone = i == 0 || rows[i-1].zi != r.zi;
     final bg = r.zi.isOdd ? Colors.white : const Color(0xFFFFFDF7);
-
     final zOffText = r.zOff.isNotEmpty
         ? r.zOff.map((o) => '${o['name'] ?? ''}\n${o['user_rank'] ?? ''}').join('\n')
         : '—';
@@ -1159,53 +1662,44 @@ class _Tab1Table extends StatelessWidget {
             bottom: BorderSide(color: _kBorder, width: 0.7),
           )),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Col 0: super zone (rotated, only first row)
-        Container(width: _ws[0], height: 48,
-          decoration: _cellDec(right: true, bottom: false),
+        Container(width: _ws[0], height: 48, decoration: _cellDec(right: true, bottom: false),
           child: Center(child: i == 0
               ? RotatedBox(quarterTurns: 3,
                   child: Text('सुपर जोन–${sz['name']}',
                       style: const TextStyle(color: _kPrimary, fontSize: 9, fontWeight: FontWeight.w700)))
               : const SizedBox())),
-        // Col 1: zone number
         Container(width: _ws[1], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
           child: isFirstInZone
               ? Center(child: Text('${r.zi + 1}',
                   style: const TextStyle(color: _kPrimary, fontWeight: FontWeight.w900, fontSize: 14)))
               : const SizedBox()),
-        // Col 2: zonal officer
         Container(width: _ws[2], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
-          child: isFirstInZone ? Text(zOffText, style: const TextStyle(fontSize: 11, color: _kDark)) : const SizedBox()),
-        // Col 3: zone HQ
+          child: isFirstInZone ? Text(zOffText, style: const TextStyle(fontSize: 11, color: _kDark))
+              : const SizedBox()),
         Container(width: _ws[3], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
           child: isFirstInZone
               ? Text('${r.z['hq_address'] ?? r.z['hqAddress'] ?? '—'}',
                   style: const TextStyle(fontSize: 11, color: _kDark))
               : const SizedBox()),
-        // Col 4: sector number
         Container(width: _ws[4], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
           child: r.sGlobal != null
               ? Center(child: Text('${r.sGlobal}',
                   style: const TextStyle(color: _kGreen, fontWeight: FontWeight.w800, fontSize: 12)))
               : const SizedBox()),
-        // Col 5: sector officer
         Container(width: _ws[5], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
           child: Text(sText, style: const TextStyle(fontSize: 11, color: _kDark))),
-        // Col 6: sector HQ (zone HQ fallback)
         Container(width: _ws[6], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
           child: Text('${r.s?['hq'] ?? r.z['hq_address'] ?? '—'}',
               style: const TextStyle(fontSize: 11, color: _kDark))),
-        // Col 7: GP names
         Container(width: _ws[7], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: true, bottom: false),
           child: Text(r.gpNames, style: const TextStyle(fontSize: 11, color: _kDark))),
-        // Col 8: thana
         Container(width: _ws[8], padding: const EdgeInsets.all(6),
           decoration: _cellDec(right: false, bottom: false),
           child: Text(r.thanas, style: const TextStyle(fontSize: 11, color: _kDark))),
@@ -1215,17 +1709,20 @@ class _Tab1Table extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB 2 CARD — matches Image 2
+// TAB 2 CARD — FIX: use IntrinsicHeight + proper widths to prevent overflow
 // ══════════════════════════════════════════════════════════════════════════════
 class _Tab2Card extends StatelessWidget {
   final Map sz, z;
-  final VoidCallback onEditZone, onDeleteZone, onAddSector;
-  final void Function(Map) onEditSector, onAddGP;
+  final VoidCallback onEditZone, onDeleteZone, onAddSector, onManageZoneOfficers;
+  final void Function(Map) onEditSector, onAddGP, onManageSectorOfficers;
   final Future<void> Function(Map) onDeleteSector;
-  const _Tab2Card({required this.sz, required this.z,
-      required this.onEditZone, required this.onDeleteZone,
-      required this.onAddSector, required this.onEditSector,
-      required this.onDeleteSector, required this.onAddGP});
+  const _Tab2Card({
+    required this.sz, required this.z,
+    required this.onEditZone, required this.onDeleteZone,
+    required this.onAddSector, required this.onManageZoneOfficers,
+    required this.onEditSector, required this.onDeleteSector,
+    required this.onAddGP, required this.onManageSectorOfficers,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -1241,7 +1738,6 @@ class _Tab2Card extends StatelessWidget {
             blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
           decoration: const BoxDecoration(
@@ -1257,7 +1753,10 @@ class _Tab2Card extends StatelessWidget {
                 Text('सुपर जोन: ${sz['name']}  |  ब्लॉक: ${sz['block'] ?? '—'}',
                     style: const TextStyle(color: Colors.white60, fontSize: 11)),
               ])),
-              _IAB(icon: Icons.add_circle_outline, color: _kAccent, onTap: onAddSector, tooltip: 'सैक्टर जोड़ें'),
+              _IAB(icon: Icons.person_add_outlined, color: Colors.teal[200]!,
+                  onTap: onManageZoneOfficers, tooltip: 'अधिकारी'),
+              _IAB(icon: Icons.add_circle_outline, color: _kAccent,
+                  onTap: onAddSector, tooltip: 'सैक्टर जोड़ें'),
               _IAB(icon: Icons.edit_outlined, color: _kAccent, onTap: onEditZone),
               _IAB(icon: Icons.delete_outline, color: Colors.red[300]!, onTap: onDeleteZone),
             ]),
@@ -1265,8 +1764,7 @@ class _Tab2Card extends StatelessWidget {
               const SizedBox(height: 6),
               const Divider(color: Colors.white24, height: 1),
               const SizedBox(height: 4),
-              const Text('जोनल मजिस्ट्रेट / जोनल पुलिस अधिकारी:',
-                  style: TextStyle(color: Colors.white70, fontSize: 10)),
+              const Text('जोनल अधिकारी:', style: TextStyle(color: Colors.white70, fontSize: 10)),
               ...zOff.map((o) => Text(
                 '• ${o['name'] ?? '—'}  ${o['user_rank'] ?? ''}  PNO: ${o['pno'] ?? '—'}  मो: ${o['mobile'] ?? '—'}',
                 style: const TextStyle(color: Colors.white, fontSize: 11),
@@ -1275,11 +1773,11 @@ class _Tab2Card extends StatelessWidget {
           ]),
         ),
 
-        // Table
         Padding(
           padding: const EdgeInsets.all(8),
           child: _Tab2Table(sectors: sectors,
-              onEdit: onEditSector, onDelete: onDeleteSector, onAddGP: onAddGP),
+              onEdit: onEditSector, onDelete: onDeleteSector,
+              onAddGP: onAddGP, onManageOfficers: onManageSectorOfficers),
         ),
       ]),
     );
@@ -1288,40 +1786,39 @@ class _Tab2Card extends StatelessWidget {
 
 class _Tab2Table extends StatelessWidget {
   final List sectors;
-  final void Function(Map) onEdit, onAddGP;
+  final void Function(Map) onEdit, onAddGP, onManageOfficers;
   final Future<void> Function(Map) onDelete;
   const _Tab2Table({required this.sectors, required this.onEdit,
-      required this.onDelete, required this.onAddGP});
+      required this.onDelete, required this.onAddGP,
+      required this.onManageOfficers});
 
+  // FIX overflow: reduced action column width, tightened others
   static const _ws = <int, double>{
-    0: 44, 1: 190, 2: 190, 3: 130, 4: 190, 5: 100, 6: 76,
+    0: 40, 1: 180, 2: 180, 3: 120, 4: 180, 5: 90, 6: 88,
   };
 
   @override
   Widget build(BuildContext context) {
     final totalW = _ws.values.fold(0.0, (a, b) => a + b);
-    // Build rows: one per GP per sector
     final rows = <Map>[];
     int sSeq = 0;
     for (final s in sectors) {
       sSeq++;
-      final gps     = s['panchayats'] as List? ?? [];
-      final sOff    = s['officers'] as List? ?? [];
-      final magStr  = sOff.isNotEmpty
+      final gps    = s['panchayats'] as List? ?? [];
+      final sOff   = s['officers'] as List? ?? [];
+      final magStr = sOff.isNotEmpty
           ? '${sOff[0]['name'] ?? ''}\n${sOff[0]['user_rank'] ?? ''}\n${sOff[0]['mobile'] ?? ''}'
           : '—';
-      final polStr  = sOff.length > 1
+      final polStr = sOff.length > 1
           ? '${sOff[1]['name'] ?? ''}\n${sOff[1]['user_rank'] ?? ''}\n${sOff[1]['mobile'] ?? ''}'
           : magStr;
 
       if (gps.isEmpty) {
-        rows.add({'s': s, 'sSeq': sSeq, 'mag': magStr, 'pol': polStr,
-            'gp': null, 'first': true});
+        rows.add({'s': s, 'sSeq': sSeq, 'mag': magStr, 'pol': polStr, 'gp': null, 'first': true});
       } else {
         for (int gi = 0; gi < gps.length; gi++) {
           rows.add({'s': s, 'sSeq': sSeq, 'mag': gi == 0 ? magStr : '',
-              'pol': gi == 0 ? polStr : '',
-              'gp': gps[gi], 'first': gi == 0});
+              'pol': gi == 0 ? polStr : '', 'gp': gps[gi], 'first': gi == 0});
         }
       }
     }
@@ -1329,78 +1826,77 @@ class _Tab2Table extends StatelessWidget {
     if (rows.isEmpty) return const _Empty(text: 'कोई सैक्टर नहीं');
 
     return SingleChildScrollView(
-  scrollDirection: Axis.horizontal,
-  child: ConstrainedBox(
-    constraints: BoxConstraints(minWidth: totalW),
-    child: Column(
-      children: [
-      // Header
-      Container(
-        decoration: BoxDecoration(color: const Color(0xFFE8F5E9),
-            border: Border.all(color: _kBorder, width: 0.7)),
-        child: Row(children: [
-          _th(0, 'सैक्टर\nसं.'),
-          _th(1, 'सैक्टर मजिस्ट्रेट\n(नाम/पद/मोबाइल)'),
-          _th(2, 'सैक्टर पुलिस अधिकारी\n(नाम/पद/मोबाइल)'),
-          _th(3, 'ग्राम पंचायत'),
-          _th(4, 'मतदेय स्थल\n(केन्द्र)'),
-          _th(5, 'मतदान\nकेन्द्र'),
-          _th(6, 'एक्शन', last: true),
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: totalW),
+        child: Column(children: [
+          // Header
+          Container(
+            decoration: BoxDecoration(color: const Color(0xFFE8F5E9),
+                border: Border.all(color: _kBorder, width: 0.7)),
+            child: Row(children: [
+              _th(0, 'सैक्टर\nसं.'),
+              _th(1, 'सैक्टर मजिस्ट्रेट\n(नाम/पद/मोबाइल)'),
+              _th(2, 'सैक्टर पुलिस अधिकारी\n(नाम/पद/मोबाइल)'),
+              _th(3, 'ग्राम पंचायत'),
+              _th(4, 'मतदेय स्थल\n(केन्द्र)'),
+              _th(5, 'मतदान\nकेन्द्र'),
+              _th(6, 'एक्शन', last: true),
+            ]),
+          ),
+          ...rows.asMap().entries.map((e) {
+            final i     = e.key; final r = e.value;
+            final gp    = r['gp'] as Map?;
+            final s     = r['s'] as Map;
+            final first = r['first'] as bool;
+            final bg    = i.isEven ? Colors.white : const Color(0xFFF1F8E9);
+
+            final centers  = gp != null ? (gp['centers'] as List? ?? []) : <Map>[];
+            final sthalStr = centers.map((c) => '${c['name']}').join('\n');
+            // FIX: matdan kendra = room numbers of matdan sthal
+            final kStr = centers.map((c) {
+              final kendras = c['kendras'];
+              if (kendras is List) return kendras.map((k) => '${k['room_number']}').join(', ');
+              if (kendras is String) return kendras;
+              if (kendras is int) return kendras.toString();
+              return '';
+            }).where((e) => e.isNotEmpty).join(' | ');
+
+            return Container(
+              decoration: BoxDecoration(color: bg,
+                  border: const Border(
+                    left: BorderSide(color: _kBorder, width: 0.7),
+                    right: BorderSide(color: _kBorder, width: 0.7),
+                    bottom: BorderSide(color: _kBorder, width: 0.7),
+                  )),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _cell(0, first ? Text('${r['sSeq']}',
+                    style: const TextStyle(color: _kGreen, fontWeight: FontWeight.w900, fontSize: 14),
+                    textAlign: TextAlign.center) : const SizedBox()),
+                _cell(1, first ? Text('${r['mag']}', style: const TextStyle(fontSize: 11, color: _kDark)) : const SizedBox()),
+                _cell(2, first ? Text('${r['pol']}', style: const TextStyle(fontSize: 11, color: _kDark)) : const SizedBox()),
+                _cell(3, Text('${gp?['name'] ?? '—'}', style: const TextStyle(fontSize: 11, color: _kDark))),
+                _cell(4, Text(sthalStr.isEmpty ? '—' : sthalStr, style: const TextStyle(fontSize: 11, color: _kDark))),
+                _cell(5, Text(kStr.isEmpty ? '—' : kStr, style: const TextStyle(fontSize: 11, color: _kDark))),
+                // FIX: use Wrap instead of Row to prevent overflow
+                _cell(6, Wrap(spacing: 2, runSpacing: 2, children: [
+                  _IAB(icon: Icons.person_add_outlined, color: Colors.teal, tooltip: 'अधिकारी',
+                      onTap: () => onManageOfficers(s)),
+                  _IAB(icon: Icons.add, color: _kGreen, onTap: () => onAddGP(s), tooltip: 'GP जोड़ें'),
+                  _IAB(icon: Icons.edit_outlined, color: _kGreen, onTap: () => onEdit(s)),
+                  _IAB(icon: Icons.delete_outline, color: _kRed, onTap: () => onDelete(s)),
+                ]), last: true),
+              ]),
+            );
+          }),
         ]),
       ),
-      ...rows.asMap().entries.map((e) {
-        final i   = e.key; final r = e.value;
-        final gp  = r['gp'] as Map?;
-        final s   = r['s'] as Map;
-        final first = r['first'] as bool;
-        final bg  = (i ~/ 1).isEven ? Colors.white : const Color(0xFFF1F8E9);
-
-        final centers = gp != null ? (gp['centers'] as List? ?? []) : <Map>[];
-        final sthalStr = centers.map((c) => '${c['name']}').join('\n');
-        final kStr = centers.map((c) {
-          final kendras = c['kendras'];
-
-          if (kendras is List) {
-            return kendras.map((k) => '${k['room_number']}').join(', ');
-          } else if (kendras is String) {
-            return kendras; // already "4, 3"
-          } else if (kendras is int) {
-            return kendras.toString();
-          }
-
-          return '';
-        }).where((e) => e.isNotEmpty).join(', ');
-        return Container(
-          decoration: BoxDecoration(color: bg,
-              border: const Border(
-                left: BorderSide(color: _kBorder, width: 0.7),
-                right: BorderSide(color: _kBorder, width: 0.7),
-                bottom: BorderSide(color: _kBorder, width: 0.7),
-              )),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            _cell(0, first ? Text('${r['sSeq']}',
-                style: const TextStyle(color: _kGreen, fontWeight: FontWeight.w900, fontSize: 14),
-                textAlign: TextAlign.center) : const SizedBox()),
-            _cell(1, first ? Text('${r['mag']}', style: const TextStyle(fontSize: 11, color: _kDark)) : const SizedBox()),
-            _cell(2, first ? Text('${r['pol']}', style: const TextStyle(fontSize: 11, color: _kDark)) : const SizedBox()),
-            _cell(3, Text('${gp?['name'] ?? '—'}', style: const TextStyle(fontSize: 11, color: _kDark))),
-            _cell(4, Text(sthalStr.isEmpty ? '—' : sthalStr, style: const TextStyle(fontSize: 11, color: _kDark))),
-            _cell(5, Text(kStr.isEmpty ? '—' : kStr, style: const TextStyle(fontSize: 11, color: _kDark))),
-            _cell(6, Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              _IAB(icon: Icons.add, color: _kGreen, onTap: () => onAddGP(s), tooltip: 'GP जोड़ें'),
-              _IAB(icon: Icons.edit_outlined, color: _kGreen, onTap: () => onEdit(s)),
-              _IAB(icon: Icons.delete_outline, color: _kRed, onTap: () => onDelete(s)),
-            ]), last: true),
-          ]),
-        );
-      }),
-    ])));
+    );
   }
 
   Widget _th(int i, String t, {bool last = false}) => Container(
     width: _ws[i], padding: const EdgeInsets.all(6),
-    decoration: _cellDec(right: !last, bottom: false,
-        bg: const Color(0xFFE8F5E9)),
+    decoration: _cellDec(right: !last, bottom: false, bg: const Color(0xFFE8F5E9)),
     child: Text(t, style: const TextStyle(color: Color(0xFF1B5E20),
         fontWeight: FontWeight.w800, fontSize: 10), textAlign: TextAlign.center),
   );
@@ -1413,14 +1909,13 @@ class _Tab2Table extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-// TAB 3 CARD — matches Image 3
+// TAB 3 CARD
 // ══════════════════════════════════════════════════════════════════════════════
 class _Tab3Card extends StatelessWidget {
   final Map sz, z, s, gp;
   final VoidCallback onAddCenter;
   final void Function(Map) onEditCenter, onAddKendra, onManageStaff;
-  final Future<void> Function(Map) onDeleteCenter;
-  final Future<void> Function(Map) onDeleteKendra;
+  final Future<void> Function(Map) onDeleteCenter, onDeleteKendra;
   const _Tab3Card({required this.sz, required this.z, required this.s,
       required this.gp, required this.onAddCenter, required this.onEditCenter,
       required this.onDeleteCenter, required this.onAddKendra,
@@ -1435,7 +1930,6 @@ class _Tab3Card extends StatelessWidget {
       totalKendra += k.isEmpty ? 1 : k.length;
     }
 
-    // Build rows — Image 3 layout
     final rows = <Map>[];
     int sthalNo = 1, kendraG = 1;
     for (final c in centers) {
@@ -1462,7 +1956,6 @@ class _Tab3Card extends StatelessWidget {
             blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header — matches Image 3
         Container(
           padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
           decoration: const BoxDecoration(
@@ -1504,18 +1997,14 @@ class _Tab3Card extends StatelessWidget {
           ]),
         ),
 
-        // Table — exactly Image 3 columns
         if (rows.isEmpty)
-          const Padding(padding: EdgeInsets.all(16),
-              child: _Empty(text: 'कोई मतदेय स्थल नहीं'))
+          const Padding(padding: EdgeInsets.all(16), child: _Empty(text: 'कोई मतदेय स्थल नहीं'))
         else
           Padding(
             padding: const EdgeInsets.all(8),
             child: _Tab3Table(rows: rows, z: z, s: s, gp: gp,
-                onEditCenter: onEditCenter,
-                onDeleteCenter: onDeleteCenter,
-                onAddKendra: onAddKendra,
-                onDeleteKendra: onDeleteKendra,
+                onEditCenter: onEditCenter, onDeleteCenter: onDeleteCenter,
+                onAddKendra: onAddKendra, onDeleteKendra: onDeleteKendra,
                 onManageStaff: onManageStaff),
           ),
       ]),
@@ -1533,139 +2022,112 @@ class _Tab3Table extends StatelessWidget {
       required this.onManageStaff});
 
   static const _ws = <int, double>{
-    0: 44,  // मतदान केन्द्र की संख्या
-    1: 160, // मतदान केन्द्र का नाम + type
-    2: 44,  // मतदेय सं.
-    3: 160, // मतदान स्थल का नाम + address
-    4: 54,  // जोन
-    5: 58,  // सैक्टर
-    6: 80,  // थाना
-    7: 200, // ड्यूटी पुलिस
-    8: 115, // मोबाईल
-    9: 50,  // बस नं.
-    10: 88, // एक्शन
+    0: 44, 1: 160, 2: 44, 3: 160, 4: 54, 5: 58, 6: 80,
+    7: 200, 8: 115, 9: 50, 10: 88,
   };
 
   @override
   Widget build(BuildContext context) {
     final totalW = _ws.values.fold(0.0, (a, b) => a + b);
     return SingleChildScrollView(
-  scrollDirection: Axis.horizontal,
-  child: ConstrainedBox(
-    constraints: BoxConstraints(minWidth: totalW),
-    child: Column(
-      children: [
-      // Header row
-      Container(
-        decoration: BoxDecoration(color: const Color(0xFFF3E5F5),
-            border: Border.all(color: _kBorder, width: 0.7)),
-        child: Row(children: [
-          _th(0, 'मतदान\nकेन्द्र की\nसंख्या'),
-          _th(1, 'मतदान केन्द्र\nका नाम'),
-          _th(2, 'मतदेय\nसं.'),
-          _th(3, 'मतदान स्थल\nका नाम'),
-          _th(4, 'जोन\nसंख्या'),
-          _th(5, 'सैक्टर\nसंख्या'),
-          _th(6, 'थाना'),
-          _th(7, 'ड्यूटी पर लगाया\nपुलिस का नाम'),
-          _th(8, 'मोबाईल\nनम्बर'),
-          _th(9, 'बस\nनं.'),
-          _th(10, 'एक्शन', last: true),
-        ]),
-      ),
-      ...rows.asMap().entries.map((e) {
-        final i   = e.key; final r = e.value;
-        final c   = r['c'] as Map;
-        final k   = r['k'] as Map?;
-        final first = r['first'] as bool? ?? true;
-        final bg  = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: totalW),
+        child: Column(children: [
+          Container(
+            decoration: BoxDecoration(color: const Color(0xFFF3E5F5),
+                border: Border.all(color: _kBorder, width: 0.7)),
+            child: Row(children: [
+              _th(0, 'मतदान\nकेन्द्र की\nसंख्या'),
+              _th(1, 'मतदान केन्द्र\nका नाम'),
+              _th(2, 'मतदेय\nसं.'),
+              _th(3, 'मतदान स्थल\nका नाम'),
+              _th(4, 'जोन\nसंख्या'),
+              _th(5, 'सैक्टर\nसंख्या'),
+              _th(6, 'थाना'),
+              _th(7, 'ड्यूटी पर लगाया\nपुलिस का नाम'),
+              _th(8, 'मोबाईल\nनम्बर'),
+              _th(9, 'बस\nनं.'),
+              _th(10, 'एक्शन', last: true),
+            ]),
+          ),
+          ...rows.asMap().entries.map((e) {
+            final i     = e.key; final r = e.value;
+            final c     = r['c'] as Map;
+            final k     = r['k'] as Map?;
+            final first = r['first'] as bool? ?? true;
+            final bg    = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
 
-        final duty  = c['duty_officers'] as List? ?? [];
-        final dText = duty.isNotEmpty
-            ? duty.map((d) => '${d['name'] ?? ''}  ${d['pno'] ?? ''}\n${d['user_rank'] ?? ''}').join('\n')
-            : '—';
-        final mText = duty.isNotEmpty
-            ? duty.map((d) => '${d['mobile'] ?? ''}').where((m) => m.isNotEmpty).join('\n')
-            : '—';
+            final duty  = c['duty_officers'] as List? ?? [];
+            final dText = duty.isNotEmpty
+                ? duty.map((d) => '${d['name'] ?? ''}  ${d['pno'] ?? ''}\n${d['user_rank'] ?? ''}').join('\n')
+                : '—';
+            final mText = duty.isNotEmpty
+                ? duty.map((d) => '${d['mobile'] ?? ''}').where((m) => m.isNotEmpty).join('\n')
+                : '—';
 
-        final kLabel = k != null
-            ? '${c['name']} क.नं. ${k['room_number']}'
-            : '${c['name']}';
-        final typeColor = c['center_type'] == 'A' ? _kRed
-            : c['center_type'] == 'B' ? const Color(0xFFE67E22)
-            : const Color(0xFF1A5276);
+            final kLabel = k != null
+                ? '${c['name']} क.नं. ${k['room_number']}'
+                : '${c['name']}';
+            final typeColor = _sensitivityColor(c['center_type'] as String?);
 
-        return Container(
-          decoration: BoxDecoration(color: bg,
-              border: const Border(
-                left: BorderSide(color: _kBorder, width: 0.7),
-                right: BorderSide(color: _kBorder, width: 0.7),
-                bottom: BorderSide(color: _kBorder, width: 0.7),
-              )),
-          child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            // Col 0: kendra serial
-            _cell(0, Center(child: Text('${r['kNo']}',
-                style: const TextStyle(color: _kPurple, fontWeight: FontWeight.w800, fontSize: 13)))),
-            // Col 1: center name + type badge
-            _cell(1, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(kLabel, style: const TextStyle(color: _kDark, fontSize: 11)),
-              Container(margin: const EdgeInsets.only(top: 3),
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
-                decoration: BoxDecoration(
-                    color: typeColor.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: typeColor.withOpacity(0.4))),
-                child: Text('${c['center_type'] ?? 'C'}',
-                    style: TextStyle(color: typeColor, fontSize: 10, fontWeight: FontWeight.w800))),
-            ])),
-            // Col 2: matday number (sthalNo) — only first kendra
-            _cell(2, first && r['sNo'] != null
-                ? Center(child: Text('${r['sNo']}',
-                    style: const TextStyle(color: _kDark, fontWeight: FontWeight.w700, fontSize: 12)))
-                : const SizedBox()),
-            // Col 3: sthal name + address — only first kendra
-            _cell(3, first
-                ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            return Container(
+              decoration: BoxDecoration(color: bg,
+                  border: const Border(
+                    left: BorderSide(color: _kBorder, width: 0.7),
+                    right: BorderSide(color: _kBorder, width: 0.7),
+                    bottom: BorderSide(color: _kBorder, width: 0.7),
+                  )),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _cell(0, Center(child: Text('${r['kNo']}',
+                    style: const TextStyle(color: _kPurple, fontWeight: FontWeight.w800, fontSize: 13)))),
+                _cell(1, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(kLabel, style: const TextStyle(color: _kDark, fontSize: 11)),
+                  Container(margin: const EdgeInsets.only(top: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                        color: typeColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: typeColor.withOpacity(0.4))),
+                    child: Text('${c['center_type'] ?? 'C'}',
+                        style: TextStyle(color: typeColor, fontSize: 10, fontWeight: FontWeight.w800))),
+                ])),
+                _cell(2, first && r['sNo'] != null
+                    ? Center(child: Text('${r['sNo']}',
+                        style: const TextStyle(color: _kDark, fontWeight: FontWeight.w700, fontSize: 12)))
+                    : const SizedBox()),
+                _cell(3, first ? Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                     Text('${c['name']}', style: const TextStyle(color: _kDark, fontSize: 11)),
                     if ((c['address'] ?? '').toString().isNotEmpty)
                       Text('${c['address']}', style: const TextStyle(color: _kSubtle, fontSize: 9)),
-                  ])
-                : const SizedBox()),
-            // Col 4: zone
-            _cell(4, Center(child: Text('${z['name']}',
-                style: const TextStyle(color: _kDark, fontSize: 10)))),
-            // Col 5: sector
-            _cell(5, Center(child: Text('${s['name']}',
-                style: const TextStyle(color: _kDark, fontSize: 10)))),
-            // Col 6: thana
-            _cell(6, Text('${c['thana'] ?? gp['thana'] ?? '—'}',
-                style: const TextStyle(color: _kDark, fontSize: 11))),
-            // Col 7: duty police
-            _cell(7, Text(dText, style: const TextStyle(color: _kDark, fontSize: 11))),
-            // Col 8: mobile
-            _cell(8, Text(mText,
-                style: const TextStyle(color: _kDark, fontSize: 11, fontFamily: 'monospace'))),
-            // Col 9: bus
-            _cell(9, Center(child: Text('${c['bus_no'] ?? '—'}',
-                style: const TextStyle(color: _kDark, fontWeight: FontWeight.w700, fontSize: 11)))),
-            // Col 10: actions
-            _cell(10, Wrap(spacing: 2, runSpacing: 2, children: [
-              _IAB(icon: Icons.people_alt_outlined, color: _kGreen, tooltip: 'स्टाफ',
-                  onTap: () => onManageStaff(c)),
-              _IAB(icon: Icons.add_box_outlined, color: _kPrimary, tooltip: 'कक्ष जोड़ें',
-                  onTap: () => onAddKendra(c)),
-              _IAB(icon: Icons.edit_outlined, color: _kPurple,
-                  onTap: () => onEditCenter(c)),
-              _IAB(icon: Icons.delete_outline, color: _kRed,
-                  onTap: () => onDeleteCenter(c)),
-              // Delete kendra if on a kendra row
-              if (k != null) _IAB(icon: Icons.remove_circle_outline, color: Colors.orange,
-                  tooltip: 'कक्ष हटाएं', onTap: () => onDeleteKendra(k)),
-            ]), last: true),
-          ]),
-        );
-      }),
-    ])));
+                  ]) : const SizedBox()),
+                _cell(4, Center(child: Text('${z['name']}',
+                    style: const TextStyle(color: _kDark, fontSize: 10)))),
+                _cell(5, Center(child: Text('${s['name']}',
+                    style: const TextStyle(color: _kDark, fontSize: 10)))),
+                _cell(6, Text('${c['thana'] ?? gp['thana'] ?? '—'}',
+                    style: const TextStyle(color: _kDark, fontSize: 11))),
+                _cell(7, Text(dText, style: const TextStyle(color: _kDark, fontSize: 11))),
+                _cell(8, Text(mText,
+                    style: const TextStyle(color: _kDark, fontSize: 11, fontFamily: 'monospace'))),
+                _cell(9, Center(child: Text('${c['bus_no'] ?? '—'}',
+                    style: const TextStyle(color: _kDark, fontWeight: FontWeight.w700, fontSize: 11)))),
+                _cell(10, Wrap(spacing: 2, runSpacing: 2, children: [
+                  _IAB(icon: Icons.people_alt_outlined, color: _kGreen, tooltip: 'स्टाफ',
+                      onTap: () => onManageStaff(c)),
+                  _IAB(icon: Icons.add_box_outlined, color: _kPrimary, tooltip: 'कक्ष जोड़ें',
+                      onTap: () => onAddKendra(c)),
+                  _IAB(icon: Icons.edit_outlined, color: _kPurple, onTap: () => onEditCenter(c)),
+                  _IAB(icon: Icons.delete_outline, color: _kRed, onTap: () => onDeleteCenter(c)),
+                  if (k != null) _IAB(icon: Icons.remove_circle_outline, color: Colors.orange,
+                      tooltip: 'कक्ष हटाएं', onTap: () => onDeleteKendra(k)),
+                ]), last: true),
+              ]),
+            );
+          }),
+        ]),
+      ),
+    );
   }
 
   Widget _th(int i, String t, {bool last = false}) => Container(
@@ -1674,192 +2136,10 @@ class _Tab3Table extends StatelessWidget {
     child: Text(t, style: const TextStyle(color: _kPurple,
         fontWeight: FontWeight.w800, fontSize: 9.5), textAlign: TextAlign.center),
   );
-
   Widget _cell(int i, Widget child, {bool last = false}) => Container(
     width: _ws[i], padding: const EdgeInsets.all(6),
-    decoration: _cellDec(right: !last, bottom: false),
-    child: child,
+    decoration: _cellDec(right: !last, bottom: false), child: child,
   );
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-// STAFF ASSIGN DIALOG
-// ══════════════════════════════════════════════════════════════════════════════
-class _StaffAssignDialog extends StatefulWidget {
-  final Map center; final List unassigned, assigned;
-  final Future<void> Function(int, String) onAssign;
-  final Future<void> Function(int) onRemove;
-  const _StaffAssignDialog({required this.center, required this.unassigned,
-      required this.assigned, required this.onAssign, required this.onRemove});
-  @override State<_StaffAssignDialog> createState() => _StaffAssignDialogState();
-}
-class _StaffAssignDialogState extends State<_StaffAssignDialog> {
-  final _busCtrl    = TextEditingController();
-  final _searchCtrl = TextEditingController();
-  List _filtered    = [];
-  int? _selectedId;
-
-  @override
-  void initState() {
-    super.initState();
-    _filtered = widget.unassigned;
-    _busCtrl.text = '${widget.center['bus_no'] ?? ''}';
-  }
-
-  void _filterStaff(String q) => setState(() {
-    _filtered = q.isEmpty ? widget.unassigned
-        : widget.unassigned.where((s) =>
-            '${s['name']}'.toLowerCase().contains(q.toLowerCase()) ||
-            '${s['pno']}'.toLowerCase().contains(q.toLowerCase()) ||
-            '${s['thana']}'.toLowerCase().contains(q.toLowerCase())).toList();
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    return Dialog(
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 480, maxHeight: 640),
-        child: Column(children: [
-          // Header
-          Container(
-            padding: const EdgeInsets.fromLTRB(16, 14, 8, 14),
-            decoration: const BoxDecoration(color: _kPurple,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(16))),
-            child: Row(children: [
-              const Icon(Icons.people_alt_outlined, color: Colors.white, size: 20),
-              const SizedBox(width: 10),
-              Expanded(child: Text('स्टाफ प्रबंधन – ${widget.center['name']}',
-                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w800, fontSize: 13),
-                  overflow: TextOverflow.ellipsis)),
-              IconButton(icon: const Icon(Icons.close, color: Colors.white, size: 18),
-                  onPressed: () => Navigator.pop(context)),
-            ]),
-          ),
-          Expanded(child: SingleChildScrollView(padding: const EdgeInsets.all(14), child:
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              // Already assigned staff
-              if (widget.assigned.isNotEmpty) ...[
-                const Text('असाइन किए गए स्टाफ:', style: TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 12, color: _kSubtle)),
-                const SizedBox(height: 6),
-                ...widget.assigned.map((d) => Container(
-                  margin: const EdgeInsets.only(bottom: 6),
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                  decoration: BoxDecoration(color: const Color(0xFFF3E5F5),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: _kPurple.withOpacity(0.3))),
-                  child: Row(children: [
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      Text('${d['name']}', style: const TextStyle(
-                          fontWeight: FontWeight.w700, fontSize: 13, color: _kDark)),
-                      Text('PNO: ${d['pno']}  •  ${d['user_rank'] ?? ''}  •  ${d['mobile'] ?? ''}',
-                          style: const TextStyle(color: _kSubtle, fontSize: 11)),
-                    ])),
-                    IconButton(
-                      icon: const Icon(Icons.remove_circle_outline, color: _kRed, size: 20),
-                      onPressed: () async {
-                        await widget.onRemove(d['id']);
-                        Navigator.pop(context);
-                      },
-                    ),
-                  ]),
-                )),
-                const Divider(height: 20),
-              ],
-              // Add staff
-              if (widget.unassigned.isNotEmpty) ...[
-                const Text('नया स्टाफ जोड़ें:', style: TextStyle(
-                    fontWeight: FontWeight.w700, fontSize: 12, color: _kSubtle)),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: _searchCtrl, onChanged: _filterStaff,
-                  decoration: InputDecoration(
-                    hintText: 'नाम, PNO, थाना से खोजें...',
-                    prefixIcon: const Icon(Icons.search, size: 18, color: _kSubtle),
-                    isDense: true, fillColor: const Color(0xFFF8F9FC), filled: true,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: _kBorder)),
-                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(color: _kBorder)),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 10, horizontal: 12),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Container(height: 180, decoration: BoxDecoration(
-                  border: Border.all(color: _kBorder), borderRadius: BorderRadius.circular(8)),
-                  child: ListView.separated(
-                    itemCount: _filtered.length,
-                    separatorBuilder: (_, __) => const Divider(height: 1, color: _kBorder),
-                    itemBuilder: (_, i) {
-                      final s = _filtered[i];
-                      final sel = _selectedId == s['id'];
-                      return InkWell(
-                        onTap: () => setState(() => _selectedId = sel ? null : s['id'] as int),
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
-                          color: sel ? _kPurple.withOpacity(0.07) : Colors.transparent,
-                          child: Row(children: [
-                            AnimatedContainer(duration: const Duration(milliseconds: 150),
-                              width: 26, height: 26,
-                              decoration: BoxDecoration(
-                                  color: sel ? _kPurple : const Color(0xFFF5EAD0),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(color: sel ? _kPurple : _kBorder)),
-                              child: sel ? const Icon(Icons.check, color: Colors.white, size: 14) : null),
-                            const SizedBox(width: 10),
-                            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                              Text('${s['name']}', style: TextStyle(
-                                  color: sel ? _kPurple : _kDark,
-                                  fontWeight: FontWeight.w600, fontSize: 13)),
-                              Text('PNO: ${s['pno']}  •  ${s['thana']}',
-                                  style: const TextStyle(color: _kSubtle, fontSize: 10)),
-                            ])),
-                          ]),
-                        ),
-                      );
-                    },
-                  ),
-                ),
-                const SizedBox(height: 10),
-                TextFormField(
-                  controller: _busCtrl,
-                  decoration: InputDecoration(
-                    labelText: 'बस संख्या', isDense: true,
-                    prefixIcon: const Icon(Icons.directions_bus_outlined, size: 18),
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                  ),
-                ),
-              ] else
-                const Text('सभी स्टाफ असाइन किए जा चुके हैं',
-                    style: TextStyle(color: _kSubtle, fontSize: 12)),
-            ]),
-          )),
-          // Footer
-          Padding(padding: const EdgeInsets.fromLTRB(14, 0, 14, 14), child:
-            Row(children: [
-              Expanded(child: OutlinedButton(
-                onPressed: () => Navigator.pop(context),
-                child: const Text('बंद करें'),
-              )),
-              if (_selectedId != null) ...[
-                const SizedBox(width: 10),
-                Expanded(child: ElevatedButton(
-                  style: ElevatedButton.styleFrom(backgroundColor: _kPurple),
-                  onPressed: () async {
-                    await widget.onAssign(_selectedId!, _busCtrl.text);
-                    Navigator.pop(context);
-                  },
-                  child: const Text('असाइन करें', style: TextStyle(color: Colors.white)),
-                )),
-              ],
-            ]),
-          ),
-        ]),
-      ),
-    );
-  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1936,8 +2216,7 @@ class _MC extends StatelessWidget {
     decoration: BoxDecoration(color: color.withOpacity(0.2),
         borderRadius: BorderRadius.circular(20)),
     child: Text(label, style: TextStyle(
-        color: color == Colors.white ? Colors.white : color,
-        fontSize: 10, fontWeight: FontWeight.w700)),
+        color: color, fontSize: 10, fontWeight: FontWeight.w700)),
   );
 }
 
