@@ -237,6 +237,7 @@ def init_db():
                 CREATE TABLE IF NOT EXISTS sectors (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
                     name       VARCHAR(100) NOT NULL,
+                    hq_address TEXT,
                     zone_id    INT NOT NULL,
                     created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_zone_id (zone_id),

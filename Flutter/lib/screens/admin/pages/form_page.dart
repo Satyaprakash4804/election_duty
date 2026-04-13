@@ -194,7 +194,7 @@ class _FormPageState extends State<FormPage> {
           createUrl: '/admin/zones/$_selectedZoneId/sectors',
           updateUrlFn: (id) => '/admin/sectors/$id',
           deleteUrlFn: (id) => '/admin/sectors/$id',
-          fields: const ['name'],
+          fields: const ['name','hqAddress'],
           onSelect: _onSectorSelected, selectedId: _selectedSectorId);
 
       case 3: return _StepList(

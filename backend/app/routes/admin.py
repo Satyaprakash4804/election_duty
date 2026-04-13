@@ -548,7 +548,7 @@ def get_sectors(z_id):
             total = cur.fetchone()["cnt"]
  
             cur.execute(f"""
-                SELECT s.id, s.name, COUNT(DISTINCT gp.id) AS gp_count
+                SELECT s.id, s.name, s.hq_address, COUNT(DISTINCT gp.id) AS gp_count
                 FROM sectors s LEFT JOIN gram_panchayats gp ON gp.sector_id=s.id
                 WHERE s.zone_id=%s {where_extra}
                 GROUP BY s.id ORDER BY s.id
@@ -569,6 +569,7 @@ def get_sectors(z_id):
             result = [{
                 "id":       s["id"],
                 "name":     s["name"] or "",
+                "hqAddress": s.get("hq_address", "") or "",
                 "gpCount":  s["gp_count"],
                 "officers": officers_by_sector.get(s["id"], []),
             } for s in sectors]
@@ -590,7 +591,10 @@ def add_sector(z_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO sectors (name,zone_id) VALUES (%s,%s)", (name, z_id))
+            cur.execute(
+                "INSERT INTO sectors (name, hq_address, zone_id) VALUES (%s,%s,%s)",
+                (name, body.get("hqAddress", ""), z_id)
+            )
             s_id = cur.lastrowid
             for o in body.get("officers", []):
                 _insert_officer(cur, "sector_officers", "sector_id", s_id, o)
@@ -604,24 +608,31 @@ def add_sector(z_id):
 @admin_required
 def update_sector(s_id):
     body = request.get_json() or {}
+
+    name = (body.get("name") or "").strip()
+    hq   = (body.get("hqAddress") or "").strip()
+
+    if not name:
+        return err("name required")
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            if body.get("name"):
-                cur.execute(
-                    "UPDATE sectors SET name=%s WHERE id=%s",
-                    (body["name"], s_id)
-                )
             cur.execute(
-                "DELETE FROM sector_officers WHERE sector_id=%s", (s_id,)
+                """
+                UPDATE sectors 
+                SET name=%s, hq_address=%s 
+                WHERE id=%s
+                """,
+                (name, hq, s_id)  
             )
-            for o in body.get("officers", []):
-                if o.get("name","").strip():
-                    _insert_officer(cur, "sector_officers", "sector_id", s_id, o)
         conn.commit()
     finally:
         conn.close()
-    return ok(None, "Updated")
+
+    return ok({"id": s_id, "name": name, "hqAddress": hq}, "Updated")
+
+
 @admin_bp.route("/sectors/<int:s_id>", methods=["DELETE"])
 @admin_required
 def delete_sector(s_id):
