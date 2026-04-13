@@ -154,7 +154,9 @@ def init_db():
                     INDEX idx_role_district (role, district),
                     INDEX idx_role_active   (role, is_active),
                     INDEX idx_name          (name),
-                    INDEX idx_thana         (thana)
+                    INDEX idx_thana         (thana),
+                    INDEX idx_user_rank     (user_rank),
+                    INDEX idx_role_rank     (role, user_rank, is_active)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
@@ -281,7 +283,7 @@ def init_db():
                     address           TEXT,
                     gram_panchayat_id INT          NOT NULL,
                     thana             VARCHAR(150) DEFAULT '',
-                    center_type       ENUM('A','B','C') NOT NULL DEFAULT 'C',
+                    center_type       ENUM('A++','A','B','C') NOT NULL DEFAULT 'C',
                     bus_no            VARCHAR(50)  DEFAULT '',
                     latitude          DECIMAL(10,7),
                     longitude         DECIMAL(10,7),
@@ -357,6 +359,24 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # In init_db(), replace the booth_staff_rules CREATE TABLE with:
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booth_staff_rules (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id INT NOT NULL,
+                    sensitivity ENUM('A++','A','B','C') NOT NULL,
+                    user_rank VARCHAR(100) NOT NULL,
+                    required_count INT NOT NULL DEFAULT 1,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    
+                    INDEX idx_admin (admin_id),
+                    INDEX idx_sensitivity (sensitivity),
+
+                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+
+
             # ─────────────────────────────────────────────────────────────────
             #  AUTO-ADD MISSING COLUMNS (safe for existing databases)
             # ─────────────────────────────────────────────────────────────────
@@ -377,8 +397,8 @@ def init_db():
             ensure_column(cur, db, "matdan_sthal", "longitude DECIMAL(10,7) DEFAULT NULL")
             ensure_column(cur, db, "matdan_sthal", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "thana VARCHAR(150) DEFAULT ''")
-            ensure_column(cur, db, "matdan_sthal", "center_type ENUM('A','B','C') NOT NULL DEFAULT 'C'")
-
+            ensure_column(cur, db, "matdan_sthal", "center_type ENUM('A++','A','B','C') NOT NULL DEFAULT 'C'")
+            ensure_column(cur, db, "booth_staff_rules", "admin_id INT NOT NULL DEFAULT 0")
             # duty_assignments
             ensure_column(cur, db, "duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
 

@@ -348,18 +348,35 @@ class _StaffPageState extends State<StaffPage> with SingleTickerProviderStateMix
   }
 
   Future<void> _removeDuty(Map s) async {
-    final ok = await _confirm('ड्यूटी हटाएं',
-        '"${_v(s['name'])}" को ${_v(s['centerName'])} से हटाकर रिज़र्व में करें?', 'रिज़र्व करें');
+    final type = _v(s['assignType']);
+
+    // ❌ BLOCK officer removal
+    if (type != 'booth') {
+      _snack('क्षेत्र/जोन/सेक्टर अधिकारी यहाँ से नहीं हटाए जा सकते', error: true);
+      return;
+    }
+
+    final ok = await _confirm(
+      'ड्यूटी हटाएं',
+      '"${_v(s['name'])}" को ${_v(s['assignLabel'])} से हटाकर रिज़र्व में करें?',
+      'रिज़र्व करें',
+    );
     if (ok != true) return;
+
     try {
       final token = await AuthService.getToken();
+
       if (s['dutyId'] != null) {
         await ApiService.delete('/admin/duties/${s['dutyId']}', token: token);
       } else {
         await ApiService.delete('/admin/staff/${s['id']}/duty', token: token);
       }
-      _snack('${_v(s['name'])} रिज़र्व में भेजा गया'); _refresh();
-    } catch (e) { _snack(_msg(e), error: true); }
+
+      _snack('${_v(s['name'])} रिज़र्व में भेजा गया');
+      _refresh();
+    } catch (e) {
+      _snack(_msg(e), error: true);
+    }
   }
 
   // ── Multi-select actions ──────────────────────────────────────────────────
@@ -396,17 +413,47 @@ class _StaffPageState extends State<StaffPage> with SingleTickerProviderStateMix
 
   Future<void> _bulkUnassign() async {
     final count = _selected.length;
-    final ok = await _confirm('$count ड्यूटी हटाएं',
-        'चुने गए $count स्टाफ की ड्यूटी हटाएं?', 'हटाएं');
+
+    // ✅ Filter only booth staff
+    final currentList = _tabs.index == 0 ? _assigned : _reserve;
+
+    final boothIds = currentList
+        .where((s) =>
+            _selected.contains(s['id']) &&
+            _v(s['assignType']) == 'booth')
+        .map<int>((s) => s['id'] as int)
+        .toList();
+
+    if (boothIds.isEmpty) {
+      _snack('केवल बूथ स्टाफ ही यहाँ से हटाए जा सकते हैं', error: true);
+      return;
+    }
+
+    final ok = await _confirm(
+      '${boothIds.length} ड्यूटी हटाएं',
+      'केवल बूथ स्टाफ की ड्यूटी हटेगी। आगे बढ़ें?',
+      'हटाएं',
+    );
     if (ok != true) return;
+
     try {
       final token = await AuthService.getToken();
-      final res = await ApiService.post('/admin/staff/bulk-unassign',
-          {'staffIds': _selected.toList()}, token: token);
+
+      final res = await ApiService.post(
+        '/admin/staff/bulk-unassign',
+        {'staffIds': boothIds},
+        token: token,
+      );
+
       final removed = (res['data']?['removed'] ?? 0);
-      _snack('$removed ड्यूटी हटाई गईं');
-      _clearSelection(); _refresh();
-    } catch (e) { _snack(_msg(e), error: true); }
+
+      _snack('$removed बूथ स्टाफ रिज़र्व में भेजे गए');
+
+      _clearSelection();
+      _refresh();
+    } catch (e) {
+      _snack(_msg(e), error: true);
+    }
   }
 
   void _bulkAssignDialog() {
@@ -1119,17 +1166,72 @@ class _StaffPageState extends State<StaffPage> with SingleTickerProviderStateMix
   // ══════════════════════════════════════════════════════════════════════════
   //  STAFF CARD  (with long-press to enter select mode)
   // ══════════════════════════════════════════════════════════════════════════
+  
+  Widget _assignmentChip(Map s) {
+    final type   = _v(s['assignType']);
+    final label  = _v(s['assignLabel']);
+    final detail = _v(s['assignDetail']);
+
+    final config = switch (type) {
+      'booth'   => (Icons.location_on_outlined, _kSuccess, 'बूथ'),
+      'kshetra' => (Icons.layers_outlined, const Color(0xFF6A1B9A), 'क्षेत्र'),
+      'zone'    => (Icons.grid_view_outlined, const Color(0xFF1565C0), 'जोन'),
+      'sector'  => (Icons.view_module_outlined, const Color(0xFF2E7D32), 'सेक्टर'),
+      _         => (Icons.how_to_vote_outlined, _kSuccess, ''),
+    };
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+      decoration: BoxDecoration(
+        color: config.$2.withOpacity(0.06),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: config.$2.withOpacity(0.2)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(config.$1, size: 11, color: config.$2),
+        const SizedBox(width: 4),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+          decoration: BoxDecoration(
+            color: config.$2.withOpacity(0.12),
+            borderRadius: BorderRadius.circular(4),
+          ),
+          child: Text(config.$3,
+              style: TextStyle(color: config.$2, fontSize: 9, fontWeight: FontWeight.w800)),
+        ),
+        const SizedBox(width: 5),
+        Flexible(child: Text(label,
+            style: TextStyle(color: config.$2, fontSize: 11, fontWeight: FontWeight.w600),
+            maxLines: 1, overflow: TextOverflow.ellipsis)),
+        if (detail.isNotEmpty) ...[
+          Text('  •  ', style: TextStyle(color: config.$2.withOpacity(0.5), fontSize: 10)),
+          Flexible(child: Text(detail,
+              style: TextStyle(color: config.$2.withOpacity(0.7), fontSize: 10),
+              maxLines: 1, overflow: TextOverflow.ellipsis)),
+        ],
+      ]),
+    );
+  }
 
   Widget _staffCard(Map s, {required bool assigned}) {
     final id = s['id'] as int;
     final isSelected = _selected.contains(id);
     final name = _v(s['name']);
-    final initials = name.trim().split(' ').where((w) => w.isNotEmpty).take(2).map((w) => w[0].toUpperCase()).join();
+    final initials = name.trim()
+        .split(' ')
+        .where((w) => w.isNotEmpty)
+        .take(2)
+        .map((w) => w[0].toUpperCase())
+        .join();
+
     final avatarColor = assigned ? _kSuccess : _kAccent;
 
     return RepaintBoundary(
       child: GestureDetector(
-        onLongPress: () { HapticFeedback.mediumImpact(); _toggleSelect(id); },
+        onLongPress: () {
+          HapticFeedback.mediumImpact();
+          _toggleSelect(id);
+        },
         onTap: _selectMode ? () => _toggleSelect(id) : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
@@ -1137,87 +1239,166 @@ class _StaffPageState extends State<StaffPage> with SingleTickerProviderStateMix
           decoration: BoxDecoration(
             color: isSelected ? _kPrimary.withOpacity(0.06) : Colors.white,
             borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: isSelected ? _kPrimary : _kBorder.withOpacity(0.4), width: isSelected ? 2 : 1),
-            boxShadow: [BoxShadow(color: _kPrimary.withOpacity(0.04), blurRadius: 6, offset: const Offset(0, 2))],
+            border: Border.all(
+                color: isSelected ? _kPrimary : _kBorder.withOpacity(0.4),
+                width: isSelected ? 2 : 1),
+            boxShadow: [
+              BoxShadow(
+                  color: _kPrimary.withOpacity(0.04),
+                  blurRadius: 6,
+                  offset: const Offset(0, 2))
+            ],
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            child: Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
 
-              // Checkbox or Avatar
-              GestureDetector(
-                onTap: () => _toggleSelect(id),
-                child: AnimatedSwitcher(duration: const Duration(milliseconds: 200),
-                  child: _selectMode
-                      ? Container(key: const ValueKey('cb'), width: 44, height: 44,
-                          decoration: BoxDecoration(shape: BoxShape.circle,
+                // ── Avatar / Checkbox ─────────────────────────
+                GestureDetector(
+                  onTap: () => _toggleSelect(id),
+                  child: AnimatedSwitcher(
+                    duration: const Duration(milliseconds: 200),
+                    child: _selectMode
+                        ? Container(
+                            key: const ValueKey('cb'),
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
                               color: isSelected ? _kPrimary : Colors.white,
-                              border: Border.all(color: isSelected ? _kPrimary : _kBorder, width: 2)),
-                          child: Icon(isSelected ? Icons.check : null, color: Colors.white, size: 22))
-                      : Container(key: const ValueKey('av'), width: 44, height: 44,
-                          decoration: BoxDecoration(shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: isSelected ? _kPrimary : _kBorder,
+                                  width: 2),
+                            ),
+                            child: Icon(
+                              isSelected ? Icons.check : null,
+                              color: Colors.white,
+                              size: 22,
+                            ),
+                          )
+                        : Container(
+                            key: const ValueKey('av'),
+                            width: 44,
+                            height: 44,
+                            decoration: BoxDecoration(
+                              shape: BoxShape.circle,
                               color: avatarColor.withOpacity(0.12),
-                              border: Border.all(color: avatarColor.withOpacity(0.35))),
-                          child: Center(child: Text(initials.isEmpty ? 'S' : initials,
-                              style: TextStyle(color: avatarColor, fontWeight: FontWeight.w900,
-                                  fontSize: initials.length <= 1 ? 18 : 13)))),
-                ),
-              ),
-              const SizedBox(width: 10),
-
-              // Info
-              Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Row(children: [
-                  Expanded(child: Text(name.isNotEmpty ? name : '—',
-                      style: const TextStyle(color: _kDark, fontWeight: FontWeight.w700, fontSize: 14),
-                      maxLines: 1, overflow: TextOverflow.ellipsis)),
-                  const SizedBox(width: 4),
-                  _badge(assigned ? 'असाइन' : 'रिज़र्व', assigned ? _kSuccess : _kAccent),
-                ]),
-                const SizedBox(height: 5),
-                Wrap(spacing: 10, runSpacing: 3, children: [
-                  if (_v(s['pno']).isNotEmpty)      _tag(Icons.badge_outlined,         'PNO: ${_v(s['pno'])}'),
-                  if (_v(s['mobile']).isNotEmpty)   _tag(Icons.phone_outlined,         _v(s['mobile'])),
-                  if (_v(s['thana']).isNotEmpty)    _tag(Icons.local_police_outlined,  _v(s['thana'])),
-                  if (_v(s['district']).isNotEmpty) _tag(Icons.location_city_outlined, _v(s['district'])),
-                  if (_v(s['rank']).isNotEmpty)     _tag(Icons.military_tech_outlined, _v(s['rank'])),
-                ]),
-                if (assigned && _v(s['centerName']).isNotEmpty) ...[
-                  const SizedBox(height: 5),
-                  Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                    decoration: BoxDecoration(color: _kSuccess.withOpacity(0.06),
-                        borderRadius: BorderRadius.circular(6), border: Border.all(color: _kSuccess.withOpacity(0.2))),
-                    child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      const Icon(Icons.location_on_outlined, size: 11, color: _kSuccess), const SizedBox(width: 4),
-                      Flexible(child: Text(_v(s['centerName']),
-                          style: const TextStyle(color: _kSuccess, fontSize: 11, fontWeight: FontWeight.w600),
-                          maxLines: 1, overflow: TextOverflow.ellipsis)),
-                    ]),
+                              border: Border.all(
+                                  color: avatarColor.withOpacity(0.35)),
+                            ),
+                            child: Center(
+                              child: Text(
+                                initials.isEmpty ? 'S' : initials,
+                                style: TextStyle(
+                                    color: avatarColor,
+                                    fontWeight: FontWeight.w900,
+                                    fontSize: initials.length <= 1 ? 18 : 13),
+                              ),
+                            ),
+                          ),
                   ),
-                ],
-              ])),
-
-              // Action buttons (always visible — not hidden during select mode)
-              const SizedBox(width: 4),
-              Column(mainAxisSize: MainAxisSize.min, children: [
-                _iconBtn(Icons.edit_outlined,  _kInfo,  () => _showEditDialog(s)),
-                const SizedBox(height: 4),
-                _iconBtn(Icons.delete_outline, _kError, () => _deleteStaff(s)),
-                const SizedBox(height: 4),
-                _iconBtn(
-                  assigned ? Icons.person_remove_outlined : Icons.how_to_vote_outlined,
-                  assigned ? _kError : _kPrimary,
-                  () => assigned ? _removeDuty(s) : _showAssignDialog(s),
                 ),
-              ]),
-            ]),
+
+                const SizedBox(width: 10),
+
+                // ── Info Section ───────────────────────────────
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              name.isNotEmpty ? name : '—',
+                              style: const TextStyle(
+                                  color: _kDark,
+                                  fontWeight: FontWeight.w700,
+                                  fontSize: 14),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          _badge(
+                              assigned ? 'असाइन' : 'रिज़र्व',
+                              assigned ? _kSuccess : _kAccent),
+                        ],
+                      ),
+
+                      const SizedBox(height: 5),
+
+                      Wrap(
+                        spacing: 10,
+                        runSpacing: 3,
+                        children: [
+                          if (_v(s['pno']).isNotEmpty)
+                            _tag(Icons.badge_outlined, 'PNO: ${_v(s['pno'])}'),
+                          if (_v(s['mobile']).isNotEmpty)
+                            _tag(Icons.phone_outlined, _v(s['mobile'])),
+                          if (_v(s['thana']).isNotEmpty)
+                            _tag(Icons.local_police_outlined, _v(s['thana'])),
+                          if (_v(s['district']).isNotEmpty)
+                            _tag(Icons.location_city_outlined,
+                                _v(s['district'])),
+                          if (_v(s['rank']).isNotEmpty)
+                            _tag(Icons.military_tech_outlined, _v(s['rank'])),
+                        ],
+                      ),
+
+                      // ── NEW ASSIGNMENT CHIP ───────────────────
+                      if (_v(s['assignLabel']).isNotEmpty) ...[
+                        const SizedBox(height: 5),
+                        _assignmentChip(s),
+                      ],
+                    ],
+                  ),
+                ),
+
+                const SizedBox(width: 4),
+
+                // ── ACTION BUTTONS ─────────────────────────────
+                Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    _iconBtn(Icons.edit_outlined, _kInfo,
+                        () => _showEditDialog(s)),
+                    const SizedBox(height: 4),
+
+                    _iconBtn(Icons.delete_outline, _kError,
+                        () => _deleteStaff(s)),
+                    const SizedBox(height: 4),
+
+                    // 🔥 CONTROLLED REMOVE BUTTON
+                    if (_v(s['assignType']) == 'booth' || !assigned)
+                      _iconBtn(
+                        assigned
+                            ? Icons.person_remove_outlined
+                            : Icons.how_to_vote_outlined,
+                        assigned ? _kError : _kPrimary,
+                        () => assigned
+                            ? _removeDuty(s)
+                            : _showAssignDialog(s),
+                      )
+                    else
+                      _iconBtn(
+                        Icons.lock_outline,
+                        const Color(0xFF6A1B9A).withOpacity(0.6),
+                        () => _snack(
+                            'अधिकारी असाइनमेंट संरचना पेज से ही बदले जा सकते हैं'),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
-
   // ══════════════════════════════════════════════════════════════════════════
   //  MULTI-SELECT ACTION BAR
   // ══════════════════════════════════════════════════════════════════════════

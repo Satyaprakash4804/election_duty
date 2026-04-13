@@ -16,6 +16,9 @@ MAX_BATCH_ROWS    = 10_000
 INSERT_CHUNK_SIZE = 200
 SALT = "election_2026_secure_key"
 
+RANK_HIERARCHY = [
+    'SP', 'ASP', 'DSP', 'Inspector', 'SI', 'ASI', 'Head Constable', 'Constable'
+]
 
 def _fast_hash(pno: str) -> str:
     return hashlib.sha256((pno + SALT).encode()).hexdigest()
@@ -72,6 +75,15 @@ def _staff_list(cur, district=None):
              "mobile": r["mobile"] or "", "rank": r["user_rank"] or ""}
             for r in cur.fetchall()]
 
+def _get_lower_rank(rank: str) -> str | None:
+    """Returns the next lower rank in hierarchy, or None if already lowest."""
+    try:
+        idx = RANK_HIERARCHY.index(rank)
+        if idx < len(RANK_HIERARCHY) - 1:
+            return RANK_HIERARCHY[idx + 1]
+    except ValueError:
+        pass
+    return None
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SUPER ZONES
@@ -80,33 +92,62 @@ def _staff_list(cur, district=None):
 @admin_bp.route("/super-zones", methods=["GET"])
 @admin_required
 def get_super_zones():
+    search = request.args.get("q", "").strip()
+    page, limit, offset = _page_params()
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
+            params = [_admin_id()]
+            where_extra = ""
+            if search:
+                where_extra = "AND sz.name LIKE %s"
+                params.append(f"%{search}%")
+ 
+            cur.execute(f"""
+                SELECT COUNT(*) AS cnt FROM super_zones sz
+                WHERE sz.admin_id = %s {where_extra}
+            """, params)
+            total = cur.fetchone()["cnt"]
+ 
+            cur.execute(f"""
                 SELECT sz.id, sz.name, sz.district, sz.block,
                        COUNT(DISTINCT z.id) AS zone_count
                 FROM super_zones sz
                 LEFT JOIN zones z ON z.super_zone_id = sz.id
-                WHERE sz.admin_id = %s
+                WHERE sz.admin_id = %s {where_extra}
                 GROUP BY sz.id ORDER BY sz.id
-            """, (_admin_id(),))
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
             zones = cur.fetchall()
+ 
             if not zones:
-                return ok([])
+                return _paginated([], total, page, limit)
+ 
             sz_ids = [sz["id"] for sz in zones]
             ph = ",".join(["%s"] * len(sz_ids))
-            cur.execute(f"SELECT * FROM kshetra_officers WHERE super_zone_id IN ({ph}) ORDER BY super_zone_id, id", sz_ids)
+            cur.execute(
+                f"SELECT * FROM kshetra_officers WHERE super_zone_id IN ({ph}) ORDER BY super_zone_id, id",
+                sz_ids
+            )
             officers_by_sz = {}
             for row in cur.fetchall():
                 officers_by_sz.setdefault(row["super_zone_id"], []).append(_o(row))
-            result = [{"id": sz["id"], "name": sz["name"] or "", "district": sz["district"] or "",
-                       "block": sz["block"] or "", "zoneCount": sz["zone_count"],
-                       "officers": officers_by_sz.get(sz["id"], [])} for sz in zones]
+ 
+            result = [{
+                "id":        sz["id"],
+                "name":      sz["name"]      or "",
+                "district":  sz["district"]  or "",
+                "block":     sz["block"]     or "",
+                "zoneCount": sz["zone_count"],
+                "officers":  officers_by_sz.get(sz["id"], []),
+            } for sz in zones]
+ 
     finally:
         conn.close()
-    return ok(result)
-
+ 
+    return _paginated(result, total, page, limit)
+ 
 
 @admin_bp.route("/super-zones", methods=["POST"])
 @admin_required
@@ -137,15 +178,22 @@ def update_super_zone(sz_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE super_zones SET name=%s,district=%s,block=%s WHERE id=%s AND admin_id=%s",
-                        (body.get("name", ""), body.get("district", ""), body.get("block", ""), sz_id, _admin_id()))
-            cur.execute("DELETE FROM kshetra_officers WHERE super_zone_id=%s", (sz_id,))
+            cur.execute(
+                "UPDATE super_zones SET name=%s,district=%s,block=%s "
+                "WHERE id=%s AND admin_id=%s",
+                (body.get("name",""), body.get("district",""),
+                 body.get("block",""), sz_id, _admin_id())
+            )
+            cur.execute(
+                "DELETE FROM kshetra_officers WHERE super_zone_id=%s", (sz_id,)
+            )
             for o in body.get("officers", []):
                 _insert_officer(cur, "kshetra_officers", "super_zone_id", sz_id, o)
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Updated")
+
 
 
 @admin_bp.route("/super-zones/<int:sz_id>", methods=["DELETE"])
@@ -183,10 +231,17 @@ def add_kshetra_officer(sz_id):
     try:
         with conn.cursor() as cur:
             new_id = _insert_officer(cur, "kshetra_officers", "super_zone_id", sz_id, body)
+            # Fetch back the created/linked user_id
+            cur.execute(
+                "SELECT user_id FROM kshetra_officers WHERE id=%s", (new_id,)
+            )
+            row = cur.fetchone()
+            user_id = row["user_id"] if row else None
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id}, "Officer added", 201)
+    return ok({"id": new_id, "userId": user_id}, "Officer added", 201)
+
 
 
 @admin_bp.route("/kshetra-officers/<int:o_id>", methods=["PUT"])
@@ -196,13 +251,53 @@ def update_kshetra_officer(o_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE kshetra_officers SET name=%s,pno=%s,mobile=%s,user_rank=%s,user_id=%s WHERE id=%s",
-                        (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
-                         body.get("rank", ""), body.get("userId") or None, o_id))
+            # Fetch existing officer to get user_id
+            cur.execute(
+                "SELECT user_id FROM kshetra_officers WHERE id=%s", (o_id,)
+            )
+            existing = cur.fetchone()
+
+            uid    = body.get("userId") or (existing["user_id"] if existing else None)
+            name   = body.get("name",   "")
+            pno    = body.get("pno",    "")
+            mobile = body.get("mobile", "")
+            rank   = body.get("rank",   "")
+
+            # If no userId but pno given, create/find user
+            if not uid and pno:
+                cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
+                u = cur.fetchone()
+                if u:
+                    uid = u["id"]
+                else:
+                    cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+                    username = pno if not cur.fetchone() else f"{pno}_off"
+                    cur.execute("""
+                        INSERT INTO users
+                            (name, pno, username, password, mobile,
+                             user_rank, role, is_active, created_by)
+                        VALUES (%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                    """, (name, pno, username, _fast_hash(pno),
+                          mobile, rank, request.user["id"]))
+                    uid = cur.lastrowid
+
+            # Sync user record if uid exists
+            if uid:
+                cur.execute("""
+                    UPDATE users SET name=%s, mobile=%s, user_rank=%s
+                    WHERE id=%s AND role='staff'
+                """, (name, mobile, rank, uid))
+
+            cur.execute("""
+                UPDATE kshetra_officers
+                SET name=%s, pno=%s, mobile=%s, user_rank=%s, user_id=%s
+                WHERE id=%s
+            """, (name, pno, mobile, rank, uid, o_id))
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Updated")
+
 
 
 @admin_bp.route("/kshetra-officers/<int:o_id>", methods=["DELETE"])
@@ -225,27 +320,53 @@ def delete_kshetra_officer(o_id):
 @admin_bp.route("/super-zones/<int:sz_id>/zones", methods=["GET"])
 @admin_required
 def get_zones(sz_id):
+    search = request.args.get("q", "").strip()
+    page, limit, offset = _page_params()
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT z.id, z.name, z.hq_address, COUNT(DISTINCT s.id) AS sector_count
+            params = [sz_id]
+            where_extra = ""
+            if search:
+                where_extra = "AND z.name LIKE %s"
+                params.append(f"%{search}%")
+ 
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM zones z WHERE z.super_zone_id=%s {where_extra}", params)
+            total = cur.fetchone()["cnt"]
+ 
+            cur.execute(f"""
+                SELECT z.id, z.name, z.hq_address, COUNT(DISTINCT s.id) AS sector_count
                 FROM zones z LEFT JOIN sectors s ON s.zone_id=z.id
-                WHERE z.super_zone_id=%s GROUP BY z.id ORDER BY z.id""", (sz_id,))
+                WHERE z.super_zone_id=%s {where_extra}
+                GROUP BY z.id ORDER BY z.id
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
             zones = cur.fetchall()
+ 
             if not zones:
-                return ok([])
+                return _paginated([], total, page, limit)
+ 
             z_ids = [z["id"] for z in zones]
             ph = ",".join(["%s"] * len(z_ids))
             cur.execute(f"SELECT * FROM zonal_officers WHERE zone_id IN ({ph}) ORDER BY zone_id, id", z_ids)
             officers_by_zone = {}
             for row in cur.fetchall():
                 officers_by_zone.setdefault(row["zone_id"], []).append(_o(row))
-            result = [{"id": z["id"], "name": z["name"] or "", "hqAddress": z["hq_address"] or "",
-                       "sectorCount": z["sector_count"], "officers": officers_by_zone.get(z["id"], [])} for z in zones]
+ 
+            result = [{
+                "id":          z["id"],
+                "name":        z["name"]       or "",
+                "hqAddress":   z["hq_address"] or "",
+                "sectorCount": z["sector_count"],
+                "officers":    officers_by_zone.get(z["id"], []),
+            } for z in zones]
+ 
     finally:
         conn.close()
-    return ok(result)
-
+ 
+    return _paginated(result, total, page, limit)
+ 
 
 @admin_bp.route("/super-zones/<int:sz_id>/zones", methods=["POST"])
 @admin_required
@@ -275,15 +396,20 @@ def update_zone(z_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE zones SET name=%s,hq_address=%s WHERE id=%s",
-                        (body.get("name", ""), body.get("hqAddress", ""), z_id))
-            cur.execute("DELETE FROM zonal_officers WHERE zone_id=%s", (z_id,))
+            cur.execute(
+                "UPDATE zones SET name=%s,hq_address=%s WHERE id=%s",
+                (body.get("name",""), body.get("hqAddress",""), z_id)
+            )
+            cur.execute(
+                "DELETE FROM zonal_officers WHERE zone_id=%s", (z_id,)
+            )
             for o in body.get("officers", []):
                 _insert_officer(cur, "zonal_officers", "zone_id", z_id, o)
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Updated")
+
 
 
 @admin_bp.route("/zones/<int:z_id>", methods=["DELETE"])
@@ -321,10 +447,16 @@ def add_zonal_officer(z_id):
     try:
         with conn.cursor() as cur:
             new_id = _insert_officer(cur, "zonal_officers", "zone_id", z_id, body)
+            cur.execute(
+                "SELECT user_id FROM zonal_officers WHERE id=%s", (new_id,)
+            )
+            row = cur.fetchone()
+            user_id = row["user_id"] if row else None
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id}, "Officer added", 201)
+    return ok({"id": new_id, "userId": user_id}, "Officer added", 201)
+
 
 
 @admin_bp.route("/zonal-officers/<int:o_id>", methods=["PUT"])
@@ -334,13 +466,50 @@ def update_zonal_officer(o_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE zonal_officers SET name=%s,pno=%s,mobile=%s,user_rank=%s,user_id=%s WHERE id=%s",
-                        (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
-                         body.get("rank", ""), body.get("userId") or None, o_id))
+            cur.execute(
+                "SELECT user_id FROM zonal_officers WHERE id=%s", (o_id,)
+            )
+            existing = cur.fetchone()
+
+            uid    = body.get("userId") or (existing["user_id"] if existing else None)
+            name   = body.get("name",   "")
+            pno    = body.get("pno",    "")
+            mobile = body.get("mobile", "")
+            rank   = body.get("rank",   "")
+
+            if not uid and pno:
+                cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
+                u = cur.fetchone()
+                if u:
+                    uid = u["id"]
+                else:
+                    cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+                    username = pno if not cur.fetchone() else f"{pno}_off"
+                    cur.execute("""
+                        INSERT INTO users
+                            (name, pno, username, password, mobile,
+                             user_rank, role, is_active, created_by)
+                        VALUES (%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                    """, (name, pno, username, _fast_hash(pno),
+                          mobile, rank, request.user["id"]))
+                    uid = cur.lastrowid
+
+            if uid:
+                cur.execute("""
+                    UPDATE users SET name=%s, mobile=%s, user_rank=%s
+                    WHERE id=%s AND role='staff'
+                """, (name, mobile, rank, uid))
+
+            cur.execute("""
+                UPDATE zonal_officers
+                SET name=%s, pno=%s, mobile=%s, user_rank=%s, user_id=%s
+                WHERE id=%s
+            """, (name, pno, mobile, rank, uid, o_id))
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Updated")
+
 
 
 @admin_bp.route("/zonal-officers/<int:o_id>", methods=["DELETE"])
@@ -363,27 +532,53 @@ def delete_zonal_officer(o_id):
 @admin_bp.route("/zones/<int:z_id>/sectors", methods=["GET"])
 @admin_required
 def get_sectors(z_id):
+    search = request.args.get("q", "").strip()
+    page, limit, offset = _page_params()
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT s.id, s.name, COUNT(DISTINCT gp.id) AS gp_count
+            params = [z_id]
+            where_extra = ""
+            if search:
+                where_extra = "AND s.name LIKE %s"
+                params.append(f"%{search}%")
+ 
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM sectors s WHERE s.zone_id=%s {where_extra}", params)
+            total = cur.fetchone()["cnt"]
+ 
+            cur.execute(f"""
+                SELECT s.id, s.name, COUNT(DISTINCT gp.id) AS gp_count
                 FROM sectors s LEFT JOIN gram_panchayats gp ON gp.sector_id=s.id
-                WHERE s.zone_id=%s GROUP BY s.id ORDER BY s.id""", (z_id,))
+                WHERE s.zone_id=%s {where_extra}
+                GROUP BY s.id ORDER BY s.id
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
             sectors = cur.fetchall()
+ 
             if not sectors:
-                return ok([])
+                return _paginated([], total, page, limit)
+ 
             s_ids = [s["id"] for s in sectors]
             ph = ",".join(["%s"] * len(s_ids))
             cur.execute(f"SELECT * FROM sector_officers WHERE sector_id IN ({ph}) ORDER BY sector_id, id", s_ids)
             officers_by_sector = {}
             for row in cur.fetchall():
                 officers_by_sector.setdefault(row["sector_id"], []).append(_o(row))
-            result = [{"id": s["id"], "name": s["name"] or "", "gpCount": s["gp_count"],
-                       "officers": officers_by_sector.get(s["id"], [])} for s in sectors]
+ 
+            result = [{
+                "id":       s["id"],
+                "name":     s["name"] or "",
+                "gpCount":  s["gp_count"],
+                "officers": officers_by_sector.get(s["id"], []),
+            } for s in sectors]
+ 
     finally:
         conn.close()
-    return ok(result)
-
+ 
+    return _paginated(result, total, page, limit)
+ 
+ 
 
 @admin_bp.route("/zones/<int:z_id>/sectors", methods=["POST"])
 @admin_required
@@ -413,17 +608,20 @@ def update_sector(s_id):
     try:
         with conn.cursor() as cur:
             if body.get("name"):
-                cur.execute("UPDATE sectors SET name=%s WHERE id=%s", (body["name"], s_id))
-            cur.execute("DELETE FROM sector_officers WHERE sector_id=%s", (s_id,))
+                cur.execute(
+                    "UPDATE sectors SET name=%s WHERE id=%s",
+                    (body["name"], s_id)
+                )
+            cur.execute(
+                "DELETE FROM sector_officers WHERE sector_id=%s", (s_id,)
+            )
             for o in body.get("officers", []):
-                if o.get("name", "").strip():
+                if o.get("name","").strip():
                     _insert_officer(cur, "sector_officers", "sector_id", s_id, o)
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Updated")
-
-
 @admin_bp.route("/sectors/<int:s_id>", methods=["DELETE"])
 @admin_required
 def delete_sector(s_id):
@@ -459,11 +657,15 @@ def add_sector_officer(s_id):
     try:
         with conn.cursor() as cur:
             new_id = _insert_officer(cur, "sector_officers", "sector_id", s_id, body)
+            cur.execute(
+                "SELECT user_id FROM sector_officers WHERE id=%s", (new_id,)
+            )
+            row = cur.fetchone()
+            user_id = row["user_id"] if row else None
         conn.commit()
     finally:
         conn.close()
-    return ok({"id": new_id}, "Officer added", 201)
-
+    return ok({"id": new_id, "userId": user_id}, "Officer added", 201)
 
 @admin_bp.route("/sector-officers/<int:o_id>", methods=["PUT"])
 @admin_required
@@ -472,14 +674,49 @@ def update_sector_officer(o_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE sector_officers SET name=%s,pno=%s,mobile=%s,user_rank=%s,user_id=%s WHERE id=%s",
-                        (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
-                         body.get("rank", ""), body.get("userId") or None, o_id))
+            cur.execute(
+                "SELECT user_id FROM sector_officers WHERE id=%s", (o_id,)
+            )
+            existing = cur.fetchone()
+
+            uid    = body.get("userId") or (existing["user_id"] if existing else None)
+            name   = body.get("name",   "")
+            pno    = body.get("pno",    "")
+            mobile = body.get("mobile", "")
+            rank   = body.get("rank",   "")
+
+            if not uid and pno:
+                cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
+                u = cur.fetchone()
+                if u:
+                    uid = u["id"]
+                else:
+                    cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+                    username = pno if not cur.fetchone() else f"{pno}_off"
+                    cur.execute("""
+                        INSERT INTO users
+                            (name, pno, username, password, mobile,
+                             user_rank, role, is_active, created_by)
+                        VALUES (%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                    """, (name, pno, username, _fast_hash(pno),
+                          mobile, rank, request.user["id"]))
+                    uid = cur.lastrowid
+
+            if uid:
+                cur.execute("""
+                    UPDATE users SET name=%s, mobile=%s, user_rank=%s
+                    WHERE id=%s AND role='staff'
+                """, (name, mobile, rank, uid))
+
+            cur.execute("""
+                UPDATE sector_officers
+                SET name=%s, pno=%s, mobile=%s, user_rank=%s, user_id=%s
+                WHERE id=%s
+            """, (name, pno, mobile, rank, uid, o_id))
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Updated")
-
 
 @admin_bp.route("/sector-officers/<int:o_id>", methods=["DELETE"])
 @admin_required
@@ -495,23 +732,52 @@ def delete_sector_officer(o_id):
 
 
 def _insert_officer(cur, table, fk_col, fk_val, o):
-    uid = o.get("userId") or o.get("user_id") or None
-    name = o.get("name", "").strip()
-    pno = o.get("pno", "").strip()
+    uid    = o.get("userId") or o.get("user_id") or None
+    name   = o.get("name",   "").strip()
+    pno    = o.get("pno",    "").strip()
     mobile = o.get("mobile", "").strip()
-    rank = o.get("rank", "").strip()
+    rank   = o.get("rank",   "").strip()
+
     if uid:
+        # ── Picked from staff list — fetch their details ──────────────────
         cur.execute("SELECT name, pno, mobile, user_rank FROM users WHERE id=%s", (uid,))
         u = cur.fetchone()
         if u:
             if not name:   name   = u["name"]      or ""
-            if not pno:    pno    = u["pno"]       or ""
-            if not mobile: mobile = u["mobile"]    or ""
-            if not rank:   rank   = u["user_rank"] or ""
-    cur.execute(f"INSERT INTO {table} ({fk_col}, user_id, name, pno, mobile, user_rank) VALUES (%s,%s,%s,%s,%s,%s)",
-                (fk_val, uid or None, name, pno, mobile, rank))
-    return cur.lastrowid
+            if not pno:    pno    = u["pno"]        or ""
+            if not mobile: mobile = u["mobile"]     or ""
+            if not rank:   rank   = u["user_rank"]  or ""
 
+    elif pno:
+        # ── Manual entry — create user if not exists ──────────────────────
+        cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
+        existing = cur.fetchone()
+        if existing:
+            uid = existing["id"]
+        else:
+            # Check username collision
+            cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+            username = pno if not cur.fetchone() else f"{pno}_off"
+
+            cur.execute("""
+                INSERT INTO users
+                    (name, pno, username, password, mobile, user_rank,
+                     role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,'staff',1,%s)
+            """, (
+                name, pno, username,
+                _fast_hash(pno),        # default password = PNO
+                mobile, rank,
+                request.user["id"]
+            ))
+            uid = cur.lastrowid
+
+    cur.execute(
+        f"INSERT INTO {table} ({fk_col}, user_id, name, pno, mobile, user_rank) "
+        f"VALUES (%s,%s,%s,%s,%s,%s)",
+        (fk_val, uid or None, name, pno, mobile, rank)
+    )
+    return cur.lastrowid
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  GRAM PANCHAYATS
@@ -520,18 +786,43 @@ def _insert_officer(cur, table, fk_col, fk_val, o):
 @admin_bp.route("/sectors/<int:s_id>/gram-panchayats", methods=["GET"])
 @admin_required
 def get_gram_panchayats(s_id):
+    search = request.args.get("q", "").strip()
+    page, limit, offset = _page_params()
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT gp.*, COUNT(ms.id) AS center_count
-                FROM gram_panchayats gp LEFT JOIN matdan_sthal ms ON ms.gram_panchayat_id=gp.id
-                WHERE gp.sector_id=%s GROUP BY gp.id ORDER BY gp.id""", (s_id,))
+            params = [s_id]
+            where_extra = ""
+            if search:
+                where_extra = "AND gp.name LIKE %s"
+                params.append(f"%{search}%")
+ 
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM gram_panchayats gp WHERE gp.sector_id=%s {where_extra}", params)
+            total = cur.fetchone()["cnt"]
+ 
+            cur.execute(f"""
+                SELECT gp.*, COUNT(ms.id) AS center_count
+                FROM gram_panchayats gp
+                LEFT JOIN matdan_sthal ms ON ms.gram_panchayat_id=gp.id
+                WHERE gp.sector_id=%s {where_extra}
+                GROUP BY gp.id ORDER BY gp.id
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
             rows = cur.fetchall()
     finally:
         conn.close()
-    return ok([{"id": r["id"], "name": r["name"] or "", "address": r["address"] or "",
-                "centerCount": r["center_count"]} for r in rows])
-
+ 
+    data = [{
+        "id":          r["id"],
+        "name":        r["name"]    or "",
+        "address":     r["address"] or "",
+        "centerCount": r["center_count"],
+    } for r in rows]
+ 
+    return _paginated(data, total, page, limit)
+ 
+ 
 
 @admin_bp.route("/sectors/<int:s_id>/gram-panchayats", methods=["POST"])
 @admin_required
@@ -584,63 +875,163 @@ def delete_gram_panchayat(gp_id):
 #  ELECTION CENTERS
 # ══════════════════════════════════════════════════════════════════════════════
 
+
 @admin_bp.route("/gram-panchayats/<int:gp_id>/centers", methods=["GET"])
 @admin_required
 def get_centers(gp_id):
+    page, limit, offset = _page_params()
+    search = request.args.get("q", "").strip()
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""SELECT ms.*,
-                    (SELECT COUNT(*) FROM duty_assignments da WHERE da.sthal_id=ms.id) AS duty_count
-                FROM matdan_sthal ms WHERE ms.gram_panchayat_id=%s ORDER BY ms.id""", (gp_id,))
-            rows = cur.fetchall()
+            params = [gp_id]
+            where_extra = ""
+            if search:
+                where_extra = "AND ms.name LIKE %s"
+                params.append(f"%{search}%")
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM matdan_sthal ms WHERE ms.gram_panchayat_id=%s {where_extra}", params)
+            total = cur.fetchone()["cnt"]
+            cur.execute(f"""
+                SELECT ms.*,
+                    (SELECT COUNT(*) FROM duty_assignments da WHERE da.sthal_id=ms.id) AS duty_count,
+                    (SELECT COUNT(*) FROM matdan_kendra mk WHERE mk.matdan_sthal_id=ms.id) AS room_count
+                FROM matdan_sthal ms
+                WHERE ms.gram_panchayat_id=%s {where_extra}
+                ORDER BY ms.name LIMIT %s OFFSET %s
+            """, params + [limit, offset])
+            centers = cur.fetchall()
+            if not centers:
+                return _paginated([], total, page, limit)
+            center_ids = [c["id"] for c in centers]
+            ph = ",".join(["%s"] * len(center_ids))
+            cur.execute(f"""
+                SELECT da.sthal_id, u.id, u.name, u.pno, u.mobile, u.user_rank
+                FROM duty_assignments da JOIN users u ON u.id=da.staff_id
+                WHERE da.sthal_id IN ({ph}) ORDER BY da.sthal_id, u.name
+            """, center_ids)
+            staff_by_center = {}
+            for row in cur.fetchall():
+                staff_by_center.setdefault(row["sthal_id"], []).append({
+                    "id": row["id"], "name": row["name"] or "", "pno": row["pno"] or "", "rank": row["user_rank"] or ""})
+            cur.execute("SELECT sensitivity, user_rank, required_count FROM booth_staff_rules WHERE admin_id=%s", (_admin_id(),))
+            rules_raw = cur.fetchall()
+            rules = {}
+            for r in rules_raw:
+                rules.setdefault(r["sensitivity"], {})[r["user_rank"]] = r["required_count"]
     finally:
         conn.close()
-    return ok([{"id": r["id"], "name": r["name"] or "", "address": r["address"] or "",
-                "thana": r["thana"] or "", "centerType": r["center_type"], "busNo": r["bus_no"] or "",
-                "latitude": float(r["latitude"]) if r["latitude"] else None,
-                "longitude": float(r["longitude"]) if r["longitude"] else None,
-                "dutyCount": r["duty_count"]} for r in rows])
-
-
+    data = []
+    for c in centers:
+        center_type  = c["center_type"] or "C"
+        assigned     = staff_by_center.get(c["id"], [])
+        center_rules = rules.get(center_type, {})
+        assigned_rank_count = {}
+        for s in assigned:
+            assigned_rank_count[s["rank"]] = assigned_rank_count.get(s["rank"], 0) + 1
+        missing = []
+        for rank, required in center_rules.items():
+            have = assigned_rank_count.get(rank, 0)
+            if have < required:
+                lower = _get_lower_rank(rank)
+                missing.append({"rank": rank, "required": required, "available": have,
+                                 "lowerRankSuggestion": lower})
+        data.append({
+            "id": c["id"], "name": c["name"] or "", "address": c["address"] or "",
+            "thana": c["thana"] or "", "centerType": center_type, "busNo": c["bus_no"] or "",
+            "latitude": float(c["latitude"]) if c["latitude"] else None,
+            "longitude": float(c["longitude"]) if c["longitude"] else None,
+            "dutyCount": c["duty_count"], "roomCount": c["room_count"],
+            "assignedStaff": assigned, "missingRanks": missing,
+        })
+    return _paginated(data, total, page, limit)
+ 
+ 
 @admin_bp.route("/gram-panchayats/<int:gp_id>/centers", methods=["POST"])
 @admin_required
 def add_center(gp_id):
     body = request.get_json() or {}
-    name = body.get("name", "").strip()
+
+    name = (body.get("name") or "").strip()
     if not name:
         return err("name required")
+
+    # ✅ FIX: normalize center type
+    center_type = (body.get("centerType", "C") or "").strip().upper()
+
+    # ✅ safety fallback
+    if center_type not in ["A++", "A", "B", "C"]:
+        center_type = "C"
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("INSERT INTO matdan_sthal (name,address,gram_panchayat_id,thana,center_type,bus_no,latitude,longitude) VALUES (%s,%s,%s,%s,%s,%s,%s,%s)",
-                        (name, body.get("address", ""), gp_id, body.get("thana", ""),
-                         body.get("centerType", "C"), body.get("busNo", ""),
-                         body.get("latitude"), body.get("longitude")))
+            cur.execute("""
+                INSERT INTO matdan_sthal
+                (name, address, gram_panchayat_id, thana, center_type, bus_no, latitude, longitude)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (
+                name,
+                (body.get("address") or "").strip(),
+                gp_id,
+                (body.get("thana") or "").strip(),
+                center_type,  # ✅ fixed
+                (body.get("busNo") or "").strip(),
+                body.get("latitude"),
+                body.get("longitude")
+            ))
             new_id = cur.lastrowid
+
         conn.commit()
+
     finally:
         conn.close()
-    return ok({"id": new_id, "name": name}, "Center added", 201)
 
+    return ok({"id": new_id, "name": name, "centerType": center_type}, "Center added", 201)
 
 @admin_bp.route("/centers/<int:c_id>", methods=["PUT"])
 @admin_required
 def update_center(c_id):
     body = request.get_json() or {}
+
+    # ✅ FIX: normalize center type
+    center_type = (body.get("centerType", "C") or "").strip().upper()
+
+    # ✅ safety fallback
+    if center_type not in ["A++", "A", "B", "C"]:
+        center_type = "C"
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE matdan_sthal SET name=%s,address=%s,thana=%s,center_type=%s,bus_no=%s,latitude=%s,longitude=%s WHERE id=%s",
-                        (body.get("name", ""), body.get("address", ""), body.get("thana", ""),
-                         body.get("centerType", "C"), body.get("busNo", ""),
-                         body.get("latitude"), body.get("longitude"), c_id))
+            cur.execute("""
+                UPDATE matdan_sthal
+                SET name=%s,
+                    address=%s,
+                    thana=%s,
+                    center_type=%s,
+                    bus_no=%s,
+                    latitude=%s,
+                    longitude=%s
+                WHERE id=%s
+            """, (
+                (body.get("name") or "").strip(),
+                (body.get("address") or "").strip(),
+                (body.get("thana") or "").strip(),
+                center_type,  # ✅ fixed
+                (body.get("busNo") or "").strip(),
+                body.get("latitude"),
+                body.get("longitude"),
+                c_id
+            ))
+
         conn.commit()
+
     finally:
         conn.close()
-    return ok(None, "Updated")
 
+    return ok({"centerType": center_type}, "Updated")
 
+ 
 @admin_bp.route("/centers/<int:c_id>", methods=["DELETE"])
 @admin_required
 def delete_center(c_id):
@@ -652,7 +1043,31 @@ def delete_center(c_id):
     finally:
         conn.close()
     return ok(None, "Deleted")
+ 
+ 
 
+# ══════════════════════════════════════════════════════════════════════════════
+#  CENTER CLEAR ASSIGNMENTS  ← NEW: clears all duty assignments for a center
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+@admin_bp.route("/centers/<int:c_id>/clear-assignments", methods=["POST"])
+@admin_required
+def clear_center_assignments(c_id):
+    """Remove all duty assignments for a center. Used before re-assigning on type change."""
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM duty_assignments WHERE sthal_id=%s", (c_id,))
+            removed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+    write_log("INFO", f"Cleared {removed} assignments from center {c_id}", "AutoAssign")
+    return ok({"removed": removed}, "Assignments cleared")
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+#  ROOMS (Matdan Sthal / Matdan Kendra)
+# ══════════════════════════════════════════════════════════════════════════════
 
 @admin_bp.route("/centers/<int:c_id>/rooms", methods=["GET"])
 @admin_required
@@ -665,8 +1080,8 @@ def get_rooms(c_id):
     finally:
         conn.close()
     return ok([{"id": r["id"], "roomNumber": r["room_number"] or ""} for r in rows])
-
-
+ 
+ 
 @admin_bp.route("/centers/<int:c_id>/rooms", methods=["POST"])
 @admin_required
 def add_room(c_id):
@@ -683,8 +1098,8 @@ def add_room(c_id):
     finally:
         conn.close()
     return ok({"id": new_id, "roomNumber": rn}, "Room added", 201)
-
-
+ 
+ 
 @admin_bp.route("/rooms/<int:r_id>", methods=["DELETE"])
 @admin_required
 def delete_room(r_id):
@@ -696,8 +1111,8 @@ def delete_room(r_id):
     finally:
         conn.close()
     return ok(None, "Deleted")
-
-
+ 
+ 
 # ══════════════════════════════════════════════════════════════════════════════
 #  STAFF — paginated + search
 # ══════════════════════════════════════════════════════════════════════════════
@@ -705,8 +1120,9 @@ def delete_room(r_id):
 @admin_bp.route("/staff", methods=["GET"])
 @admin_required
 def get_staff():
-    search   = request.args.get("q", "").strip()
-    assigned = request.args.get("assigned", "").strip().lower()
+    search      = request.args.get("q", "").strip()
+    assigned    = request.args.get("assigned", "").strip().lower()
+    rank_filter = request.args.get("rank", "").strip()
     page, limit, offset = _page_params()
 
     conn = get_db()
@@ -717,36 +1133,69 @@ def get_staff():
 
             if search:
                 where_parts.append(
-                    "(u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s OR u.thana LIKE %s OR u.district LIKE %s)"
+                    "(u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s "
+                    "OR u.thana LIKE %s OR u.district LIKE %s)"
                 )
                 like = f"%{search}%"
                 params.extend([like, like, like, like, like])
 
+            if rank_filter:
+                where_parts.append("u.user_rank = %s")
+                params.append(rank_filter)
+
+            # ── FIXED: "assigned" includes both duty_assignments AND officer roles ──
+            OFFICER_EXISTS = """(
+                EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=u.id)
+                OR EXISTS (SELECT 1 FROM kshetra_officers ko WHERE ko.user_id=u.id)
+                OR EXISTS (SELECT 1 FROM zonal_officers zo WHERE zo.user_id=u.id)
+                OR EXISTS (SELECT 1 FROM sector_officers so WHERE so.user_id=u.id)
+            )"""
+
             if assigned == "yes":
-                where_parts.append(
-                    "EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=u.id)"
-                )
+                where_parts.append(OFFICER_EXISTS)
             elif assigned == "no":
-                where_parts.append(
-                    "NOT EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=u.id)"
-                )
+                where_parts.append(f"NOT {OFFICER_EXISTS}")
 
             where_sql = " AND ".join(where_parts)
 
-            cur.execute(
-                f"SELECT COUNT(*) AS cnt FROM users u WHERE {where_sql}",
-                params
-            )
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM users u WHERE {where_sql}", params)
             total = cur.fetchone()["cnt"]
 
             cur.execute(f"""
                 SELECT
                     u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
-                    (SELECT da.id FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS duty_id,
+
+                    -- duty assignment (booth)
+                    (SELECT da.id       FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS duty_id,
                     (SELECT da.sthal_id FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS sthal_id,
-                    (SELECT ms.name FROM duty_assignments da
+                    (SELECT ms.name     FROM duty_assignments da
                      JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                     WHERE da.staff_id=u.id LIMIT 1) AS center_name
+                     WHERE da.staff_id=u.id LIMIT 1) AS center_name,
+
+                    -- kshetra officer assignment
+                    (SELECT sz.name     FROM kshetra_officers ko
+                     JOIN super_zones sz ON sz.id=ko.super_zone_id
+                     WHERE ko.user_id=u.id LIMIT 1) AS sz_name,
+                    (SELECT sz.district FROM kshetra_officers ko
+                     JOIN super_zones sz ON sz.id=ko.super_zone_id
+                     WHERE ko.user_id=u.id LIMIT 1) AS sz_district,
+                    (SELECT sz.block    FROM kshetra_officers ko
+                     JOIN super_zones sz ON sz.id=ko.super_zone_id
+                     WHERE ko.user_id=u.id LIMIT 1) AS sz_block,
+
+                    -- zonal officer assignment
+                    (SELECT z.name       FROM zonal_officers zo
+                     JOIN zones z ON z.id=zo.zone_id
+                     WHERE zo.user_id=u.id LIMIT 1) AS zone_name,
+                    (SELECT z.hq_address FROM zonal_officers zo
+                     JOIN zones z ON z.id=zo.zone_id
+                     WHERE zo.user_id=u.id LIMIT 1) AS zone_hq,
+
+                    -- sector officer assignment
+                    (SELECT s.name FROM sector_officers so
+                     JOIN sectors s ON s.id=so.sector_id
+                     WHERE so.user_id=u.id LIMIT 1) AS sector_name
+
                 FROM users u
                 WHERE {where_sql}
                 ORDER BY u.name
@@ -756,22 +1205,57 @@ def get_staff():
     finally:
         conn.close()
 
-    data = [{
-        "id":         r["id"],
-        "name":       r["name"]       or "",
-        "pno":        r["pno"]        or "",
-        "mobile":     r["mobile"]     or "",
-        "thana":      r["thana"]      or "",
-        "district":   r["district"]   or "",
-        "rank":       r["user_rank"]  or "",
-        "isAssigned": r["sthal_id"] is not None,
-        "dutyId":     r["duty_id"],
-        "centerId":   r["sthal_id"],
-        "centerName": r["center_name"] or "",
-    } for r in rows]
+    data = []
+    for r in rows:
+        # Determine assignment type and label
+        is_booth_assigned   = r["sthal_id"]   is not None
+        is_officer_kshetra  = r["sz_name"]     is not None
+        is_officer_zonal    = r["zone_name"]   is not None
+        is_officer_sector   = r["sector_name"] is not None
+        is_assigned = is_booth_assigned or is_officer_kshetra or is_officer_zonal or is_officer_sector
+
+        # Build assignment label
+        if is_booth_assigned:
+            assign_type  = "booth"
+            assign_label = r["center_name"] or ""
+            assign_detail = ""
+        elif is_officer_kshetra:
+            assign_type  = "kshetra"
+            assign_label = r["sz_name"] or ""
+            assign_detail = " • ".join(filter(None, [r["sz_district"], r["sz_block"]]))
+        elif is_officer_zonal:
+            assign_type  = "zone"
+            assign_label = r["zone_name"] or ""
+            assign_detail = r["zone_hq"] or ""
+        elif is_officer_sector:
+            assign_type  = "sector"
+            assign_label = r["sector_name"] or ""
+            assign_detail = ""
+        else:
+            assign_type  = ""
+            assign_label = ""
+            assign_detail = ""
+
+        data.append({
+            "id":           r["id"],
+            "name":         r["name"]      or "",
+            "pno":          r["pno"]       or "",
+            "mobile":       r["mobile"]    or "",
+            "thana":        r["thana"]     or "",
+            "district":     r["district"]  or "",
+            "rank":         r["user_rank"] or "",
+            "isAssigned":   is_assigned,
+            "assignType":   assign_type,
+            "assignLabel":  assign_label,
+            "assignDetail": assign_detail,
+            # keep old fields for backward compatibility
+            "dutyId":       r["duty_id"],
+            "centerId":     r["sthal_id"],
+            "centerName":   r["center_name"] or "",
+        })
 
     return _paginated(data, total, page, limit)
-
+ 
 
 
 @admin_bp.route("/staff/search", methods=["GET"])
@@ -1435,3 +1919,279 @@ def debug_staff():
         "byDistrict":       by_district,
         "message": "If matchingDistrict=0 but totalStaffInDB>0, district mismatch is still the bug"
     })
+
+
+# ─────────────────────────────────────────────────────────────
+# SAVE RULES
+# ─────────────────────────────────────────────────────────────
+@admin_bp.route("/rules", methods=["POST"])
+@admin_required
+def save_rules():
+    body = request.get_json() or {}
+    sensitivity = body.get("sensitivity")
+    rules = body.get("rules", [])
+
+    if not sensitivity:
+        return err("sensitivity required")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
+            # 🔹 delete old rules
+            cur.execute(
+                "DELETE FROM booth_staff_rules WHERE admin_id=%s AND sensitivity=%s",
+                (_admin_id(), sensitivity)
+            )
+
+            # 🔹 insert new rules
+            for r in rules:
+                cur.execute("""
+                    INSERT INTO booth_staff_rules (admin_id, sensitivity, user_rank, required_count)
+                    VALUES (%s,%s,%s,%s)
+                """, (
+                    _admin_id(),
+                    sensitivity,
+                    r["rank"],   # coming from frontend
+                    r["count"]
+                ))
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, "Rules saved")
+
+
+# ─────────────────────────────────────────────────────────────
+# GET RULES
+# ─────────────────────────────────────────────────────────────
+@admin_bp.route("/rules", methods=["GET"])
+@admin_required
+def get_rules():
+    sensitivity = request.args.get("sensitivity")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT user_rank AS `rank`, required_count 
+                FROM booth_staff_rules
+                WHERE admin_id=%s AND sensitivity=%s
+            """, (_admin_id(), sensitivity))
+
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return ok(rows)
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  AUTO ASSIGN  ← FULLY UPDATED: custom rules + lower-rank fallback + re-assign
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+@admin_bp.route("/auto-assign/<int:center_id>", methods=["POST"])
+@admin_required
+def auto_assign(center_id):
+    """
+    Auto-assigns staff to a center.
+    - Supports custom rules via request body: {"customRules": [{"rank":"SI","count":2}, ...]}
+    - Falls back to global booth_staff_rules if no custom rules
+    - When a rank has no available staff, tries next lower rank and reports it
+    - Returns: assigned list, missing list, lowerRankUsed list
+    """
+    body = request.get_json(silent=True) or {}
+    custom_rules_raw = body.get("customRules", [])
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # Get center type
+            cur.execute("SELECT center_type FROM matdan_sthal WHERE id=%s", (center_id,))
+            center = cur.fetchone()
+            if not center:
+                return err("Center not found", 404)
+            sensitivity = (center["center_type"] or "").strip().upper()
+ 
+            # Determine rules to use
+            if custom_rules_raw:
+                # Use custom rules from request
+                rules = [{"user_rank": r["rank"], "required_count": int(r.get("count", 1))}
+                         for r in custom_rules_raw if r.get("rank")]
+            else:
+                # Use global rules from DB
+                cur.execute("""
+                    SELECT user_rank, required_count FROM booth_staff_rules
+                    WHERE admin_id=%s AND sensitivity=%s
+                """, (_admin_id(), sensitivity))
+                rules = cur.fetchall()
+ 
+            if not rules:
+                return ok({
+                    "assigned":      [],
+                    "missing":       [],
+                    "lowerRankUsed": [],
+                    "total": 0,
+                    "message":       f"No rules set for {sensitivity}. Set rules on Dashboard."
+                })
+ 
+            assigned_list      = []
+            missing_list       = []
+            lower_rank_used    = []
+ 
+            for rule in rules:
+                rank  = rule["user_rank"]
+                count = rule["required_count"]
+ 
+                # Try to get required staff for this rank
+                cur.execute("""
+                    SELECT id, name, pno, mobile, user_rank FROM users
+                    WHERE role='staff' AND user_rank=%s AND is_active=1
+                      AND id NOT IN (SELECT staff_id FROM duty_assignments)
+                    ORDER BY RAND() LIMIT %s
+                """, (rank, count))
+                available = cur.fetchall()
+ 
+                assigned_for_rank = list(available)
+                needed = count - len(available)
+ 
+                # If not enough of this rank, try lower ranks to fill gap
+                if needed > 0:
+                    lower_rank = _get_lower_rank(rank)
+                    lower_assigned = []
+                    while lower_rank and needed > 0:
+                        cur.execute("""
+                            SELECT id, name, pno, mobile, user_rank FROM users
+                            WHERE role='staff' AND user_rank=%s AND is_active=1
+                              AND id NOT IN (SELECT staff_id FROM duty_assignments)
+                            ORDER BY RAND() LIMIT %s
+                        """, (lower_rank, needed))
+                        lower_available = cur.fetchall()
+                        if lower_available:
+                            lower_assigned.extend(lower_available)
+                            needed -= len(lower_available)
+                            # Record the substitution
+                            lower_rank_used.append({
+                                "requiredRank": rank,
+                                "assignedRank": lower_rank,
+                                "count":        len(lower_available),
+                            })
+                        lower_rank = _get_lower_rank(lower_rank) if lower_rank else None
+ 
+                    # Warn admin via missing if still short
+                    still_missing = count - len(available) - len(lower_assigned)
+                    if still_missing > 0:
+                        lower_suggestion = _get_lower_rank(rank)
+                        missing_list.append({
+                            "rank":                rank,
+                            "required":            count,
+                            "available":           len(available) + len(lower_assigned),
+                            "lowerRankSuggestion": lower_suggestion,
+                        })
+ 
+                    # Assign lower rank staff
+                    for s in lower_assigned:
+                        cur.execute("""
+                            INSERT IGNORE INTO duty_assignments (staff_id, sthal_id, assigned_by)
+                            VALUES (%s, %s, %s)
+                        """, (s["id"], center_id, _admin_id()))
+                        assigned_list.append({
+                            "id":           s["id"],
+                            "name":         s["name"]      or "",
+                            "pno":          s["pno"]       or "",
+                            "mobile":       s["mobile"]    or "",
+                            "rank":         s["user_rank"] or "",
+                            "originalRank": rank,
+                            "isLowerRank":  True,
+                        })
+ 
+                # Assign primary rank staff
+                for s in assigned_for_rank:
+                    cur.execute("""
+                        INSERT IGNORE INTO duty_assignments (staff_id, sthal_id, assigned_by)
+                        VALUES (%s, %s, %s)
+                    """, (s["id"], center_id, _admin_id()))
+                    assigned_list.append({
+                        "id":          s["id"],
+                        "name":        s["name"]      or "",
+                        "pno":         s["pno"]       or "",
+                        "mobile":      s["mobile"]    or "",
+                        "rank":        s["user_rank"] or "",
+                        "isLowerRank": False,
+                    })
+ 
+                # Report missing if NONE were found at all (no lower rank either)
+                if not available and not lower_rank_used:
+                    lower_suggestion = _get_lower_rank(rank)
+                    if not any(m["rank"] == rank for m in missing_list):
+                        missing_list.append({
+                            "rank":                rank,
+                            "required":            count,
+                            "available":           0,
+                            "lowerRankSuggestion": lower_suggestion,
+                        })
+ 
+        conn.commit()
+ 
+    finally:
+        conn.close()
+ 
+    write_log("INFO",
+              f"Auto-assign: {len(assigned_list)} assigned to center {center_id} "
+              f"(missing: {len(missing_list)}, lower-rank subs: {len(lower_rank_used)})",
+              "AutoAssign")
+ 
+    return ok({
+        "assigned":      assigned_list,
+        "missing":       missing_list,
+        "lowerRankUsed": lower_rank_used,
+        "total":         len(assigned_list),
+    })
+ 
+@admin_bp.route("/officers/save-to-users", methods=["POST"])
+@admin_required
+def save_officer_to_users():
+    """
+    Saves a manually entered officer to the users table.
+    Called automatically when an officer is added to super zone / zone / sector.
+    """
+    from werkzeug.security import generate_password_hash
+ 
+    body   = request.get_json() or {}
+    name   = body.get("name", "").strip()
+    pno    = body.get("pno", "").strip()
+    mobile = body.get("mobile", "").strip()
+    rank   = body.get("rank", "").strip()
+ 
+    if not name or not pno:
+        return err("name and pno required")
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # Check if already exists
+            cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
+            existing = cur.fetchone()
+            if existing:
+                return ok({"id": existing["id"], "existed": True}, "Already in users")
+ 
+            # Check username collision
+            cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
+            username = pno if not cur.fetchone() else f"{pno}_{_admin_id()}"
+ 
+            district = request.user.get("district") or ""
+ 
+            cur.execute("""
+                INSERT INTO users
+                    (name, pno, username, password, mobile, district, user_rank, role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+            """, (name, pno, username, generate_password_hash(pno),
+                  mobile, district, rank, _admin_id()))
+            new_id = cur.lastrowid
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    write_log("INFO", f"Officer '{name}' PNO:{pno} saved to users by admin {_admin_id()}", "Officer")
+    return ok({"id": new_id, "existed": False}, "Officer saved to users", 201)
+ 
