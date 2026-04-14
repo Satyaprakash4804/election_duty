@@ -143,9 +143,11 @@ def init_db():
                     thana       VARCHAR(100)  DEFAULT '',
                     pno         VARCHAR(50)   DEFAULT NULL,
                     user_rank   VARCHAR(100)  DEFAULT '',
+                    is_armed TINYINT(1) NOT NULL DEFAULT 0,
                     is_active   TINYINT(1)    NOT NULL DEFAULT 1,
                     created_by  INT           DEFAULT NULL,
                     assigned_by INT           DEFAULT NULL,
+                    super_admin_id INT        DEFAULT NULL,
                     created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
                                               ON UPDATE CURRENT_TIMESTAMP,
@@ -363,16 +365,15 @@ def init_db():
             # In init_db(), replace the booth_staff_rules CREATE TABLE with:
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS booth_staff_rules (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id INT NOT NULL,
-                    sensitivity ENUM('A++','A','B','C') NOT NULL,
-                    user_rank VARCHAR(100) NOT NULL,
-                    required_count INT NOT NULL DEFAULT 1,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    
-                    INDEX idx_admin (admin_id),
+                    id             INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id       INT  NOT NULL,
+                    sensitivity    ENUM('A++','A','B','C') NOT NULL,
+                    user_rank      VARCHAR(100) NOT NULL,
+                    is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
+                    required_count INT          NOT NULL DEFAULT 1,
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_admin       (admin_id),
                     INDEX idx_sensitivity (sensitivity),
-
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
@@ -390,8 +391,11 @@ def init_db():
             ensure_column(cur, db, "users", "thana VARCHAR(100) DEFAULT ''")
             ensure_column(cur, db, "users", "mobile VARCHAR(15) DEFAULT ''")
             ensure_column(cur, db, "users", "assigned_by INT DEFAULT NULL")
+            ensure_column(cur, db, "users", "super_admin_id INT DEFAULT NULL")
             ensure_column(cur, db, "users", "created_by INT DEFAULT NULL")
             ensure_column(cur, db, "users", "is_active TINYINT(1) NOT NULL DEFAULT 1")
+            ensure_column(cur, db, "users", "is_armed TINYINT(1) NOT NULL DEFAULT 0")
+
 
             # matdan_sthal
             ensure_column(cur, db, "matdan_sthal", "latitude DECIMAL(10,7) DEFAULT NULL")

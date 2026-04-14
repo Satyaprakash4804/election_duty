@@ -27,6 +27,9 @@ const _kAllRanks = [
   'SP', 'ASP', 'DSP', 'Inspector', 'SI', 'ASI', 'Head Constable', 'Constable',
 ];
 
+// Armed filter options
+enum _ArmedFilter { all, armed, unarmed }
+
 String _rh(dynamic val) =>
     _rankMap[(val ?? '').toString().toLowerCase().trim()] ??
     val?.toString() ?? '—';
@@ -283,7 +286,16 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
             td(_vd(s['staffThana'] ?? s['thana']),
                 center: true),
             td(_vd(s['district']), center: true),
-            td('सशस्त्र', center: true, fs: 4.5),
+
+            // 🔥 UPDATED HERE
+            td(
+              (s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1)
+                  ? 'सशस्त्र'
+                  : 'निःशस्त्र',
+              center: true,
+              fs: 4.5,
+            ),
+
             td(
               (s['busNo'] ?? s['bus_no'] ?? '')
                       .toString()
@@ -425,8 +437,14 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold) {
                                   ? _vd(e['district'])
                                   : '0',
                               flex: 2),
-                          sCell('0',
-                              flex: 1, isLast: true),
+                          sCell(e != null
+                                    ? ((e['isArmed'] == true || e['is_armed'] == true || e['is_armed'] == 1)
+                                        ? 'सशस्त्र'
+                                        : 'निःशस्त्र')
+                                    : '',
+                                flex: 1,
+                                isLast: true,
+                              ),
                         ]),
                       ),
                     );
@@ -639,11 +657,13 @@ class _DutyCardPageState extends State<DutyCardPage> {
   bool _hasMore    = true;
   static const int _kLimit = 50;
 
-  // search + rank filter
-  String  _q          = '';
-  String? _rankFilter; // null = all ranks
-  Timer?  _debounce;
-  final   _searchCtrl = TextEditingController();
+  // search + filters
+  String        _q           = '';
+  String?       _rankFilter;                          // null = all ranks
+  _ArmedFilter  _armedFilter = _ArmedFilter.all;      // ← NEW
+
+  Timer?        _debounce;
+  final         _searchCtrl = TextEditingController();
 
   Set<int> _selected = {};
   final    _scroll   = ScrollController();
@@ -659,8 +679,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
     });
     _searchCtrl.addListener(() {
       _debounce?.cancel();
-      _debounce =
-          Timer(const Duration(milliseconds: 400), () {
+      _debounce = Timer(const Duration(milliseconds: 400), () {
         final q = _searchCtrl.text.trim();
         if (q != _q) {
           _q = q;
@@ -697,31 +716,16 @@ class _DutyCardPageState extends State<DutyCardPage> {
     try {
       final token = await AuthService.getToken();
 
-      // Build URL — text search goes to /admin/duties,
-      // rank filter goes to /admin/staff?assigned=yes&rank=X then
-      // we cross-reference. Simpler: backend /admin/duties supports
-      // q= for name/pno/center search. For rank we filter client-side
-      // from already-loaded items OR use a separate endpoint.
-      // Since backend /admin/staff has rank filter, we use duties endpoint
-      // and filter client-side by rank (duties already loaded per page).
-      final url = StringBuffer(
-          '/admin/duties?page=$_page&limit=$_kLimit');
-      if (_q.isNotEmpty)
-        url.write('&q=${Uri.encodeComponent(_q)}');
+      final url = StringBuffer('/admin/duties?page=$_page&limit=$_kLimit');
+      if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
 
-      final res     = await ApiService.get(
-          url.toString(), token: token);
-      final wrapper =
-          (res['data'] as Map<String, dynamic>?) ?? {};
-      final items = (wrapper['data'] as List?)
-              ?.map((e) =>
-                  Map<String, dynamic>.from(e as Map))
-              .toList() ??
-          [];
-      final total =
-          (wrapper['total'] as num?)?.toInt() ?? 0;
-      final totalPages =
-          (wrapper['totalPages'] as num?)?.toInt() ?? 1;
+      final res     = await ApiService.get(url.toString(), token: token);
+      final wrapper = (res['data'] as Map<String, dynamic>?) ?? {};
+      final items   = (wrapper['data'] as List?)
+              ?.map((e) => Map<String, dynamic>.from(e as Map))
+              .toList() ?? [];
+      final total      = (wrapper['total']      as num?)?.toInt() ?? 0;
+      final totalPages = (wrapper['totalPages'] as num?)?.toInt() ?? 1;
 
       if (!mounted) return;
       setState(() {
@@ -735,8 +739,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
     } catch (e) {
       if (mounted) {
         setState(() => _loading = false);
-        showSnack(context, 'Failed to load: $e',
-            error: true);
+        showSnack(context, 'Failed to load: $e', error: true);
       }
     }
   }
@@ -745,37 +748,61 @@ class _DutyCardPageState extends State<DutyCardPage> {
     if (!_loading && _hasMore) _fetch();
   }
 
-  // Apply rank filter client-side on loaded items
+  // ── Client-side filtering: rank + armed ────────────────────────────────────
   List<Map<String, dynamic>> get _visible {
-    if (_rankFilter == null || _rankFilter!.isEmpty) {
-      return _items;
-    }
-    final rf = _rankFilter!.toLowerCase();
     return _items.where((s) {
-      // Check primary staff rank
-      final primaryRank =
-          (s['rank'] ?? s['user_rank'] ?? '')
-              .toString()
-              .toLowerCase();
-      if (primaryRank == rf) return true;
-      // Check sahyogi ranks
-      final sahyogi =
-          (s['sahyogi'] ?? []) as List;
-      return sahyogi.any((e) =>
-          (e['user_rank'] ?? e['rank'] ?? '')
-              .toString()
-              .toLowerCase() ==
-          rf);
+      // ── Rank filter ──
+      if (_rankFilter != null && _rankFilter!.isNotEmpty) {
+        final rf = _rankFilter!.toLowerCase();
+        final primaryRank = (s['rank'] ?? s['user_rank'] ?? '').toString().toLowerCase();
+        final rankOk = primaryRank == rf ||
+            ((s['sahyogi'] ?? []) as List).any((e) =>
+                (e['user_rank'] ?? e['rank'] ?? '').toString().toLowerCase() == rf);
+        if (!rankOk) return false;
+      }
+
+      // ── Armed filter (client-side on loaded data) ──
+      if (_armedFilter != _ArmedFilter.all) {
+        final wantArmed = _armedFilter == _ArmedFilter.armed;
+        final isArmed   = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
+        if (wantArmed != isArmed) return false;
+      }
+
+      return true;
     }).toList();
   }
 
+  // ── Armed label helpers ────────────────────────────────────────────────────
+  String _armedLabel(_ArmedFilter f) {
+    switch (f) {
+      case _ArmedFilter.all:     return 'सभी';
+      case _ArmedFilter.armed:   return 'सशस्त्र';
+      case _ArmedFilter.unarmed: return 'निःशस्त्र';
+    }
+  }
+
+  Color _armedColor(_ArmedFilter f) {
+    switch (f) {
+      case _ArmedFilter.all:     return kPrimary;
+      case _ArmedFilter.armed:   return const Color(0xFFC62828);
+      case _ArmedFilter.unarmed: return const Color(0xFF1565C0);
+    }
+  }
+
+  IconData _armedIcon(_ArmedFilter f) {
+    switch (f) {
+      case _ArmedFilter.all:     return Icons.people_outline;
+      case _ArmedFilter.armed:   return Icons.shield_outlined;
+      case _ArmedFilter.unarmed: return Icons.person_outline;
+    }
+  }
+
+  // ── Print helpers ──────────────────────────────────────────────────────────
   Future<void> _print(List<Map> list) async {
     if (list.isEmpty) return;
     final pdf  = pw.Document();
-    final font =
-        await PdfGoogleFonts.notoSansDevanagariRegular();
-    final bold =
-        await PdfGoogleFonts.notoSansDevanagariBold();
+    final font = await PdfGoogleFonts.notoSansDevanagariRegular();
+    final bold = await PdfGoogleFonts.notoSansDevanagariBold();
     for (final s in list) {
       pdf.addPage(pw.Page(
         pageFormat: _pageFormatFor(s),
@@ -783,8 +810,7 @@ class _DutyCardPageState extends State<DutyCardPage> {
         build: (_) => buildDutyCardPdf(s, font, bold),
       ));
     }
-    await Printing.layoutPdf(
-        onLayout: (_) => pdf.save());
+    await Printing.layoutPdf(onLayout: (_) => pdf.save());
   }
 
   Future<void> _printAll() async {
@@ -794,52 +820,39 @@ class _DutyCardPageState extends State<DutyCardPage> {
     }
     try {
       final token = await AuthService.getToken();
-      final all =
-          List<Map<String, dynamic>>.from(_items);
+      final all   = List<Map<String, dynamic>>.from(_items);
       int pg = _page;
       while (pg <= _totalPages) {
-        final url = StringBuffer(
-            '/admin/duties?page=$pg&limit=200');
-        if (_q.isNotEmpty)
-          url.write(
-              '&q=${Uri.encodeComponent(_q)}');
-        final res = await ApiService.get(
-            url.toString(), token: token);
-        final wrapper =
-            (res['data'] as Map<String, dynamic>?) ??
-                {};
-        final items = (wrapper['data'] as List?)
-                ?.map((e) =>
-                    Map<String, dynamic>.from(
-                        e as Map))
-                .toList() ??
-            [];
+        final url = StringBuffer('/admin/duties?page=$pg&limit=200');
+        if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
+        final res     = await ApiService.get(url.toString(), token: token);
+        final wrapper = (res['data'] as Map<String, dynamic>?) ?? {};
+        final items   = (wrapper['data'] as List?)
+                ?.map((e) => Map<String, dynamic>.from(e as Map))
+                .toList() ?? [];
         all.addAll(items);
         pg++;
       }
-      // Apply rank filter to full list before printing
-      final toPrint = _rankFilter == null
-          ? all
-          : all.where((s) {
-              final rf = _rankFilter!.toLowerCase();
-              final pr =
-                  (s['rank'] ?? s['user_rank'] ?? '')
-                      .toString()
-                      .toLowerCase();
-              if (pr == rf) return true;
-              final sah =
-                  (s['sahyogi'] ?? []) as List;
-              return sah.any((e) =>
-                  (e['user_rank'] ?? e['rank'] ?? '')
-                      .toString()
-                      .toLowerCase() ==
-                  rf);
-            }).toList();
+      // Apply both filters to full list
+      final toPrint = all.where((s) {
+        if (_rankFilter != null && _rankFilter!.isNotEmpty) {
+          final rf = _rankFilter!.toLowerCase();
+          final pr = (s['rank'] ?? s['user_rank'] ?? '').toString().toLowerCase();
+          final rankOk = pr == rf ||
+              ((s['sahyogi'] ?? []) as List).any((e) =>
+                  (e['user_rank'] ?? e['rank'] ?? '').toString().toLowerCase() == rf);
+          if (!rankOk) return false;
+        }
+        if (_armedFilter != _ArmedFilter.all) {
+          final wantArmed = _armedFilter == _ArmedFilter.armed;
+          final isArmed   = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
+          if (wantArmed != isArmed) return false;
+        }
+        return true;
+      }).toList();
       await _print(toPrint);
     } catch (e) {
-      if (mounted)
-        showSnack(context, 'Print failed: $e',
-            error: true);
+      if (mounted) showSnack(context, 'Print failed: $e', error: true);
     }
   }
 
@@ -849,93 +862,129 @@ class _DutyCardPageState extends State<DutyCardPage> {
 
     return Column(children: [
 
-      // ── Search + Rank filter bar ────────────────────────────────────────
+      // ── Search + Filter bar ───────────────────────────────────────────────
       Container(
         color: kSurface,
-        padding: const EdgeInsets.fromLTRB(
-            12, 10, 12, 10),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
         child: Column(children: [
+
           // Text search
           TextField(
             controller: _searchCtrl,
-            style: const TextStyle(
-                color: kDark, fontSize: 13),
+            style: const TextStyle(color: kDark, fontSize: 13),
             decoration: InputDecoration(
-              hintText:
-                  'नाम, PNO, केंद्र, जोन, थाना से खोजें...',
-              hintStyle: const TextStyle(
-                  color: kSubtle, fontSize: 13),
-              prefixIcon: const Icon(Icons.search,
-                  color: kSubtle, size: 18),
+              hintText: 'नाम, PNO, केंद्र, जोन, थाना से खोजें...',
+              hintStyle: const TextStyle(color: kSubtle, fontSize: 13),
+              prefixIcon: const Icon(Icons.search, color: kSubtle, size: 18),
               suffixIcon: _searchCtrl.text.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear,
-                          color: kSubtle, size: 16),
+                      icon: const Icon(Icons.clear, color: kSubtle, size: 16),
                       onPressed: () {
                         _searchCtrl.clear();
                         _q = '';
                         _reload();
-                      },
-                    )
+                      })
                   : null,
               filled: true,
               fillColor: Colors.white,
-              contentPadding:
-                  const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 10),
-              border: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                      color: kBorder)),
-              enabledBorder: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                      color: kBorder)),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius:
-                      BorderRadius.circular(10),
-                  borderSide: const BorderSide(
-                      color: kPrimary, width: 2)),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              border:        OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kBorder)),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kBorder)),
+              focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kPrimary, width: 2)),
               isDense: true,
             ),
           ),
 
           const SizedBox(height: 8),
 
-          // Rank filter chips
+          // ── Row 1: सशस्त्र / निःशस्त्र toggle ──────────────────────────
+          Row(children: [
+            // Label
+            const Text('शस्त्र:', style: TextStyle(color: kSubtle, fontSize: 11, fontWeight: FontWeight.w600)),
+            const SizedBox(width: 8),
+            // Three toggle buttons
+            ...(_ArmedFilter.values.map((f) {
+              final sel   = _armedFilter == f;
+              final color = _armedColor(f);
+              return Padding(
+                padding: const EdgeInsets.only(right: 6),
+                child: GestureDetector(
+                  onTap: () {
+                    if (_armedFilter != f) {
+                      setState(() { _armedFilter = f; _selected.clear(); });
+                    }
+                  },
+                  child: AnimatedContainer(
+                    duration: const Duration(milliseconds: 150),
+                    padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 6),
+                    decoration: BoxDecoration(
+                      color:  sel ? color : color.withOpacity(0.08),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: sel ? color : color.withOpacity(0.35), width: sel ? 1.5 : 1),
+                    ),
+                    child: Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(_armedIcon(f), size: 12, color: sel ? Colors.white : color),
+                      const SizedBox(width: 4),
+                      Text(_armedLabel(f),
+                          style: TextStyle(
+                              color: sel ? Colors.white : color,
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700)),
+                    ]),
+                  ),
+                ),
+              );
+            })),
+
+            const Spacer(),
+
+            // Active filter badge
+            if (_armedFilter != _ArmedFilter.all)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: _armedColor(_armedFilter).withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: _armedColor(_armedFilter).withOpacity(0.3)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  Icon(_armedIcon(_armedFilter), size: 10, color: _armedColor(_armedFilter)),
+                  const SizedBox(width: 4),
+                  Text(
+                    '${visible.length} मिले',
+                    style: TextStyle(color: _armedColor(_armedFilter), fontSize: 10, fontWeight: FontWeight.w700),
+                  ),
+                ]),
+              ),
+          ]),
+
+          const SizedBox(height: 8),
+
+          // ── Row 2: Rank filter chips ─────────────────────────────────────
           SizedBox(
             height: 32,
             child: ListView(
               scrollDirection: Axis.horizontal,
               children: [
-                // "All" chip
                 _RankChip(
                   label: 'सभी पद',
                   selected: _rankFilter == null,
                   color: kPrimary,
-                  onTap: () {
-                    if (_rankFilter != null) {
-                      setState(
-                          () => _rankFilter = null);
-                    }
-                  },
+                  onTap: () { if (_rankFilter != null) setState(() => _rankFilter = null); },
                 ),
                 const SizedBox(width: 6),
                 ..._kAllRanks.map((rank) {
-                  final selected =
-                      _rankFilter == rank;
+                  final selected = _rankFilter == rank;
                   return Padding(
-                    padding: const EdgeInsets.only(
-                        right: 6),
+                    padding: const EdgeInsets.only(right: 6),
                     child: _RankChip(
                       label: rank,
                       selected: selected,
                       color: _rankColor(rank),
-                      onTap: () => setState(() =>
-                          _rankFilter =
-                              selected ? null : rank),
+                      onTap: () => setState(() {
+                        _rankFilter = selected ? null : rank;
+                        _selected.clear();
+                      }),
                     ),
                   );
                 }),
@@ -949,47 +998,33 @@ class _DutyCardPageState extends State<DutyCardPage> {
       if (visible.isNotEmpty)
         Container(
           color: kBg,
-          padding: const EdgeInsets.symmetric(
-              horizontal: 16, vertical: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
           child: Row(children: [
             // Count display
-            Column(
-                crossAxisAlignment:
-                    CrossAxisAlignment.start,
-                children: [
+            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(
-                _rankFilter != null
+                (_rankFilter != null || _armedFilter != _ArmedFilter.all)
                     ? '${visible.length} / $_totalCount'
                     : _totalCount > _items.length
                         ? '${_items.length} / $_totalCount'
                         : '$_totalCount',
-                style: const TextStyle(
-                    color: kDark,
-                    fontSize: 13,
-                    fontWeight: FontWeight.w700),
+                style: const TextStyle(color: kDark, fontSize: 13, fontWeight: FontWeight.w700),
               ),
               Text(
-                _rankFilter != null
-                    ? 'पद: $_rankFilter'
-                    : 'कुल ड्यूटी',
-                style: const TextStyle(
-                    color: kSubtle, fontSize: 10),
+                _buildCountLabel(),
+                style: const TextStyle(color: kSubtle, fontSize: 10),
               ),
             ]),
             const Spacer(),
             if (_selected.isNotEmpty) ...[
               _ActionBtn(
-                label:
-                    'Print (${_selected.length})',
-                icon: Icons.print,
+                label: 'Print (${_selected.length})',
+                icon:  Icons.print,
                 color: kPrimary,
                 onTap: () {
                   final sel = visible
-                      .where((s) => _selected
-                          .contains(s['id'] as int))
-                      .map((s) =>
-                          Map<String, dynamic>.from(
-                              s))
+                      .where((s) => _selected.contains(s['id'] as int))
+                      .map((s) => Map<String, dynamic>.from(s))
                       .toList();
                   _print(sel);
                 },
@@ -997,37 +1032,26 @@ class _DutyCardPageState extends State<DutyCardPage> {
               const SizedBox(width: 6),
             ],
             _ActionBtn(
-              label:
-                  'Print All (${visible.length})',
-              icon: Icons.print_outlined,
+              label: 'Print All (${visible.length})',
+              icon:  Icons.print_outlined,
               color: kDark,
               onTap: _printAll,
             ),
             const SizedBox(width: 6),
             TextButton(
               onPressed: () => setState(() {
-                if (_selected.length ==
-                    visible.length) {
+                if (_selected.length == visible.length) {
                   _selected.clear();
                 } else {
-                  _selected = visible
-                      .map((s) => s['id'] as int)
-                      .toSet();
+                  _selected = visible.map((s) => s['id'] as int).toSet();
                 }
               }),
               style: TextButton.styleFrom(
                   foregroundColor: kPrimary,
-                  padding:
-                      const EdgeInsets.symmetric(
-                          horizontal: 8,
-                          vertical: 4)),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4)),
               child: Text(
-                _selected.length == visible.length
-                    ? 'Deselect'
-                    : 'Select All',
-                style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700),
+                _selected.length == visible.length ? 'Deselect' : 'Select All',
+                style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
               ),
             ),
           ]),
@@ -1035,227 +1059,150 @@ class _DutyCardPageState extends State<DutyCardPage> {
 
       // ── List ─────────────────────────────────────────────────────────────
       if (_loading && _items.isEmpty)
-        const Expanded(
-            child: Center(
-                child: CircularProgressIndicator(
-                    color: kPrimary)))
+        const Expanded(child: Center(child: CircularProgressIndicator(color: kPrimary)))
       else if (visible.isEmpty && !_loading)
-        Expanded(
-            child: emptyState(
-                _rankFilter != null
-                    ? 'पद "$_rankFilter" के लिए कोई ड्यूटी नहीं'
-                    : 'No assigned staff found',
-                Icons.how_to_vote_outlined))
+        Expanded(child: emptyState(
+            _buildEmptyLabel(),
+            Icons.how_to_vote_outlined))
       else
         Expanded(
           child: ListView.separated(
             controller: _scroll,
             padding: const EdgeInsets.all(12),
-            itemCount: visible.length +
-                (_hasMore && _rankFilter == null
-                    ? 1
-                    : 0),
-            separatorBuilder: (_, __) =>
-                const SizedBox(height: 8),
+            itemCount: visible.length + (_hasMore && _rankFilter == null && _armedFilter == _ArmedFilter.all ? 1 : 0),
+            separatorBuilder: (_, __) => const SizedBox(height: 8),
             itemBuilder: (ctx, i) {
               // Load-more spinner
               if (i >= visible.length) {
                 return const Padding(
-                  padding: EdgeInsets.symmetric(
-                      vertical: 16),
-                  child: Center(
-                    child: SizedBox(
-                      width: 22, height: 22,
-                      child:
-                          CircularProgressIndicator(
-                              strokeWidth: 2,
-                              color: kPrimary),
-                    ),
-                  ),
-                );
+                  padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(child: SizedBox(
+                    width: 22, height: 22,
+                    child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))));
               }
 
-              final s   = visible[i];
-              final id  = s['id'] as int;
-              final sel = _selected.contains(id);
-              final sahyogiCount =
-                  ((s['sahyogi'] ?? []) as List)
-                      .length;
-              final primaryRank =
-                  s['rank'] ?? s['user_rank'] ?? '';
-              final rankHindi = _rh(primaryRank);
+              final s            = visible[i];
+              final id           = s['id'] as int;
+              final sel          = _selected.contains(id);
+              final sahyogiCount = ((s['sahyogi'] ?? []) as List).length;
+              final primaryRank  = s['rank'] ?? s['user_rank'] ?? '';
+              final rankHindi    = _rh(primaryRank);
+              final isArmed      = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
 
               return GestureDetector(
-                onTap: () => setState(() =>
-                    sel
-                        ? _selected.remove(id)
-                        : _selected.add(id)),
+                onTap: () => setState(() => sel ? _selected.remove(id) : _selected.add(id)),
                 child: Container(
                   decoration: BoxDecoration(
-                    color: sel
-                        ? kPrimary.withOpacity(0.06)
-                        : Colors.white,
-                    borderRadius:
-                        BorderRadius.circular(12),
+                    color: sel ? kPrimary.withOpacity(0.06) : Colors.white,
+                    borderRadius: BorderRadius.circular(12),
                     border: Border.all(
-                      color: sel
-                          ? kPrimary
-                          : kBorder.withOpacity(0.4),
+                      color: sel ? kPrimary : kBorder.withOpacity(0.4),
                       width: sel ? 1.5 : 1,
                     ),
-                    boxShadow: [
-                      BoxShadow(
-                        color: kPrimary
-                            .withOpacity(0.05),
-                        blurRadius: 8,
-                        offset: const Offset(0, 3),
-                      )
-                    ],
+                    boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.05), blurRadius: 8, offset: const Offset(0, 3))],
                   ),
                   child: ListTile(
-                    contentPadding:
-                        const EdgeInsets.symmetric(
-                            horizontal: 14,
-                            vertical: 6),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 6),
                     leading: GestureDetector(
-                      onTap: () => setState(() =>
-                          sel
-                              ? _selected.remove(id)
-                              : _selected.add(id)),
+                      onTap: () => setState(() => sel ? _selected.remove(id) : _selected.add(id)),
                       child: Container(
-                        width: 40,
-                        height: 40,
+                        width: 40, height: 40,
                         decoration: BoxDecoration(
                           shape: BoxShape.circle,
-                          color: sel
-                              ? kPrimary
-                              : kSurface,
-                          border: Border.all(
-                              color: sel
-                                  ? kPrimary
-                                  : kBorder),
+                          color: sel ? kPrimary : kSurface,
+                          border: Border.all(color: sel ? kPrimary : kBorder),
                         ),
                         child: Center(
                           child: sel
-                              ? const Icon(
-                                  Icons.check,
-                                  color:
-                                      Colors.white,
-                                  size: 18)
+                              ? const Icon(Icons.check, color: Colors.white, size: 18)
                               : Text('${i + 1}',
-                                  style: const TextStyle(
-                                      color: kPrimary,
-                                      fontWeight:
-                                          FontWeight
-                                              .w800,
-                                      fontSize: 12)),
+                                  style: const TextStyle(color: kPrimary, fontWeight: FontWeight.w800, fontSize: 12)),
                         ),
                       ),
                     ),
                     title: Row(children: [
                       Expanded(
-                        child: Text(
-                            '${s['name']}',
-                            style: const TextStyle(
-                                color: kDark,
-                                fontWeight:
-                                    FontWeight.w700,
-                                fontSize: 14)),
+                        child: Text('${s['name']}',
+                            style: const TextStyle(color: kDark, fontWeight: FontWeight.w700, fontSize: 14)),
+                      ),
+                      // ── Armed badge ── NEW
+                      Container(
+                        margin: const EdgeInsets.only(right: 4),
+                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: isArmed
+                              ? const Color(0xFFC62828).withOpacity(0.1)
+                              : const Color(0xFF1565C0).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(5),
+                          border: Border.all(
+                            color: isArmed
+                                ? const Color(0xFFC62828).withOpacity(0.35)
+                                : const Color(0xFF1565C0).withOpacity(0.35),
+                          ),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min, children: [
+                          Icon(
+                            isArmed ? Icons.shield_outlined : Icons.person_outline,
+                            size: 9,
+                            color: isArmed ? const Color(0xFFC62828) : const Color(0xFF1565C0),
+                          ),
+                          const SizedBox(width: 3),
+                          Text(
+                            isArmed ? 'सशस्त्र' : 'निःशस्त्र',
+                            style: TextStyle(
+                              color: isArmed ? const Color(0xFFC62828) : const Color(0xFF1565C0),
+                              fontSize: 9,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ]),
                       ),
                       // Rank badge
                       Container(
-                        padding:
-                            const EdgeInsets.symmetric(
-                                horizontal: 7,
-                                vertical: 2),
+                        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                         decoration: BoxDecoration(
-                          color: _rankColor(
-                                  primaryRank)
-                              .withOpacity(0.1),
-                          borderRadius:
-                              BorderRadius.circular(
-                                  6),
-                          border: Border.all(
-                              color: _rankColor(
-                                      primaryRank)
-                                  .withOpacity(0.3)),
+                          color: _rankColor(primaryRank).withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(6),
+                          border: Border.all(color: _rankColor(primaryRank).withOpacity(0.3)),
                         ),
                         child: Text(rankHindi,
-                            style: TextStyle(
-                                color: _rankColor(
-                                    primaryRank),
-                                fontSize: 10,
-                                fontWeight:
-                                    FontWeight.w700)),
+                            style: TextStyle(color: _rankColor(primaryRank), fontSize: 10, fontWeight: FontWeight.w700)),
                       ),
                       const SizedBox(width: 4),
                       // Staff count badge
                       if (sahyogiCount > 0)
                         Container(
-                          padding:
-                              const EdgeInsets.symmetric(
-                                  horizontal: 7,
-                                  vertical: 2),
+                          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
                           decoration: BoxDecoration(
-                            color: kSuccess
-                                .withOpacity(0.1),
-                            borderRadius:
-                                BorderRadius.circular(
-                                    6),
-                            border: Border.all(
-                                color: kSuccess
-                                    .withOpacity(
-                                        0.3)),
+                            color: kSuccess.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: kSuccess.withOpacity(0.3)),
                           ),
-                          child: Text(
-                              '$sahyogiCount कर्मचारी',
-                              style: const TextStyle(
-                                  color: kSuccess,
-                                  fontSize: 10,
-                                  fontWeight:
-                                      FontWeight
-                                          .w700)),
+                          child: Text('$sahyogiCount कर्मचारी',
+                              style: const TextStyle(color: kSuccess, fontSize: 10, fontWeight: FontWeight.w700)),
                         ),
                     ]),
                     subtitle: Column(
-                      crossAxisAlignment:
-                          CrossAxisAlignment.start,
+                      crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         const SizedBox(height: 3),
                         Row(children: [
-                          _tag(Icons.badge_outlined,
-                              '${s['pno']}'),
+                          _tag(Icons.badge_outlined,   '${s['pno']}'),
                           const SizedBox(width: 8),
-                          _tag(Icons.phone_outlined,
-                              '${s['mobile']}'),
+                          _tag(Icons.phone_outlined,   '${s['mobile']}'),
                           const SizedBox(width: 8),
-                          if ((s['busNo'] ?? '')
-                              .toString()
-                              .isNotEmpty)
-                            _tag(Icons.directions_bus,
-                                'बस–${s['busNo']}',
-                                color: kAccent),
+                          if ((s['busNo'] ?? '').toString().isNotEmpty)
+                            _tag(Icons.directions_bus, 'बस–${s['busNo']}', color: kAccent),
                         ]),
                         const SizedBox(height: 3),
-                        _tag(
-                          Icons.location_on_outlined,
-                          '${s['centerName']} • ${s['gpName']}',
-                          color: kInfo,
-                        ),
+                        _tag(Icons.location_on_outlined, '${s['centerName']} • ${s['gpName']}', color: kInfo),
                         const SizedBox(height: 2),
-                        _tag(
-                          Icons.layers_outlined,
-                          '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}',
-                        ),
+                        _tag(Icons.layers_outlined, '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}'),
                       ],
                     ),
                     trailing: IconButton(
-                      icon: const Icon(
-                          Icons.print_outlined,
-                          color: kPrimary),
-                      onPressed: () => _print([
-                        Map<String, dynamic>.from(s)
-                      ]),
+                      icon: const Icon(Icons.print_outlined, color: kPrimary),
+                      onPressed: () => _print([Map<String, dynamic>.from(s)]),
                     ),
                     isThreeLine: true,
                   ),
@@ -1267,20 +1214,31 @@ class _DutyCardPageState extends State<DutyCardPage> {
     ]);
   }
 
-  Widget _tag(IconData icon, String text,
-      {Color? color}) {
-    return Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
+  // ── Helper: build count label string ─────────────────────────────────────
+  String _buildCountLabel() {
+    final parts = <String>[];
+    if (_rankFilter != null) parts.add('पद: $_rankFilter');
+    if (_armedFilter != _ArmedFilter.all) parts.add(_armedLabel(_armedFilter));
+    return parts.isNotEmpty ? parts.join(' • ') : 'कुल ड्यूटी';
+  }
+
+  // ── Helper: build empty state label ──────────────────────────────────────
+  String _buildEmptyLabel() {
+    final parts = <String>[];
+    if (_rankFilter != null) parts.add('"$_rankFilter"');
+    if (_armedFilter != _ArmedFilter.all) parts.add('"${_armedLabel(_armedFilter)}"');
+    if (parts.isNotEmpty) return '${parts.join(' + ')} के लिए कोई ड्यूटी नहीं';
+    return 'No assigned staff found';
+  }
+
+  Widget _tag(IconData icon, String text, {Color? color}) {
+    return Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, size: 11, color: color ?? kSubtle),
       const SizedBox(width: 3),
       Flexible(
         child: Text(text,
             overflow: TextOverflow.ellipsis,
-            style: TextStyle(
-                color: color ?? kSubtle,
-                fontSize: 11,
-                fontWeight: FontWeight.w500)),
+            style: TextStyle(color: color ?? kSubtle, fontSize: 11, fontWeight: FontWeight.w500)),
       ),
     ]);
   }
@@ -1321,23 +1279,18 @@ class _RankChip extends StatelessWidget {
       onTap: onTap,
       child: AnimatedContainer(
         duration: const Duration(milliseconds: 150),
-        padding: const EdgeInsets.symmetric(
-            horizontal: 12, vertical: 6),
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
         decoration: BoxDecoration(
-          color:
-              selected ? color : color.withOpacity(0.08),
+          color: selected ? color : color.withOpacity(0.08),
           borderRadius: BorderRadius.circular(20),
           border: Border.all(
-              color: selected
-                  ? color
-                  : color.withOpacity(0.3),
+              color: selected ? color : color.withOpacity(0.3),
               width: selected ? 1.5 : 1),
         ),
         child: Text(
           label,
           style: TextStyle(
-            color:
-                selected ? Colors.white : color,
+            color: selected ? Colors.white : color,
             fontSize: 11,
             fontWeight: FontWeight.w700,
           ),
@@ -1366,28 +1319,19 @@ class _ActionBtn extends StatelessWidget {
     return GestureDetector(
       onTap: onTap,
       child: Container(
-        padding: const EdgeInsets.symmetric(
-            horizontal: 12, vertical: 7),
-        decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(8)),
-        child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
           Icon(icon, color: Colors.white, size: 14),
           const SizedBox(width: 5),
-          Text(label,
-              style: const TextStyle(
-                  color: Colors.white,
-                  fontSize: 11,
-                  fontWeight: FontWeight.w700)),
+          Text(label, style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
         ]),
       ),
     );
   }
 }
 
-// ── Shared palette (in case not imported from widgets.dart) ───────────────────
+// ── Shared palette ────────────────────────────────────────────────────────────
 const kBg      = Color(0xFFFDF6E3);
 const kSurface = Color(0xFFF5E6C8);
 const kPrimary = Color(0xFF8B6914);

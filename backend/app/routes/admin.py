@@ -1,5 +1,7 @@
 import json
 import sys
+import io
+import csv
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from flask import Blueprint, request, Response, stream_with_context
 from werkzeug.security import generate_password_hash
@@ -31,6 +33,28 @@ def _sse(data: dict) -> bytes:
 def _admin_id():
     return request.user["id"]
 
+def _super_admin_id():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT role, super_admin_id FROM users WHERE id=%s",
+                (_admin_id(),)
+            )
+            u = cur.fetchone()
+
+            if not u:
+                return None
+
+            # if admin → return its super admin
+            if u["role"] == "admin":
+                return u["super_admin_id"]
+
+            # if super admin → return own id
+            return _admin_id()
+
+    finally:
+        conn.close()
 
 def _o(r):
     return {
@@ -62,17 +86,17 @@ def _paginated(data, total, page, limit):
 def _staff_list(cur, district=None):
     if district:
         cur.execute(
-            "SELECT id, name, pno, mobile, thana, user_rank FROM users "
+            "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users "
             "WHERE role='staff' AND district=%s AND is_active=1 ORDER BY name",
             (district,)
         )
     else:
         cur.execute(
-            "SELECT id, name, pno, mobile, thana, user_rank FROM users "
+            "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users "
             "WHERE role='staff' AND is_active=1 ORDER BY name"
         )
     return [{"id": r["id"], "name": r["name"] or "", "pno": r["pno"] or "",
-             "mobile": r["mobile"] or "", "rank": r["user_rank"] or ""}
+             "mobile": r["mobile"] or "", "rank": r["user_rank"] or "", "isArmed": bool(r["is_armed"]) }
             for r in cur.fetchall()]
 
 def _get_lower_rank(rank: str) -> str | None:
@@ -744,50 +768,64 @@ def delete_sector_officer(o_id):
 
 def _insert_officer(cur, table, fk_col, fk_val, o):
     uid    = o.get("userId") or o.get("user_id") or None
-    name   = o.get("name",   "").strip()
-    pno    = o.get("pno",    "").strip()
-    mobile = o.get("mobile", "").strip()
-    rank   = o.get("rank",   "").strip()
+    name   = (o.get("name")   or "").strip()
+    pno    = (o.get("pno")    or "").strip()
+    mobile = (o.get("mobile") or "").strip()
+    rank   = (o.get("rank")   or "").strip()
 
     if uid:
-        # ── Picked from staff list — fetch their details ──────────────────
-        cur.execute("SELECT name, pno, mobile, user_rank FROM users WHERE id=%s", (uid,))
+        # ── Picked from staff list — fetch their details ─────────────
+        cur.execute(
+            "SELECT name, pno, mobile, user_rank, is_armed FROM users WHERE id=%s",
+            (uid,)
+        )
         u = cur.fetchone()
         if u:
-            if not name:   name   = u["name"]      or ""
-            if not pno:    pno    = u["pno"]        or ""
-            if not mobile: mobile = u["mobile"]     or ""
-            if not rank:   rank   = u["user_rank"]  or ""
+            if not name:   name   = u["name"] or ""
+            if not pno:    pno    = u["pno"] or ""
+            if not mobile: mobile = u["mobile"] or ""
+            if not rank:   rank   = u["user_rank"] or ""
 
     elif pno:
-        # ── Manual entry — create user if not exists ──────────────────────
+        # ── Manual entry — create user if not exists ─────────────
         cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
         existing = cur.fetchone()
+
         if existing:
             uid = existing["id"]
         else:
-            # Check username collision
+            # Username collision check
             cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
             username = pno if not cur.fetchone() else f"{pno}_off"
 
+            # ✅ FIX: include is_armed
             cur.execute("""
                 INSERT INTO users
                     (name, pno, username, password, mobile, user_rank,
-                     role, is_active, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                     is_armed, role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
             """, (
-                name, pno, username,
-                _fast_hash(pno),        # default password = PNO
-                mobile, rank,
+                name,
+                pno,
+                username,
+                _fast_hash(pno),
+                mobile,
+                rank,
+                0,  # ✅ default: निःशस्त्र
                 request.user["id"]
             ))
             uid = cur.lastrowid
 
+    # ── Insert into officer table ─────────────
     cur.execute(
-        f"INSERT INTO {table} ({fk_col}, user_id, name, pno, mobile, user_rank) "
-        f"VALUES (%s,%s,%s,%s,%s,%s)",
+        f"""
+        INSERT INTO {table}
+            ({fk_col}, user_id, name, pno, mobile, user_rank)
+        VALUES (%s,%s,%s,%s,%s,%s)
+        """,
         (fk_val, uid or None, name, pno, mobile, rank)
     )
+
     return cur.lastrowid
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -924,7 +962,7 @@ def get_centers(gp_id):
             for row in cur.fetchall():
                 staff_by_center.setdefault(row["sthal_id"], []).append({
                     "id": row["id"], "name": row["name"] or "", "pno": row["pno"] or "", "rank": row["user_rank"] or ""})
-            cur.execute("SELECT sensitivity, user_rank, required_count FROM booth_staff_rules WHERE admin_id=%s", (_admin_id(),))
+            cur.execute("SELECT sensitivity, user_rank, required_count FROM booth_staff_rules WHERE admin_id=%s", (_super_admin_id(),))
             rules_raw = cur.fetchall()
             rules = {}
             for r in rules_raw:
@@ -1134,12 +1172,14 @@ def get_staff():
     search      = request.args.get("q", "").strip()
     assigned    = request.args.get("assigned", "").strip().lower()
     rank_filter = request.args.get("rank", "").strip()
+    armed       = request.args.get("armed", "").strip().lower()
     page, limit, offset = _page_params()
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            params      = []
+
+            params = []
             where_parts = ["u.role='staff'"]
 
             if search:
@@ -1154,7 +1194,7 @@ def get_staff():
                 where_parts.append("u.user_rank = %s")
                 params.append(rank_filter)
 
-            # ── FIXED: "assigned" includes both duty_assignments AND officer roles ──
+            # ✅ FIX: include ALL assignments (booth + officers)
             OFFICER_EXISTS = """(
                 EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=u.id)
                 OR EXISTS (SELECT 1 FROM kshetra_officers ko WHERE ko.user_id=u.id)
@@ -1164,45 +1204,48 @@ def get_staff():
 
             if assigned == "yes":
                 where_parts.append(OFFICER_EXISTS)
+
             elif assigned == "no":
                 where_parts.append(f"NOT {OFFICER_EXISTS}")
 
+            # 🔹 armed filter
+            if armed == "yes":
+                where_parts.append("u.is_armed = 1")
+            elif armed == "no":
+                where_parts.append("u.is_armed = 0")
+
             where_sql = " AND ".join(where_parts)
 
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM users u WHERE {where_sql}", params)
+            # ── COUNT ─────────────────────────────
+            cur.execute(f"""
+                SELECT COUNT(*) AS cnt
+                FROM users u
+                WHERE {where_sql}
+            """, params)
             total = cur.fetchone()["cnt"]
 
+            # ── DATA QUERY ─────────────────────────
             cur.execute(f"""
                 SELECT
-                    u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
+                    u.id, u.name, u.pno, u.mobile, u.thana,
+                    u.district, u.user_rank, u.is_armed,
 
-                    -- duty assignment (booth)
-                    (SELECT da.id       FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS duty_id,
-                    (SELECT da.sthal_id FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS sthal_id,
-                    (SELECT ms.name     FROM duty_assignments da
+                    -- booth
+                    (SELECT ms.name FROM duty_assignments da
                      JOIN matdan_sthal ms ON ms.id=da.sthal_id
                      WHERE da.staff_id=u.id LIMIT 1) AS center_name,
 
-                    -- kshetra officer assignment
-                    (SELECT sz.name     FROM kshetra_officers ko
+                    -- kshetra
+                    (SELECT sz.name FROM kshetra_officers ko
                      JOIN super_zones sz ON sz.id=ko.super_zone_id
                      WHERE ko.user_id=u.id LIMIT 1) AS sz_name,
-                    (SELECT sz.district FROM kshetra_officers ko
-                     JOIN super_zones sz ON sz.id=ko.super_zone_id
-                     WHERE ko.user_id=u.id LIMIT 1) AS sz_district,
-                    (SELECT sz.block    FROM kshetra_officers ko
-                     JOIN super_zones sz ON sz.id=ko.super_zone_id
-                     WHERE ko.user_id=u.id LIMIT 1) AS sz_block,
 
-                    -- zonal officer assignment
-                    (SELECT z.name       FROM zonal_officers zo
+                    -- zone
+                    (SELECT z.name FROM zonal_officers zo
                      JOIN zones z ON z.id=zo.zone_id
                      WHERE zo.user_id=u.id LIMIT 1) AS zone_name,
-                    (SELECT z.hq_address FROM zonal_officers zo
-                     JOIN zones z ON z.id=zo.zone_id
-                     WHERE zo.user_id=u.id LIMIT 1) AS zone_hq,
 
-                    -- sector officer assignment
+                    -- sector
                     (SELECT s.name FROM sector_officers so
                      JOIN sectors s ON s.id=so.sector_id
                      WHERE so.user_id=u.id LIMIT 1) AS sector_name
@@ -1212,117 +1255,174 @@ def get_staff():
                 ORDER BY u.name
                 LIMIT %s OFFSET %s
             """, params + [limit, offset])
+
             rows = cur.fetchall()
+
     finally:
         conn.close()
 
+    # ── RESPONSE BUILD ─────────────────────────
     data = []
     for r in rows:
-        # Determine assignment type and label
-        is_booth_assigned   = r["sthal_id"]   is not None
-        is_officer_kshetra  = r["sz_name"]     is not None
-        is_officer_zonal    = r["zone_name"]   is not None
-        is_officer_sector   = r["sector_name"] is not None
-        is_assigned = is_booth_assigned or is_officer_kshetra or is_officer_zonal or is_officer_sector
 
-        # Build assignment label
-        if is_booth_assigned:
+        if r["center_name"]:
             assign_type  = "booth"
-            assign_label = r["center_name"] or ""
-            assign_detail = ""
-        elif is_officer_kshetra:
+            assign_label = r["center_name"]
+
+        elif r["sz_name"]:
             assign_type  = "kshetra"
-            assign_label = r["sz_name"] or ""
-            assign_detail = " • ".join(filter(None, [r["sz_district"], r["sz_block"]]))
-        elif is_officer_zonal:
+            assign_label = r["sz_name"]
+
+        elif r["zone_name"]:
             assign_type  = "zone"
-            assign_label = r["zone_name"] or ""
-            assign_detail = r["zone_hq"] or ""
-        elif is_officer_sector:
+            assign_label = r["zone_name"]
+
+        elif r["sector_name"]:
             assign_type  = "sector"
-            assign_label = r["sector_name"] or ""
-            assign_detail = ""
+            assign_label = r["sector_name"]
+
         else:
             assign_type  = ""
             assign_label = ""
-            assign_detail = ""
 
         data.append({
-            "id":           r["id"],
-            "name":         r["name"]      or "",
-            "pno":          r["pno"]       or "",
-            "mobile":       r["mobile"]    or "",
-            "thana":        r["thana"]     or "",
-            "district":     r["district"]  or "",
-            "rank":         r["user_rank"] or "",
-            "isAssigned":   is_assigned,
-            "assignType":   assign_type,
-            "assignLabel":  assign_label,
-            "assignDetail": assign_detail,
-            # keep old fields for backward compatibility
-            "dutyId":       r["duty_id"],
-            "centerId":     r["sthal_id"],
-            "centerName":   r["center_name"] or "",
+            "id": r["id"],
+            "name": r["name"] or "",
+            "pno": r["pno"] or "",
+            "mobile": r["mobile"] or "",
+            "thana": r["thana"] or "",
+            "district": r["district"] or "",
+            "rank": r["user_rank"] or "",
+            "isArmed": bool(r["is_armed"]),
+            "isAssigned": bool(assign_type),
+            "assignType": assign_type,
+            "assignLabel": assign_label,
         })
 
     return _paginated(data, total, page, limit)
- 
 
 
 @admin_bp.route("/staff/search", methods=["GET"])
 @admin_required
 def search_staff():
-    q = request.args.get("q", "").strip()
+    q    = request.args.get("q",     "").strip()
+    armed = request.args.get("armed", "").strip().lower()  # NEW optional filter
     if not q:
         return ok([])
     like = f"%{q}%"
+ 
+    armed_clause = ""
+    armed_params = []
+    if armed == "yes":
+        armed_clause = " AND is_armed = 1"
+    elif armed == "no":
+        armed_clause = " AND is_armed = 0"
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT id, name, pno, mobile, thana, user_rank, district FROM users "
-                "WHERE role='staff' AND (name LIKE %s OR pno LIKE %s OR mobile LIKE %s OR district LIKE %s) "
+                "SELECT id, name, pno, mobile, thana, user_rank, district, is_armed "  # NEW
+                "FROM users "
+                f"WHERE role='staff' {armed_clause} "
+                "AND (name LIKE %s OR pno LIKE %s OR mobile LIKE %s OR district LIKE %s) "
                 "ORDER BY name LIMIT 20",
-                [like, like, like, like]
+                [like, like, like, like] + armed_params
             )
             rows = cur.fetchall()
     finally:
         conn.close()
-    return ok([{"id": r["id"], "name": r["name"] or "", "pno": r["pno"] or "",
-                "mobile": r["mobile"] or "", "thana": r["thana"] or "",
-                "district": r["district"] or "", "rank": r["user_rank"] or ""} for r in rows])
-
+    return ok([{
+        "id":       r["id"],
+        "name":     r["name"]      or "",
+        "pno":      r["pno"]       or "",
+        "mobile":   r["mobile"]    or "",
+        "thana":    r["thana"]     or "",
+        "district": r["district"]  or "",
+        "rank":     r["user_rank"] or "",
+        "isArmed":  bool(r["is_armed"]),  # NEW
+    } for r in rows])
+ 
 
 
 @admin_bp.route("/staff", methods=["POST"])
 @admin_required
 def add_staff():
     body = request.get_json() or {}
-    name = body.get("name", "").strip()
-    pno  = body.get("pno", "").strip()
+
+    name = (body.get("name") or "").strip()
+    pno  = (body.get("pno")  or "").strip()
+
     if not name or not pno:
         return err("name and pno required")
+
+    # ✅ IMPROVED: flexible parsing (handles all formats)
+    is_armed = 1 if (
+        body.get("isArmed") in [True, 1, "1", "true"] or
+        body.get("is_armed") in [True, 1, "1", "true"] or
+        str(body.get("weapon", "")).lower() in ["sastra", "armed", "yes"]
+    ) else 0
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
+
+            # 🔹 Check duplicate PNO
             cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
             if cur.fetchone():
                 return err(f"PNO {pno} already registered", 409)
+
+            # 🔹 Username handling
             cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
             username = pno if not cur.fetchone() else f"{pno}_{_admin_id()}"
+
             district = request.user.get("district") or ""
-            cur.execute("""INSERT INTO users (name,pno,username,password,mobile,thana,district,user_rank,role,is_active,created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)""",
-                        (name, pno, username, _fast_hash(pno),
-                         body.get("mobile", ""), body.get("thana", ""),
-                         district, body.get("rank", ""), _admin_id()))
+
+            cur.execute("""
+                INSERT INTO users
+                    (name, pno, username, password, mobile, thana,
+                     district, user_rank, is_armed, role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+            """, (
+                name,
+                pno,
+                username,
+                _fast_hash(pno),
+                (body.get("mobile") or "").strip(),
+                (body.get("thana")  or "").strip(),
+                district,
+                (body.get("rank")   or "").strip(),
+                is_armed,   # ✅ NEW FIELD
+                _admin_id(),
+            ))
+
             new_id = cur.lastrowid
+
         conn.commit()
+
+    except Exception as e:
+        try:
+            conn.rollback()
+        except:
+            pass
+        write_log("ERROR", f"add_staff error: {e}", "Staff")
+        return err("Failed to add staff", 500)
+
     finally:
         conn.close()
-    write_log("INFO", f"Staff '{name}' PNO:{pno} added by admin {_admin_id()}", "Staff")
-    return ok({"id": new_id, "name": name, "pno": pno}, "Staff added", 201)
 
+    write_log(
+        "INFO",
+        f"Staff '{name}' PNO:{pno} added (is_armed={is_armed}) by admin {_admin_id()}",
+        "Staff"
+    )
+
+    return ok({
+        "id": new_id,
+        "name": name,
+        "pno": pno,
+        "isArmed": bool(is_armed)   # ✅ return to frontend
+    }, "Staff added", 201)
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  BULK UPLOAD — SSE streaming with FIXED commit logic
@@ -1354,21 +1454,37 @@ def add_staff_bulk():
 
     def generate():
 
-        # ── Phase 1: in-memory parse & dedup ─────────────────────────────────
+    # ── Phase 1: in-memory parse & dedup ─────────────────────────────────
         yield _sse({"phase": "parse", "pct": 2, "msg": "Validating rows..."})
 
         clean, skipped = [], []
         seen_pnos = set()
+
         for i, s in enumerate(items):
             pno  = str(s.get("pno",  "") or "").strip()
             name = str(s.get("name", "") or "").strip()
+
             if not pno or not name:
                 skipped.append(pno or f"row_{i+1}")
                 continue
+
             if pno in seen_pnos:
                 skipped.append(pno)
                 continue
+
             seen_pnos.add(pno)
+
+            # ✅ NEW: parse sastra / armed column
+            is_armed_val = str(
+                s.get("sastra", s.get("armed", s.get("is_armed", "")))
+                or ""
+            ).strip().lower()
+
+            is_armed = 1 if is_armed_val in (
+                "1", "yes", "हाँ", "han",
+                "sastra", "सशस्त्र", "armed", "true"
+            ) else 0
+
             clean.append({
                 "pno":    pno,
                 "name":   name,
@@ -1376,18 +1492,27 @@ def add_staff_bulk():
                 "mobile": str(s.get("mobile",   "") or "").strip(),
                 "thana":  str(s.get("thana",    "") or "").strip(),
                 "dist":   (str(s.get("district","") or "").strip()) or district,
+                "is_armed": is_armed,   # ✅ NEW
             })
 
-        yield _sse({"phase": "parse", "pct": 10,
-                    "msg": f"{len(clean)} valid, {len(skipped)} skipped"})
+        yield _sse({
+            "phase": "parse",
+            "pct": 10,
+            "msg": f"{len(clean)} valid, {len(skipped)} skipped"
+        })
 
         if not clean:
-            yield _sse({"phase": "done", "added": 0, "skipped": skipped,
-                        "total": total_input, "pct": 100,
-                        "msg": "0 जोड़े गए"})
+            yield _sse({
+                "phase": "done",
+                "added": 0,
+                "skipped": skipped,
+                "total": total_input,
+                "pct": 100,
+                "msg": "0 जोड़े गए"
+            })
             return
 
-        # ── Phase 1b: DB dedup — single read-only query ───────────────────────
+        # ── Phase 1b: DB dedup ───────────────────────────────────────────────
         yield _sse({"phase": "parse", "pct": 15, "msg": "Duplicates जांच रहे हैं..."})
 
         read_conn = get_db()
@@ -1395,81 +1520,101 @@ def add_staff_bulk():
             with read_conn.cursor() as cur:
                 all_pnos = [r["pno"] for r in clean]
                 ph = ",".join(["%s"] * len(all_pnos))
+
                 cur.execute(f"SELECT pno FROM users WHERE pno IN ({ph})", all_pnos)
                 existing_pnos = {r["pno"] for r in cur.fetchall()}
+
                 cur.execute(f"SELECT username FROM users WHERE username IN ({ph})", all_pnos)
                 existing_usernames = {r["username"] for r in cur.fetchall()}
         finally:
             read_conn.close()
 
-        yield _sse({"phase": "parse", "pct": 22,
-                    "msg": f"{len(existing_pnos)} duplicates मिले"})
+        yield _sse({
+            "phase": "parse",
+            "pct": 22,
+            "msg": f"{len(existing_pnos)} duplicates मिले"
+        })
 
         pre_insert = []
         for r in clean:
             if r["pno"] in existing_pnos:
                 skipped.append(r["pno"])
                 continue
+
             uname = r["pno"] if r["pno"] not in existing_usernames \
                     else f"{r['pno']}_{admin_id}"
+
+            # ✅ is_armed already included
             pre_insert.append({**r, "username": uname})
 
-        yield _sse({"phase": "parse", "pct": 25,
-                    "msg": f"{len(pre_insert)} rows insert होंगे"})
+        yield _sse({
+            "phase": "parse",
+            "pct": 25,
+            "msg": f"{len(pre_insert)} rows insert होंगे"
+        })
 
         if not pre_insert:
-            yield _sse({"phase": "done", "added": 0, "skipped": skipped,
-                        "total": total_input, "pct": 100,
-                        "msg": "0 जोड़े गए (सभी duplicate थे)"})
+            yield _sse({
+                "phase": "done",
+                "added": 0,
+                "skipped": skipped,
+                "total": total_input,
+                "pct": 100,
+                "msg": "0 जोड़े गए (सभी duplicate थे)"
+            })
             return
 
-        # ── Phase 2: parallel password hashing ───────────────────────────────
+        # ── Phase 2: password hashing ───────────────────────────────────────
         total_to_hash = len(pre_insert)
         hashed        = [None] * total_to_hash
         hashed_count  = 0
+
         workers       = min(HASH_WORKERS, max(1, total_to_hash // 5))
         report_every  = max(1, total_to_hash // 50)
 
-        yield _sse({"phase": "hash", "pct": 25,
-                    "msg": f"0/{total_to_hash} passwords hash हो रहे हैं..."})
+        yield _sse({
+            "phase": "hash",
+            "pct": 25,
+            "msg": f"0/{total_to_hash} passwords hash हो रहे हैं..."
+        })
 
         with ThreadPoolExecutor(max_workers=workers) as pool:
             future_to_idx = {
                 pool.submit(_fast_hash, r["pno"]): i
                 for i, r in enumerate(pre_insert)
             }
+
             for future in as_completed(future_to_idx):
                 idx = future_to_idx[future]
                 hashed[idx] = future.result()
                 hashed_count += 1
+
                 if hashed_count % report_every == 0 or hashed_count == total_to_hash:
                     pct = 25 + int((hashed_count / total_to_hash) * 30)
-                    yield _sse({"phase": "hash", "pct": pct,
-                                "msg": f"Hashing {hashed_count}/{total_to_hash}..."})
+                    yield _sse({
+                        "phase": "hash",
+                        "pct": pct,
+                        "msg": f"Hashing {hashed_count}/{total_to_hash}..."
+                    })
 
-        yield _sse({"phase": "hash", "pct": 55,
-                    "msg": "Hash पूर्ण। DB में insert हो रहा है..."})
+        yield _sse({
+            "phase": "hash",
+            "pct": 55,
+            "msg": "Hash पूर्ण। DB में insert हो रहा है..."
+        })
 
-        # ── Phase 3: INSERT with autocommit=1 ────────────────────────────────
-        #
-        # FIX: Open a dedicated connection and run SET autocommit=1 before
-        # any INSERT. This makes every row durable INSTANTLY at the MySQL
-        # protocol level — the Python generator lifecycle, GC, or HTTP
-        # disconnect cannot roll anything back.
-        #
-        # Confirmed working with DBUtils PooledDB + pymysql (diagnose_v2.py).
-        # ─────────────────────────────────────────────────────────────────────
+        # ── Phase 3: INSERT ──────────────────────────────────────────────────
         insert_conn = get_db()
         added       = 0
         total_ins   = len(pre_insert)
 
         try:
-            # Enable autocommit at the MySQL session level
             with insert_conn.cursor() as cur:
                 cur.execute("SET autocommit=1")
 
             with insert_conn.cursor() as cur:
                 for chunk_start in range(0, total_ins, INSERT_CHUNK_SIZE):
+
                     chunk_rows   = pre_insert[chunk_start: chunk_start + INSERT_CHUNK_SIZE]
                     chunk_hashes = hashed[chunk_start: chunk_start + INSERT_CHUNK_SIZE]
 
@@ -1478,22 +1623,27 @@ def add_staff_bulk():
                             r["name"], r["pno"], r["username"],
                             chunk_hashes[i],
                             r["mobile"], r["thana"], r["dist"],
-                            r["rank"], admin_id,
+                            r["rank"],
+                            r.get("is_armed", 0),   # ✅ NEW
+                            admin_id
                         )
                         for i, r in enumerate(chunk_rows)
                     ]
 
                     cur.executemany(
-                        """INSERT IGNORE INTO users
-                           (name, pno, username, password, mobile, thana,
-                            district, user_rank, role, is_active, created_by)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)""",
+                        """
+                        INSERT IGNORE INTO users
+                            (name, pno, username, password, mobile, thana,
+                            district, user_rank, is_armed, role, is_active, created_by)
+                        VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+                        """,
                         params_list
                     )
-                    # Data is ON DISK immediately — no commit() needed
+
                     added += cur.rowcount
 
                     pct = 55 + int(((chunk_start + len(chunk_rows)) / total_ins) * 43)
+
                     yield _sse({
                         "phase":  "insert",
                         "pct":    min(pct, 98),
@@ -1504,19 +1654,19 @@ def add_staff_bulk():
 
         except Exception as e:
             yield _sse({
-                "phase":   "error",
+                "phase": "error",
                 "message": f"Insert error (after {added} rows saved): {str(e)}",
             })
             return
         finally:
             try:
                 insert_conn.close()
-            except Exception:
+            except:
                 pass
 
         write_log("INFO",
-                  f"Bulk: {added} added, {len(skipped)} skipped (admin {admin_id})",
-                  "Import")
+                f"Bulk: {added} added, {len(skipped)} skipped (admin {admin_id})",
+                "Import")
 
         yield _sse({
             "phase":   "done",
@@ -1526,7 +1676,6 @@ def add_staff_bulk():
             "pct":     100,
             "msg":     f"{added} जोड़े गए, {len(skipped)} छोड़े गए",
         })
-
     return Response(
         stream_with_context(generate()),
         mimetype="text/event-stream",
@@ -1538,20 +1687,115 @@ def add_staff_bulk():
         },
         direct_passthrough=True,
     )
+
+
+@admin_bp.route("/staff/bulk-csv", methods=["POST"])
+@admin_required
+def add_staff_bulk_csv():
+    """
+    Accepts a raw CSV upload (multipart/form-data with field 'file').
+    Parses it and delegates to the same SSE bulk-upload logic.
+    
+    Usage: POST /api/admin/staff/bulk-csv with form-data file=<csv file>
+    
+    NOTE: If you're using the Flutter client that parses CSV in-app and
+    sends JSON, you don't need this endpoint — just use /admin/staff/bulk.
+    """
+    file = request.files.get("file")
+    if not file:
+        return err("CSV file required (field: 'file')")
+ 
+    try:
+        content = file.read().decode("utf-8-sig")  # utf-8-sig handles BOM
+    except UnicodeDecodeError:
+        try:
+            content = file.read().decode("latin-1")
+        except Exception as e:
+            return err(f"File encoding error: {e}")
+ 
+    reader = csv.DictReader(io.StringIO(content))
+ 
+    # Normalize headers: lowercase + strip
+    fieldnames = [h.strip().lower() for h in (reader.fieldnames or [])]
+ 
+    def _col(row, *keys):
+        """Try multiple key variants to find a column value."""
+        for k in keys:
+            v = row.get(k, row.get(k.strip(), ''))
+            if v:
+                return str(v).strip()
+        return ''
+ 
+    items = []
+    ARMED_VALS = {'1', 'yes', 'हाँ', 'han', 'sastra', 'सशस्त्र', 'armed', 'true'}
+ 
+    for row in reader:
+        # Normalize row keys
+        norm = {k.strip().lower(): v for k, v in row.items()}
+ 
+        pno  = norm.get('pno') or norm.get('p.no') or ''
+        name = norm.get('name') or norm.get('नाम') or ''
+ 
+        if not pno and not name:
+            continue
+ 
+        armed_raw = (
+            norm.get('sastra') or norm.get('armed') or
+            norm.get('weapon') or norm.get('शस्त्र') or ''
+        ).strip().lower()
+ 
+        items.append({
+            "pno":      pno.strip(),
+            "name":     name.strip(),
+            "mobile":   (norm.get('mobile') or norm.get('mob') or norm.get('phone') or '').strip(),
+            "thana":    (norm.get('thana') or norm.get('थाना') or norm.get('ps') or '').strip(),
+            "district": (norm.get('district') or norm.get('dist') or norm.get('जिला') or '').strip(),
+            "rank":     (norm.get('rank') or norm.get('post') or norm.get('पद') or '').strip(),
+            "is_armed": 1 if armed_raw in ARMED_VALS else 0,
+        })
+ 
+    if not items:
+        return err("No valid rows found in CSV")
+ 
+    # Inject into the request body and delegate to the existing bulk endpoint
+    # by directly calling the same logic. Easiest approach: redirect as JSON.
+    # Since we're in the same process, just call the generator directly:
+    
+    # Override request JSON body
+    request._cached_json = ({"staff": items}, True)
+ 
+    # Delegate — the SSE response will stream back
+    return add_staff_bulk()
+ 
+ 
+
 @admin_bp.route("/staff/<int:staff_id>", methods=["PUT"])
 @admin_required
 def update_staff(staff_id):
-    body = request.get_json() or {}
+    body     = request.get_json() or {}
+    is_armed = 1 if body.get("isArmed") else 0   # NEW
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("UPDATE users SET name=%s,pno=%s,mobile=%s,thana=%s,user_rank=%s WHERE id=%s AND role='staff'",
-                        (body.get("name", ""), body.get("pno", ""), body.get("mobile", ""),
-                         body.get("thana", ""), body.get("rank", ""), staff_id))
+            cur.execute("""
+                UPDATE users
+                SET name=%s, pno=%s, mobile=%s, thana=%s, user_rank=%s,
+                    is_armed=%s
+                WHERE id=%s AND role='staff'
+            """, (
+                body.get("name",   ""),
+                body.get("pno",    ""),
+                body.get("mobile", ""),
+                body.get("thana",  ""),
+                body.get("rank",   ""),
+                is_armed,              # NEW
+                staff_id,
+            ))
         conn.commit()
     finally:
         conn.close()
     return ok(None, "Staff updated")
+ 
 
 
 @admin_bp.route("/staff/<int:staff_id>", methods=["DELETE"])
@@ -1845,49 +2089,55 @@ def admin_overview():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT COUNT(*) AS cnt FROM super_zones WHERE admin_id=%s",
-                (_admin_id(),)
-            )
+
+            # ── Super Zones ─────────────────────────────
+            cur.execute("SELECT COUNT(*) AS cnt FROM super_zones")
             sz = cur.fetchone()["cnt"]
 
-            cur.execute("""
-                SELECT COUNT(DISTINCT ms.id) AS cnt
-                FROM matdan_sthal ms
-                JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id
-                JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones szn ON szn.id=z.super_zone_id
-                WHERE szn.admin_id=%s
-            """, (_admin_id(),))
+            # ── Booths ──────────────────────────────────
+            cur.execute("SELECT COUNT(*) AS cnt FROM matdan_sthal")
             booths = cur.fetchone()["cnt"]
 
-            # All staff — no district filter
-            cur.execute(
-                "SELECT COUNT(*) AS cnt FROM users WHERE role='staff' AND is_active=1"
-            )
+            # ── Staff ───────────────────────────────────
+            cur.execute("""
+                SELECT COUNT(*) AS cnt
+                FROM users
+                WHERE role='staff' AND is_active=1
+            """)
             staff = cur.fetchone()["cnt"]
 
-            # All assigned duties — no district filter
+            # ── Assigned Duties ─────────────────────────
             cur.execute("""
-                SELECT COUNT(DISTINCT da.id) AS cnt
-                FROM duty_assignments da
-                JOIN users u ON u.id=da.staff_id
-                WHERE u.role='staff'
+                SELECT COUNT(*) AS cnt
+                FROM duty_assignments
             """)
             assigned = cur.fetchone()["cnt"]
+
+    except Exception as e:
+        write_log("ERROR", f"overview error: {e}", "Overview")
+        return {
+            "success": True,
+            "data": {
+                "superZones": 0,
+                "totalBooths": 0,
+                "totalStaff": 0,
+                "assignedDuties": 0,
+            }
+        }
 
     finally:
         conn.close()
 
-    return ok({
-        "superZones":     sz,
-        "totalBooths":    booths,
-        "totalStaff":     staff,
-        "assignedDuties": assigned,
-    })
-
-
+    # 🔥 IMPORTANT: direct JSON return (no ok())
+    return {
+        "success": True,
+        "data": {
+            "superZones": int(sz or 0),
+            "totalBooths": int(booths or 0),
+            "totalStaff": int(staff or 0),
+            "assignedDuties": int(assigned or 0),
+        }
+    }
 # DEBUG ENDPOINT — call this to see what's actually in your DB
 # Add temporarily, remove after debugging
 # GET /api/admin/staff/debug
@@ -1932,277 +2182,429 @@ def debug_staff():
     })
 
 
-# ─────────────────────────────────────────────────────────────
-# SAVE RULES
-# ─────────────────────────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════════════════
+#  PATCH for admin_routes.py
+#
+#  ROOT CAUSE: save_rules / get_rules / auto_assign call _super_admin_id()
+#  which queries users.super_admin_id.  For most admins that column is NULL,
+#  so _super_admin_id() returns None.  MySQL then executes
+#    WHERE admin_id = NULL   →  0 rows  (NULL ≠ anything, even NULL)
+#  Result: rules are saved with admin_id=NULL and read back as empty list.
+#
+#  FIX: use _admin_id() (= request.user["id"]) everywhere in the rules &
+#  auto-assign routes.  Remove _super_admin_id() entirely from those routes.
+#
+#  REPLACE these three functions in admin_routes.py:
+#    save_rules   (POST /admin/rules)
+#    get_rules    (GET  /admin/rules)
+#    auto_assign  (POST /admin/auto-assign/<center_id>)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  SAVE RULES
+#  POST /api/admin/rules
+#  Body: { "sensitivity": "A", "rules": [{"rank":"SI","count":2,"isArmed":true}] }
+# ─────────────────────────────────────────────────────────────────────────────
 @admin_bp.route("/rules", methods=["POST"])
 @admin_required
 def save_rules():
-    body = request.get_json() or {}
-    sensitivity = body.get("sensitivity")
-    rules = body.get("rules", [])
+    body        = request.get_json() or {}
+    sensitivity = (body.get("sensitivity") or "").strip()
+    rules       = body.get("rules", [])
 
     if not sensitivity:
         return err("sensitivity required")
+    if sensitivity not in ("A++", "A", "B", "C"):
+        return err("sensitivity must be one of: A++, A, B, C")
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
+            # Safe migration: add is_armed column if table exists without it
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS booth_staff_rules (
+                    id             INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id       INT  NOT NULL,
+                    sensitivity    ENUM('A++','A','B','C') NOT NULL,
+                    user_rank      VARCHAR(100) NOT NULL,
+                    is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
+                    required_count INT          NOT NULL DEFAULT 1,
+                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_admin       (admin_id),
+                    INDEX idx_sensitivity (sensitivity),
+                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            cur.execute("""
+                SELECT COUNT(*) AS cnt FROM information_schema.columns
+                WHERE table_schema = DATABASE()
+                  AND table_name   = 'booth_staff_rules'
+                  AND column_name  = 'is_armed'
+            """)
+            if cur.fetchone()["cnt"] == 0:
+                cur.execute("""
+                    ALTER TABLE booth_staff_rules
+                    ADD COLUMN is_armed TINYINT(1) NOT NULL DEFAULT 0 AFTER user_rank
+                """)
 
-            # 🔹 delete old rules
+            # ── Delete old rules for THIS admin + sensitivity ──────────────
+            # FIX: use _admin_id() not _super_admin_id()
             cur.execute(
                 "DELETE FROM booth_staff_rules WHERE admin_id=%s AND sensitivity=%s",
-                (_admin_id(), sensitivity)
+                (_admin_id(), sensitivity)   # ← FIXED
             )
 
-            # 🔹 insert new rules
+            # ── Insert new rules ───────────────────────────────────────────
             for r in rules:
+                rank = str(r.get("rank", "")).strip()
+                if not rank:
+                    continue
+
+                count = int(r.get("count") or r.get("required_count") or 1)
+
+                is_armed = 1 if (
+                    r.get("isArmed") in [True, 1, "1", "true"] or
+                    r.get("is_armed") in [True, 1, "1", "true"]
+                ) else 0
+
                 cur.execute("""
-                    INSERT INTO booth_staff_rules (admin_id, sensitivity, user_rank, required_count)
-                    VALUES (%s,%s,%s,%s)
+                    INSERT INTO booth_staff_rules
+                        (admin_id, sensitivity, user_rank, is_armed, required_count)
+                    VALUES (%s, %s, %s, %s, %s)
                 """, (
-                    _admin_id(),
+                    _admin_id(),   # ← FIXED
                     sensitivity,
-                    r["rank"],   # coming from frontend
-                    r["count"]
+                    rank,
+                    is_armed,
+                    count,
                 ))
 
         conn.commit()
+
+    except Exception as e:
+        try: conn.rollback()
+        except: pass
+        write_log("ERROR", f"save_rules error: {e}", "Rules")
+        return err(f"Save failed: {str(e)}", 500)
+
     finally:
         conn.close()
 
-    return ok(None, "Rules saved")
+    write_log("INFO",
+              f"Rules saved: sensitivity={sensitivity}, {len(rules)} rules "
+              f"by admin {_admin_id()}",
+              "Rules")
+    return ok(None, f"{sensitivity} rules saved")
 
 
-# ─────────────────────────────────────────────────────────────
-# GET RULES
-# ─────────────────────────────────────────────────────────────
+# ─────────────────────────────────────────────────────────────────────────────
+#  GET RULES
+#  GET /api/admin/rules?sensitivity=A
+#  Returns: [{"rank":"SI","isArmed":true,"count":2}, ...]
+# ─────────────────────────────────────────────────────────────────────────────
 @admin_bp.route("/rules", methods=["GET"])
 @admin_required
 def get_rules():
-    sensitivity = request.args.get("sensitivity")
+    sensitivity = (request.args.get("sensitivity") or "").strip()
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT user_rank AS `rank`, required_count 
-                FROM booth_staff_rules
-                WHERE admin_id=%s AND sensitivity=%s
-            """, (_admin_id(), sensitivity))
+            if sensitivity:
+                cur.execute("""
+                    SELECT user_rank  AS rank,
+                           is_armed,
+                           required_count AS count
+                    FROM booth_staff_rules
+                    WHERE admin_id = %s AND sensitivity = %s
+                    ORDER BY id
+                """, (_admin_id(), sensitivity))   # ← FIXED
+            else:
+                cur.execute("""
+                    SELECT sensitivity,
+                           user_rank  AS rank,
+                           is_armed,
+                           required_count AS count
+                    FROM booth_staff_rules
+                    WHERE admin_id = %s
+                    ORDER BY FIELD(sensitivity,'A++','A','B','C'), id
+                """, (_admin_id(),))               # ← FIXED
 
             rows = cur.fetchall()
+
+    except Exception as e:
+        write_log("WARN", f"get_rules error: {e}", "Rules")
+        return ok([])
+
     finally:
         conn.close()
 
-    return ok(rows)
+    result = []
+    for r in rows:
+        item = {
+            "rank":    str(r["rank"]),
+            "count":   int(r["count"]),
+            "isArmed": bool(r["is_armed"]),
+        }
+        if "sensitivity" in r:
+            item["sensitivity"] = r["sensitivity"]
+        result.append(item)
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  AUTO ASSIGN  ← FULLY UPDATED: custom rules + lower-rank fallback + re-assign
-# ══════════════════════════════════════════════════════════════════════════════
- 
+    return ok(result)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+#  AUTO-ASSIGN
+#  POST /api/admin/auto-assign/<center_id>
+# ─────────────────────────────────────────────────────────────────────────────
 @admin_bp.route("/auto-assign/<int:center_id>", methods=["POST"])
 @admin_required
 def auto_assign(center_id):
-    """
-    Auto-assigns staff to a center.
-    - Supports custom rules via request body: {"customRules": [{"rank":"SI","count":2}, ...]}
-    - Falls back to global booth_staff_rules if no custom rules
-    - When a rank has no available staff, tries next lower rank and reports it
-    - Returns: assigned list, missing list, lowerRankUsed list
-    """
-    body = request.get_json(silent=True) or {}
+    body             = request.get_json(silent=True) or {}
     custom_rules_raw = body.get("customRules", [])
- 
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
+
             # Get center type
-            cur.execute("SELECT center_type FROM matdan_sthal WHERE id=%s", (center_id,))
+            cur.execute(
+                "SELECT center_type FROM matdan_sthal WHERE id=%s",
+                (center_id,)
+            )
             center = cur.fetchone()
             if not center:
                 return err("Center not found", 404)
+
             sensitivity = (center["center_type"] or "").strip().upper()
- 
-            # Determine rules to use
+
+            # Load rules
             if custom_rules_raw:
-                # Use custom rules from request
-                rules = [{"user_rank": r["rank"], "required_count": int(r.get("count", 1))}
-                         for r in custom_rules_raw if r.get("rank")]
+                rules = [{
+                    "user_rank":      r["rank"],
+                    "required_count": int(r.get("count", 1)),
+                    "is_armed":       int(r.get("isArmed") or r.get("is_armed") or 0),
+                } for r in custom_rules_raw if r.get("rank")]
             else:
-                # Use global rules from DB
                 cur.execute("""
-                    SELECT user_rank, required_count FROM booth_staff_rules
-                    WHERE admin_id=%s AND sensitivity=%s
-                """, (_admin_id(), sensitivity))
+                    SELECT user_rank, required_count, is_armed
+                    FROM booth_staff_rules
+                    WHERE admin_id = %s AND sensitivity = %s
+                """, (_admin_id(), sensitivity))   # ← FIXED
                 rules = cur.fetchall()
- 
+
             if not rules:
                 return ok({
                     "assigned":      [],
                     "missing":       [],
                     "lowerRankUsed": [],
-                    "total": 0,
-                    "message":       f"No rules set for {sensitivity}. Set rules on Dashboard."
+                    "total":         0,
+                    "message":       f"No rules set for {sensitivity}. "
+                                     "Set rules on Dashboard.",
                 })
- 
-            assigned_list      = []
-            missing_list       = []
-            lower_rank_used    = []
- 
+
+            assigned_list   = []
+            missing_list    = []
+            lower_rank_used = []
+
             for rule in rules:
-                rank  = rule["user_rank"]
-                count = rule["required_count"]
- 
-                # Try to get required staff for this rank
+                rank     = rule["user_rank"]
+                count    = rule["required_count"]
+                is_armed = int(rule.get("is_armed", 0))
+
+                # Primary: matching rank + armed status
                 cur.execute("""
-                    SELECT id, name, pno, mobile, user_rank FROM users
-                    WHERE role='staff' AND user_rank=%s AND is_active=1
-                      AND id NOT IN (SELECT staff_id FROM duty_assignments)
-                    ORDER BY RAND() LIMIT %s
-                """, (rank, count))
-                available = cur.fetchall()
- 
+                    SELECT id, name, pno, mobile, user_rank, is_armed
+                    FROM users
+                    WHERE role      = 'staff'
+                      AND user_rank = %s
+                      AND is_armed  = %s
+                      AND is_active = 1
+                      AND NOT EXISTS (
+                          SELECT 1 FROM duty_assignments da
+                          WHERE da.staff_id = id
+                      )
+                    ORDER BY RAND()
+                    LIMIT %s
+                """, (rank, is_armed, count))
+
+                available         = cur.fetchall()
                 assigned_for_rank = list(available)
-                needed = count - len(available)
- 
-                # If not enough of this rank, try lower ranks to fill gap
+                needed            = count - len(available)
+
+                # Lower-rank fallback (same armed status)
                 if needed > 0:
-                    lower_rank = _get_lower_rank(rank)
+                    lower_rank    = _get_lower_rank(rank)
                     lower_assigned = []
+
                     while lower_rank and needed > 0:
                         cur.execute("""
-                            SELECT id, name, pno, mobile, user_rank FROM users
-                            WHERE role='staff' AND user_rank=%s AND is_active=1
-                              AND id NOT IN (SELECT staff_id FROM duty_assignments)
-                            ORDER BY RAND() LIMIT %s
-                        """, (lower_rank, needed))
-                        lower_available = cur.fetchall()
-                        if lower_available:
-                            lower_assigned.extend(lower_available)
-                            needed -= len(lower_available)
-                            # Record the substitution
+                            SELECT id, name, pno, mobile, user_rank, is_armed
+                            FROM users
+                            WHERE role      = 'staff'
+                              AND user_rank = %s
+                              AND is_armed  = %s
+                              AND is_active = 1
+                              AND NOT EXISTS (
+                                  SELECT 1 FROM duty_assignments da
+                                  WHERE da.staff_id = id
+                              )
+                            ORDER BY RAND()
+                            LIMIT %s
+                        """, (lower_rank, is_armed, needed))
+
+                        la = cur.fetchall()
+                        if la:
+                            lower_assigned.extend(la)
+                            needed -= len(la)
                             lower_rank_used.append({
                                 "requiredRank": rank,
                                 "assignedRank": lower_rank,
-                                "count":        len(lower_available),
+                                "count":        len(la),
+                                "isArmed":      bool(is_armed),
                             })
                         lower_rank = _get_lower_rank(lower_rank) if lower_rank else None
- 
-                    # Warn admin via missing if still short
-                    still_missing = count - len(available) - len(lower_assigned)
+
+                    still_missing = count - len(assigned_for_rank) - len(lower_assigned)
                     if still_missing > 0:
-                        lower_suggestion = _get_lower_rank(rank)
                         missing_list.append({
-                            "rank":                rank,
-                            "required":            count,
-                            "available":           len(available) + len(lower_assigned),
-                            "lowerRankSuggestion": lower_suggestion,
+                            "rank":      rank,
+                            "required":  count,
+                            "available": count - still_missing,
+                            "shortage":  still_missing,
+                            "isArmed":   bool(is_armed),
                         })
- 
-                    # Assign lower rank staff
+
                     for s in lower_assigned:
                         cur.execute("""
-                            INSERT IGNORE INTO duty_assignments (staff_id, sthal_id, assigned_by)
+                            INSERT IGNORE INTO duty_assignments
+                                (staff_id, sthal_id, assigned_by)
                             VALUES (%s, %s, %s)
                         """, (s["id"], center_id, _admin_id()))
                         assigned_list.append({
                             "id":           s["id"],
                             "name":         s["name"]      or "",
                             "pno":          s["pno"]       or "",
-                            "mobile":       s["mobile"]    or "",
                             "rank":         s["user_rank"] or "",
                             "originalRank": rank,
                             "isLowerRank":  True,
+                            "isArmed":      bool(s["is_armed"]),
                         })
- 
-                # Assign primary rank staff
+
+                # Assign primary
                 for s in assigned_for_rank:
                     cur.execute("""
-                        INSERT IGNORE INTO duty_assignments (staff_id, sthal_id, assigned_by)
+                        INSERT IGNORE INTO duty_assignments
+                            (staff_id, sthal_id, assigned_by)
                         VALUES (%s, %s, %s)
                     """, (s["id"], center_id, _admin_id()))
                     assigned_list.append({
                         "id":          s["id"],
                         "name":        s["name"]      or "",
                         "pno":         s["pno"]       or "",
-                        "mobile":      s["mobile"]    or "",
                         "rank":        s["user_rank"] or "",
                         "isLowerRank": False,
+                        "isArmed":     bool(s["is_armed"]),
                     })
- 
-                # Report missing if NONE were found at all (no lower rank either)
-                if not available and not lower_rank_used:
-                    lower_suggestion = _get_lower_rank(rank)
+
+                # Edge case: nothing found at all
+                if not assigned_for_rank and needed == count:
                     if not any(m["rank"] == rank for m in missing_list):
                         missing_list.append({
                             "rank":                rank,
                             "required":            count,
                             "available":           0,
-                            "lowerRankSuggestion": lower_suggestion,
+                            "shortage":            count,
+                            "isArmed":             bool(is_armed),
+                            "lowerRankSuggestion": _get_lower_rank(rank),
                         })
- 
+
         conn.commit()
- 
+
     finally:
         conn.close()
- 
+
     write_log("INFO",
-              f"Auto-assign: {len(assigned_list)} assigned to center {center_id} "
-              f"(missing: {len(missing_list)}, lower-rank subs: {len(lower_rank_used)})",
+              f"Auto-assign: {len(assigned_list)} to center {center_id} "
+              f"(missing: {len(missing_list)}, lower: {len(lower_rank_used)})",
               "AutoAssign")
- 
+
     return ok({
         "assigned":      assigned_list,
         "missing":       missing_list,
         "lowerRankUsed": lower_rank_used,
         "total":         len(assigned_list),
     })
- 
+
 @admin_bp.route("/officers/save-to-users", methods=["POST"])
 @admin_required
 def save_officer_to_users():
     """
     Saves a manually entered officer to the users table.
-    Called automatically when an officer is added to super zone / zone / sector.
     """
-    from werkzeug.security import generate_password_hash
- 
+
     body   = request.get_json() or {}
-    name   = body.get("name", "").strip()
-    pno    = body.get("pno", "").strip()
-    mobile = body.get("mobile", "").strip()
-    rank   = body.get("rank", "").strip()
- 
+    name   = (body.get("name") or "").strip()
+    pno    = (body.get("pno") or "").strip()
+    mobile = (body.get("mobile") or "").strip()
+    rank   = (body.get("rank") or "").strip()
+
     if not name or not pno:
         return err("name and pno required")
- 
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            # Check if already exists
+
+            # 🔹 Check if already exists
             cur.execute("SELECT id FROM users WHERE pno=%s", (pno,))
             existing = cur.fetchone()
             if existing:
-                return ok({"id": existing["id"], "existed": True}, "Already in users")
- 
-            # Check username collision
+                return ok(
+                    {"id": existing["id"], "existed": True},
+                    "Already in users"
+                )
+
+            # 🔹 Username collision
             cur.execute("SELECT id FROM users WHERE username=%s", (pno,))
             username = pno if not cur.fetchone() else f"{pno}_{_admin_id()}"
- 
+
             district = request.user.get("district") or ""
- 
+
+            # ✅ FIX: include is_armed
             cur.execute("""
                 INSERT INTO users
-                    (name, pno, username, password, mobile, district, user_rank, role, is_active, created_by)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
-            """, (name, pno, username, generate_password_hash(pno),
-                  mobile, district, rank, _admin_id()))
+                    (name, pno, username, password, mobile,
+                     district, user_rank, is_armed, role, is_active, created_by)
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,'staff',1,%s)
+            """, (
+                name,
+                pno,
+                username,
+                generate_password_hash(pno),
+                mobile,
+                district,
+                rank,
+                0,   # ✅ default: निःशस्त्र
+                _admin_id()
+            ))
+
             new_id = cur.lastrowid
+
         conn.commit()
+
     finally:
         conn.close()
- 
-    write_log("INFO", f"Officer '{name}' PNO:{pno} saved to users by admin {_admin_id()}", "Officer")
-    return ok({"id": new_id, "existed": False}, "Officer saved to users", 201)
- 
+
+    write_log(
+        "INFO",
+        f"Officer '{name}' PNO:{pno} saved to users by admin {_admin_id()}",
+        "Officer"
+    )
+
+    return ok(
+        {"id": new_id, "existed": False},
+        "Officer saved to users",
+        201
+    )

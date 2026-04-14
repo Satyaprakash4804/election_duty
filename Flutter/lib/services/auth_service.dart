@@ -10,7 +10,7 @@ class AuthService {
       String id, String password) async {
 
     final response = await ApiService.post(
-      "/auth/login",
+      "/login",
       {
         "pno": id,
         "password": password,
