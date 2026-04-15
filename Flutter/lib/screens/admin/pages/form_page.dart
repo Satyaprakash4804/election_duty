@@ -1838,6 +1838,8 @@ class _CenterDialogState extends State<_CenterDialog> {
   final _addressCtrl = TextEditingController();
   final _thanaCtrl   = TextEditingController();
   final _busCtrl     = TextEditingController();
+  final _latCtrl = TextEditingController();
+  final _lngCtrl = TextEditingController();
   String _type  = 'C';
   String _prevType = 'C'; // track type change on edit
   bool _saving  = false;
@@ -1864,13 +1866,25 @@ class _CenterDialogState extends State<_CenterDialog> {
       _busCtrl.text     = widget.existing!['busNo']      as String? ?? '';
       _type             = widget.existing!['centerType'] as String? ?? 'C';
       _prevType         = _type;
+
+      // ✅ NEW (lat/lng prefill)
+      _latCtrl.text = (widget.existing!['latitude'] ?? '').toString();
+      _lngCtrl.text = (widget.existing!['longitude'] ?? '').toString();
     }
   }
 
   @override
   void dispose() {
     _disposed = true;
-    _nameCtrl.dispose(); _addressCtrl.dispose(); _thanaCtrl.dispose(); _busCtrl.dispose();
+    _nameCtrl.dispose();
+    _addressCtrl.dispose();
+    _thanaCtrl.dispose();
+    _busCtrl.dispose();
+
+    // ✅ NEW
+    _latCtrl.dispose();
+    _lngCtrl.dispose();
+
     super.dispose();
   }
 
@@ -1900,8 +1914,20 @@ class _CenterDialogState extends State<_CenterDialog> {
       final token = await AuthService.getToken();
       if (_disposed) return;
       final body = {
-        'name': _nameCtrl.text.trim(), 'address': _addressCtrl.text.trim(),
-        'thana': _thanaCtrl.text.trim(), 'busNo': _busCtrl.text.trim(), 'centerType': _type,
+        'name': _nameCtrl.text.trim(),
+        'address': _addressCtrl.text.trim(),
+        'thana': _thanaCtrl.text.trim(),
+        'busNo': _busCtrl.text.trim(),
+        'centerType': _type,
+
+        // ✅ NEW (OPTIONAL FIELDS)
+        'latitude': _latCtrl.text.trim().isEmpty
+            ? null
+            : double.tryParse(_latCtrl.text.trim()),
+
+        'longitude': _lngCtrl.text.trim().isEmpty
+            ? null
+            : double.tryParse(_lngCtrl.text.trim()),
       };
       int centerId;
       final isEdit = widget.existing != null;
@@ -2084,6 +2110,11 @@ class _CenterDialogState extends State<_CenterDialog> {
         Expanded(child: _formField(_thanaCtrl, 'थाना', Icons.local_police_outlined,  _typeColor)),
         const SizedBox(width: 10),
         Expanded(child: _formField(_busCtrl,   'Bus No', Icons.directions_bus_outlined, _typeColor))]),
+      Row(children: [
+        Expanded(child: _formField(_latCtrl, 'Latitude (optional)', Icons.my_location, _typeColor)),
+        const SizedBox(width: 10),
+        Expanded(child: _formField(_lngCtrl, 'Longitude (optional)', Icons.location_searching, _typeColor)),
+      ]),
       const SizedBox(height: 12),
       // Rooms quick button (only on edit)
       if (widget.existing != null) ...[
