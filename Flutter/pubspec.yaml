@@ -15,6 +15,9 @@ dependencies:
   # 🔹 File handling
   file_picker: ^10.3.10 
   excel: ^4.0.6
+  
+  # Maps / WebView
+  mappls_gl: ^1.2.1
 
   # 🔹 PDF
   pdf: ^3.10.0
@@ -23,7 +26,8 @@ dependencies:
   url_launcher: ^6.2.0
   # 🔹 HTTP (for backend later)
   http: ^1.2.0
-
+  screenshot: ^2.1.0
+  
   # 🔹 State management (recommended)
   provider: ^6.1.2
   google_fonts: ^6.2.1

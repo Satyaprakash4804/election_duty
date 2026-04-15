@@ -68,7 +68,7 @@ auth_bp = Blueprint("auth", __name__, url_prefix="/api")
 #     }, "Login successful")
 
 
-@auth_bp.route("/login", methods=["POST"])
+@auth_bp.route("/auth/login", methods=["POST"])
 def login():
     body     = request.get_json() or {}
     username = (body.get("username") or body.get("pno") or "").strip()

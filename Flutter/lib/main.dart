@@ -16,7 +16,9 @@ import 'firebase_options.dart';
 
 // 🔔 LOCAL NOTIFICATIONS (IMPORTANT)
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-
+import 'package:mappls_gl/mappls_gl.dart';
+import 'routes.dart';
+import 'screens/admin/map_view.dart';
 // ✅ GLOBAL INSTANCE (REQUIRED)
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
@@ -30,26 +32,30 @@ Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
-
+ 
   // 🔥 Firebase init
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-
+ 
   // 🔥 Background messages
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
-
-  // // 🔔 Initialize Local Notifications
-  // const AndroidInitializationSettings androidInitSettings =
-  //     AndroidInitializationSettings('@mipmap/ic_launcher');
-
-  // const InitializationSettings initSettings =
-  //     InitializationSettings(android: androidInitSettings);
-
-  // await flutterLocalNotificationsPlugin.initialize(
-  //   initializationSettings: initSettings,
-  // );
-
+ 
+  // ── Mappls SDK Keys ──────────────────────────────────────────────────────
+  MapplsAccountManager.setMapSDKKey(
+    "425ddc32f3f0804e17759093b419b7c1",
+  );
+  MapplsAccountManager.setRestAPIKey(
+    "425ddc32f3f0804e17759093b419b7c1",
+  );
+  MapplsAccountManager.setAtlasClientId(
+    "96dHZVzsAutM-QgqZkpIgMIElHDAROdmtsJMu1Iyfiq7w3cjgvx0IxST_h0Ks0byMFpNX0VkQMmKgbyCnCMdRQ==",
+  );
+  MapplsAccountManager.setAtlasClientSecret(
+    "lrFxI-iSEg8l1bHwBPApQm8q7Bti1e6d786Y0tXnzUV8030fiz4xXymqWP0zMDM1VOoZJefcj85eSXJlY7Tm-r4bz_JFSvXS",
+  );
+  // ── End Mappls Keys ──────────────────────────────────────────────────────
+ 
   runApp(const MyApp());
 }
 
@@ -151,6 +157,7 @@ class _MyAppState extends State<MyApp> {
         '/master': (context) => const MasterDashboard(),
         '/super': (context) => const SuperDashboard(),
         '/staff': (context) => const StaffDashboardPage(),
+        '/map-view': (context) => const MapViewPage(),
       },
 
       // ✅ AUTO LOGIN CHECK

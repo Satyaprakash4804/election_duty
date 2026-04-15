@@ -330,3 +330,57 @@ def bulk_delete_admins():
     write_log("WARN", f"Bulk delete admins: {ids}", "Auth")
 
     return ok(None, "Admins deleted successfully")
+
+# ══════════════════════════════════════════════════════════════
+# 11. FORM DATA SUMMARY   GET /super/form-data
+# ══════════════════════════════════════════════════════════════
+@super_admin_bp.route("/form-data", methods=["GET"])
+@super_admin_required
+def get_form_data():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT 
+                    u.id AS admin_id,
+                    u.name AS admin_name,
+                    u.district,
+
+                    COUNT(DISTINCT sz.id) AS super_zones,
+                    COUNT(DISTINCT z.id)  AS zones,
+                    COUNT(DISTINCT s.id)  AS sectors,
+                    COUNT(DISTINCT gp.id) AS gram_panchayats,
+                    COUNT(DISTINCT ms.id) AS centers,
+
+                    MAX(ms.updated_at) AS last_updated
+
+                FROM users u
+                LEFT JOIN super_zones sz ON sz.admin_id = u.id
+                LEFT JOIN zones z ON z.super_zone_id = sz.id
+                LEFT JOIN sectors s ON s.zone_id = z.id
+                LEFT JOIN gram_panchayats gp ON gp.sector_id = s.id
+                LEFT JOIN matdan_sthal ms ON ms.gram_panchayat_id = gp.id
+
+                WHERE u.role = 'admin'
+
+                GROUP BY u.id, u.name, u.district
+                ORDER BY u.name
+            """)
+
+            rows = cur.fetchall()
+
+    finally:
+        conn.close()
+
+    return ok([{
+        "adminId":        r["admin_id"],
+        "adminName":      r["admin_name"],
+        "district":       r["district"],
+        "superZones":     r["super_zones"] or 0,
+        "zones":          r["zones"] or 0,
+        "sectors":        r["sectors"] or 0,
+        "gramPanchayats": r["gram_panchayats"] or 0,
+        "centers":        r["centers"] or 0,
+        "lastUpdated":    r["last_updated"].isoformat() if r["last_updated"] else None
+    } for r in rows])
