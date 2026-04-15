@@ -367,8 +367,16 @@ class _HierarchyBanner extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
-        onTap: () => Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const HierarchyReportPage())),
+        onTap: () async {
+          final role = await AuthService.getRole() ?? "admin";
+
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => HierarchyReportPage(role: role),
+            ),
+          );
+        },
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(

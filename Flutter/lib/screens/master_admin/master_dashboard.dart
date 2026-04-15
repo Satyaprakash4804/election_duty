@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
+import '../admin/pages/hierarchy_report_page.dart';
+import '../admin/map_view.dart';
 
 // ─────────────────────────────────────────────
 //  PALETTE
@@ -315,13 +317,16 @@ class _MasterDashboardState extends State<MasterDashboard>
   //  DIALOGS — CREATE SUPER ADMIN
   // ══════════════════════════════════════════
   void _showCreateSuperAdmin() {
-    final nameCtrl    = TextEditingController();
-    final userCtrl    = TextEditingController();
-    final passCtrl    = TextEditingController();
-    final confirmCtrl = TextEditingController();
-    bool  obscureP    = true;
-    bool  obscureC    = true;
-    final formKey     = GlobalKey<FormState>();
+    final nameCtrl     = TextEditingController();
+    final userCtrl     = TextEditingController();
+    final districtCtrl = TextEditingController(); // ✅ NEW
+    final passCtrl     = TextEditingController();
+    final confirmCtrl  = TextEditingController();
+
+    bool obscureP = true;
+    bool obscureC = true;
+
+    final formKey = GlobalKey<FormState>();
 
     showDialog(
       context: context,
@@ -339,9 +344,20 @@ class _MasterDashboardState extends State<MasterDashboard>
                 _dlgField(nameCtrl, 'Full Name', Icons.person_outline,
                     validator: _notEmpty),
                 const SizedBox(height: 12),
+
                 _dlgField(userCtrl, 'Username', Icons.alternate_email,
                     validator: _notEmpty),
                 const SizedBox(height: 12),
+
+                // ✅ NEW DISTRICT FIELD
+                _dlgField(
+                  districtCtrl,
+                  'District',
+                  Icons.location_city_outlined,
+                  validator: _notEmpty,
+                ),
+                const SizedBox(height: 12),
+
                 _dlgField(passCtrl, 'Password', Icons.lock_outline,
                     obscure: obscureP,
                     suffixIcon: _eyeIcon(
@@ -349,32 +365,41 @@ class _MasterDashboardState extends State<MasterDashboard>
                     validator: (v) =>
                         (v == null || v.length < 6) ? 'Min 6 chars' : null),
                 const SizedBox(height: 12),
+
                 _dlgField(confirmCtrl, 'Confirm Password', Icons.lock_outline,
                     obscure: obscureC,
                     suffixIcon: _eyeIcon(
                         obscureC, () => setDlg(() => obscureC = !obscureC)),
                     validator: (v) =>
                         v != passCtrl.text ? 'Passwords do not match' : null),
+
                 const SizedBox(height: 20),
+
                 _dlgActions(
                   onCancel: () => Navigator.pop(ctx),
                   onConfirm: () async {
                     if (!formKey.currentState!.validate()) return;
+
                     try {
                       final token = await AuthService.getToken();
+
                       await ApiService.post(
                         "/master/super-admins",
                         {
-                          "name":     nameCtrl.text.trim(),
+                          "name": nameCtrl.text.trim(),
                           "username": userCtrl.text.trim(),
                           "password": passCtrl.text,
+                          "district": districtCtrl.text.trim(), // ✅ SEND
                         },
                         token: token,
                       );
+
                       if (ctx.mounted) Navigator.pop(ctx);
+
                       _snack('Super Admin created ✓', kSuccess);
                       _fetchSuperAdmins();
                       _fetchOverview();
+
                     } catch (e) {
                       _snack("Error: $e", kError);
                     }
@@ -861,6 +886,7 @@ class _MasterDashboardState extends State<MasterDashboard>
       return const Center(
           child: CircularProgressIndicator(color: kDevAccent));
     }
+
     return RefreshIndicator(
       onRefresh: _fetchAll,
       color: kDevAccent,
@@ -870,11 +896,12 @@ class _MasterDashboardState extends State<MasterDashboard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            // ── Election info banner ──────────
+
+            // ── Election Banner ─────────
             _electionBanner(),
             const SizedBox(height: 14),
 
-            // ── Stat grid ────────────────────
+            // ── Stats Grid ─────────────
             LayoutBuilder(builder: (ctx, c) {
               final cols = c.maxWidth > 480 ? 4 : 2;
               return GridView.count(
@@ -897,49 +924,108 @@ class _MasterDashboardState extends State<MasterDashboard>
                   _statCard('Booths',
                       '${_overview.totalBooths}',
                       Icons.how_to_vote_outlined, kSuccess),
-                  _statCard('Assigned',
-                      '${_overview.assignedDuties}',
-                      Icons.assignment_turned_in_outlined, kAccent),
-                  _statCard('Unassigned',
-                      '${_overview.totalStaff - _overview.assignedDuties < 0 ? 0 : _overview.totalStaff - _overview.assignedDuties}',
-                      Icons.assignment_late_outlined, kWarning),
-                  _statCard('Errors',
-                      '${_logs.where((l) => l.level == "ERROR").length}',
-                      Icons.error_outline, kError),
-                  _statCard('Log Entries',
-                      '${_logs.length}',
-                      Icons.receipt_long_outlined, kSubtle),
                 ],
               );
             }),
 
+            const SizedBox(height: 16),
+
+            // 🔥 ── HIERARCHY REPORT BUTTON ─────────
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) =>
+                        const HierarchyReportPage(role: "master"),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F2B5B), Color(0xFF1A3D7C)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.table_chart_outlined,
+                        color: Colors.white, size: 22),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        'Hierarchy Report',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: Colors.white),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // 🔥 ── MAP VIEW BUTTON ─────────
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const MapViewPage(),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00695C), Color(0xFF00897B)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.map, color: Colors.white, size: 22),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Text(
+                        'Map View',
+                        style: TextStyle(
+                            color: Colors.white,
+                            fontWeight: FontWeight.bold),
+                      ),
+                    ),
+                    Icon(Icons.chevron_right, color: Colors.white),
+                  ],
+                ),
+              ),
+            ),
+
             const SizedBox(height: 18),
+
+            // ── System Info ─────────
             _sectionLabel('System Information'),
             const SizedBox(height: 10),
             _infoTable(_sysStats),
 
             const SizedBox(height: 18),
+
+            // ── Logs ─────────
             _sectionLabel('Recent Activity'),
             const SizedBox(height: 10),
+
             if (_loadingLogs)
               const Center(
                   child: CircularProgressIndicator(color: kDevAccent))
             else ...[
               ..._logs.take(5).map(_logTile),
-              if (_logs.isNotEmpty) ...[
-                const SizedBox(height: 6),
-                GestureDetector(
-                  onTap: () => _switchTab(3),
-                  child: const Center(
-                    child: Text('View All Logs →',
-                        style: TextStyle(
-                            color: kDevAccent,
-                            fontWeight: FontWeight.w700,
-                            fontSize: 12)),
-                  ),
-                ),
-              ],
             ],
+
             const SizedBox(height: 24),
           ],
         ),

@@ -56,7 +56,9 @@ const _kCenterTypes = ['A++', 'A', 'B', 'C'];
 
 // ══════════════════════════════════════════════════════════════════════════════
 class HierarchyReportPage extends StatefulWidget {
-  const HierarchyReportPage({super.key});
+  final String role;
+
+  const HierarchyReportPage({super.key, required this.role});
   @override
   State<HierarchyReportPage> createState() => _HierarchyReportPageState();
 }
@@ -85,20 +87,35 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   @override
   void dispose() { _tab.dispose(); super.dispose(); }
 
+ 
   Future<void> _load() async {
-    setState(() { _loading = true; _error = null; });
-    try {
-      final token = await AuthService.getToken();
-      final res   = await ApiService.get('/admin/hierarchy/full', token: token);
-      setState(() {
-        _data    = res is List ? res : (res['data'] ?? []);
-        _loading = false;
-      });
-    } catch (e) {
-      setState(() { _loading = false; _error = e.toString(); });
-    }
-  }
+  setState(() {
+    _loading = true;
+    _error = null;
+  });
 
+  try {
+    final token = await AuthService.getToken();
+
+    final res = await ApiService.get(
+      "/admin/hierarchy/full",
+      token: token,
+    );
+
+    print("API RESPONSE 👉 $res");
+
+    setState(() {
+      _data = res is List ? res : [];
+      _loading = false;
+    });
+
+  } catch (e) {
+    setState(() {
+      _loading = false;
+      _error = e.toString();
+    });
+  }
+}
   // ── Filtered lists ────────────────────────────────────────────────────────
   List get _szList => _data;
   List get _filteredSZ => _fSZ == null ? _data

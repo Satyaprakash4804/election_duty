@@ -267,9 +267,11 @@ def create_super_admin():
     name     = body.get("name", "").strip()
     username = body.get("username", "").strip()
     password = body.get("password", "")
+    district = body.get("district", "").strip()   # ✅ NEW
 
-    if not name or not username or not password:
-        return err("name, username and password are required")
+    if not name or not username or not password or not district:
+        return err("name, username, password and district are required")
+
     if len(password) < 6:
         return err("Password must be at least 6 characters")
 
@@ -279,19 +281,26 @@ def create_super_admin():
             cur.execute("SELECT id FROM users WHERE username=%s", (username,))
             if cur.fetchone():
                 return err("Username already taken", 409)
+
+            # ✅ INSERT WITH DISTRICT
             cur.execute(
-                "INSERT INTO users (name, username, password, role, is_active, created_by) "
-                "VALUES (%s,%s,%s,'super_admin',1,%s)",
-                (name, username, hash_password(password), request.master_id)
+                "INSERT INTO users (name, username, password, role, district, is_active, created_by) "
+                "VALUES (%s,%s,%s,'super_admin',%s,1,%s)",
+                (name, username, hash_password(password), district, request.master_id)
             )
+
             new_id = cur.lastrowid
+
         conn.commit()
     finally:
         conn.close()
 
-    write_log("INFO", f"Super Admin '{name}' (ID:{new_id}) created by master", "Auth")
-    return ok({"id": new_id, "name": name, "username": username}, "Super Admin created", 201)
-
+    return ok({
+        "id": new_id,
+        "name": name,
+        "username": username,
+        "district": district   # ✅ return it also
+    }, "Super Admin created", 201)
 
 @master_bp.route("/super-admins/<int:sa_id>", methods=["GET"])
 @master_required

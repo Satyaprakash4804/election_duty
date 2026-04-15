@@ -353,8 +353,6 @@ def get_form_data():
                     COUNT(DISTINCT gp.id) AS gram_panchayats,
                     COUNT(DISTINCT ms.id) AS centers,
 
-                    MAX(ms.updated_at) AS last_updated
-
                 FROM users u
                 LEFT JOIN super_zones sz ON sz.admin_id = u.id
                 LEFT JOIN zones z ON z.super_zone_id = sz.id

@@ -127,93 +127,128 @@ def _insert_officer(cur, table: str, fk_col: str, fk_val: int, o: dict):
 @admin_required
 def get_full_hierarchy():
     """
-    Returns the complete tree Flutter needs for all three tabs:
-      super_zone → zones → sectors → panchayats → centers → kendras + duty_officers
-    Officers are embedded at every level.
-    Filtered to the calling admin's super_zones.
+    Role-based full hierarchy:
+    admin        → district-based data
+    super_admin  → ALL data
+    master       → ALL data
     """
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                "SELECT * FROM super_zones WHERE admin_id = %s ORDER BY id",
-                (_admin_id(),)
-            )
+
+            user = request.user
+            role = user.get("role")
+
+            print("USER 👉", user)
+            print("ROLE 👉", role)
+
+            # 🔥 ROLE-BASED FILTER
+            if role == "admin":
+                district = user.get("district")
+
+                print("Admin district 👉", district)
+
+                cur.execute("""
+                    SELECT * FROM super_zones
+                    WHERE district = %s
+                    ORDER BY id
+                """, (district,))
+
+            else:
+                # ✅ super_admin + master → ALL DATA
+                print("Loading ALL data (no filter)")
+                cur.execute("""
+                    SELECT * FROM super_zones
+                    ORDER BY id
+                """)
+
             super_zones = cur.fetchall()
             result = []
 
             for sz in super_zones:
                 sz_id = sz["id"]
 
-                cur.execute(
-                    "SELECT * FROM zones WHERE super_zone_id = %s ORDER BY id",
-                    (sz_id,)
-                )
+                # 🔹 ZONES
+                cur.execute("""
+                    SELECT * FROM zones
+                    WHERE super_zone_id = %s
+                    ORDER BY id
+                """, (sz_id,))
                 zone_list = []
 
                 for z in cur.fetchall():
                     z_id = z["id"]
 
-                    cur.execute(
-                        "SELECT * FROM sectors WHERE zone_id = %s ORDER BY id",
-                        (z_id,)
-                    )
+                    # 🔹 SECTORS
+                    cur.execute("""
+                        SELECT * FROM sectors
+                        WHERE zone_id = %s
+                        ORDER BY id
+                    """, (z_id,))
                     sector_list = []
 
                     for s in cur.fetchall():
                         s_id = s["id"]
 
-                        cur.execute(
-                            "SELECT * FROM gram_panchayats WHERE sector_id = %s ORDER BY id",
-                            (s_id,)
-                        )
+                        # 🔹 PANCHAYATS
+                        cur.execute("""
+                            SELECT * FROM gram_panchayats
+                            WHERE sector_id = %s
+                            ORDER BY id
+                        """, (s_id,))
                         gp_list = []
 
                         for gp in cur.fetchall():
                             gp_id = gp["id"]
 
-                            cur.execute(
-                                "SELECT * FROM matdan_sthal WHERE gram_panchayat_id = %s ORDER BY id",
-                                (gp_id,)
-                            )
+                            # 🔹 CENTERS (NO updated_at ❌)
+                            cur.execute("""
+                                SELECT id, name, address, thana,
+                                       center_type, bus_no,
+                                       latitude, longitude
+                                FROM matdan_sthal
+                                WHERE gram_panchayat_id = %s
+                                ORDER BY id
+                            """, (gp_id,))
+
                             center_list = []
+
                             for ms in cur.fetchall():
                                 ms_id = ms["id"]
+
                                 center_list.append({
                                     "id":           ms["id"],
-                                    "name":         ms["name"]        or "",
-                                    "address":      ms["address"]     or "",
-                                    "thana":        ms["thana"]       or "",
+                                    "name":         ms["name"] or "",
+                                    "address":      ms["address"] or "",
+                                    "thana":        ms["thana"] or "",
                                     "center_type":  ms["center_type"] or "C",
-                                    "bus_no":       ms["bus_no"]      or "",
-                                    "latitude":     float(ms["latitude"])  if ms["latitude"]  else None,
+                                    "bus_no":       ms["bus_no"] or "",
+                                    "latitude":     float(ms["latitude"]) if ms["latitude"] else None,
                                     "longitude":    float(ms["longitude"]) if ms["longitude"] else None,
                                     "kendras":       _fetch_kendras(cur, ms_id),
                                     "duty_officers": _fetch_duty_officers(cur, ms_id),
                                 })
 
-                            gp_thana = next(
-                                (c["thana"] for c in center_list if c.get("thana")), ""
-                            )
                             gp_list.append({
                                 "id":      gp["id"],
-                                "name":    gp["name"]    or "",
+                                "name":    gp["name"] or "",
                                 "address": gp["address"] or "",
-                                "thana":   gp_thana,
+                                "thana":   gp.get("thana", ""),
                                 "centers": center_list,
                             })
 
                         sector_list.append({
                             "id":         s["id"],
-                            "name":       s["name"]       or "",
+                            "name":       s["name"] or "",
                             "hq":         s.get("hq_address") or "",
-                            "officers":   _fetch_officers(cur, "sector_officers",  "sector_id",  s_id),
+                            "officers":   _fetch_officers(cur, "sector_officers", "sector_id", s_id),
                             "panchayats": gp_list,
                         })
 
                     zone_list.append({
                         "id":         z["id"],
-                        "name":       z["name"]       or "",
+                        "name":       z["name"] or "",
                         "hq_address": z["hq_address"] or "",
                         "officers":   _fetch_officers(cur, "zonal_officers", "zone_id", z_id),
                         "sectors":    sector_list,
@@ -221,9 +256,9 @@ def get_full_hierarchy():
 
                 result.append({
                     "id":       sz["id"],
-                    "name":     sz["name"]     or "",
+                    "name":     sz["name"] or "",
                     "district": sz["district"] or "",
-                    "block":    sz["block"]    or "",
+                    "block":    sz["block"] or "",
                     "officers": _fetch_officers(cur, "kshetra_officers", "super_zone_id", sz_id),
                     "zones":    zone_list,
                 })
@@ -231,11 +266,12 @@ def get_full_hierarchy():
         return jsonify(result)
 
     except Exception as e:
+        print("❌ ERROR:", str(e))
         return jsonify({"error": str(e)}), 500
+
     finally:
         conn.close()
-
-
+        
 # ══════════════════════════════════════════════════════════════════════════════
 #  SUPER ZONES   PUT /hierarchy/super-zone/<id>   DELETE /hierarchy/super-zone/<id>
 # ══════════════════════════════════════════════════════════════════════════════

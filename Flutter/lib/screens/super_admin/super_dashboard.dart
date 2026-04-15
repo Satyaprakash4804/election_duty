@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
 import '../admin/pages/hierarchy_report_page.dart';
+import '../admin/map_view.dart';
+
 // ─────────────────────────────────────────────
 //  PALETTE
 // ─────────────────────────────────────────────
@@ -527,11 +529,12 @@ class _SuperDashboardState extends State<SuperDashboard>
   Widget _buildOverview() {
     if (_loadingOverview || _loadingAdmins) {
       return const Center(
-          child: CircularProgressIndicator(color: kPrimary));
+        child: CircularProgressIndicator(color: kPrimary),
+      );
     }
 
-    final totalBooths = _overview['totalBooths']   ?? 0;
-    final totalStaff  = _overview['totalStaff']    ?? 0;
+    final totalBooths = _overview['totalBooths'] ?? 0;
+    final totalStaff  = _overview['totalStaff'] ?? 0;
     final assigned    = _overview['assignedDuties'] ?? 0;
 
     return RefreshIndicator(
@@ -543,6 +546,8 @@ class _SuperDashboardState extends State<SuperDashboard>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
+            // ── STATS GRID ─────────────────────
             LayoutBuilder(builder: (_, c) {
               final cols = c.maxWidth > 500 ? 4 : 2;
               return GridView.count(
@@ -553,54 +558,130 @@ class _SuperDashboardState extends State<SuperDashboard>
                 childAspectRatio: 1.5,
                 physics: const NeverScrollableScrollPhysics(),
                 children: [
-                  _statCard('Total Admins',   '${_admins.length}',
+                  _statCard('Total Admins', '${_admins.length}',
                       Icons.manage_accounts, kPrimary),
-                  _statCard('Total Booths',   '$totalBooths',
+                  _statCard('Total Booths', '$totalBooths',
                       Icons.location_on_outlined, kInfo),
-                  _statCard('Total Staff',    '$totalStaff',
+                  _statCard('Total Staff', '$totalStaff',
                       Icons.badge_outlined, kAccent),
-                  _statCard('Assigned',       '$assigned',
+                  _statCard('Assigned', '$assigned',
                       Icons.how_to_vote, kSuccess),
                 ],
               );
             }),
-             // After the GridView in _buildOverview, add:
-const SizedBox(height: 16),
-GestureDetector(
-  onTap: () => Navigator.push(context,
-      MaterialPageRoute(builder: (_) => const HierarchyReportPage())),
-  child: Container(
-    padding: const EdgeInsets.all(16),
-    decoration: BoxDecoration(
-      gradient: const LinearGradient(
-          colors: [Color(0xFF0F2B5B), Color(0xFF1A3D7C)]),
-      borderRadius: BorderRadius.circular(12),
-      boxShadow: [BoxShadow(
-          color: kPrimary.withOpacity(0.25),
-          blurRadius: 12, offset: const Offset(0, 4))],
-    ),
-    child: const Row(children: [
-      Icon(Icons.table_chart_outlined, color: Colors.white, size: 22),
-      SizedBox(width: 14),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text('Hierarchy Report', style: TextStyle(
-            color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800)),
-        Text('Super Zone · Sector · Panchayat',
-            style: TextStyle(color: Colors.white60, fontSize: 11)),
-      ])),
-      Icon(Icons.chevron_right, color: Colors.white54),
-    ]),
-  ),
-),
+
+            const SizedBox(height: 16),
+
+            // ── HIERARCHY REPORT BUTTON ─────────
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const HierarchyReportPage(role: "master"),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F2B5B), Color(0xFF1A3D7C)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.table_chart_outlined,
+                        color: Colors.white, size: 22),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Hierarchy Report',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            'Super Zone · Sector · Panchayat',
+                            style:
+                                TextStyle(color: Colors.white60, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right,
+                        color: Colors.white54),
+                  ],
+                ),
+              ),
+            ),
+
+            const SizedBox(height: 12),
+
+            // ── MAP VIEW BUTTON ─────────────────
+            GestureDetector(
+              onTap: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (_) => const MapViewPage(),
+                  ),
+                );
+              },
+              child: Container(
+                padding: const EdgeInsets.all(16),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF00695C), Color(0xFF00897B)],
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: const Row(
+                  children: [
+                    Icon(Icons.map, color: Colors.white, size: 22),
+                    SizedBox(width: 14),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            'Map View',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14,
+                                fontWeight: FontWeight.w800),
+                          ),
+                          Text(
+                            'View all centers on map',
+                            style: TextStyle(
+                                color: Colors.white60, fontSize: 11),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Icon(Icons.chevron_right,
+                        color: Colors.white54),
+                  ],
+                ),
+              ),
+            ),
 
             const SizedBox(height: 20),
 
+            // ── DISTRICT LIST ───────────────────
             _sectionHeader('District Summary'),
             const SizedBox(height: 10),
 
             if (_admins.isEmpty)
-              const Center(child: Text('No admins found',
-                  style: TextStyle(color: kSubtle)))
+              const Center(
+                child: Text('No admins found',
+                    style: TextStyle(color: kSubtle)),
+              )
             else
               ..._admins.map((a) => _districtCard(a)),
           ],
@@ -608,8 +689,6 @@ GestureDetector(
       ),
     );
   }
-
-  
 
 
   // ── TAB 1: ADMIN LIST ─────────────────────────
