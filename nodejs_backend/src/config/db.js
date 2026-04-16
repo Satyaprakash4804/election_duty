@@ -107,6 +107,23 @@ async function withTransaction(fn) {
   }
 }
 
+// 🔥 ENSURE COLUMN (ADD THIS)
+async function ensureColumn(conn, table, columnDef) {
+  const colName = columnDef.split(' ')[0].replace(/`/g, '');
+
+  const [rows] = await conn.execute(
+    `SELECT COUNT(*) AS cnt
+     FROM information_schema.columns
+     WHERE table_schema = ? AND table_name = ? AND column_name = ?`,
+    [config.db.database, table, colName]
+  );
+
+  if (rows[0].cnt === 0) {
+    await conn.execute(`ALTER TABLE \`${table}\` ADD COLUMN ${columnDef}`);
+    console.log(`✅ Column added: ${table}.${colName}`);
+  }
+}
+
 // ── Init DB — creates all tables ─────────────────────────────────────────────
 async function initDb() {
   // Use a separate connection for multi-statement DDL
@@ -140,8 +157,10 @@ async function initDb() {
         pno         VARCHAR(50)   DEFAULT NULL,
         user_rank   VARCHAR(100)  DEFAULT '',
         is_active   TINYINT(1)    NOT NULL DEFAULT 1,
+        is_armed    TINYINT(1)    NOT NULL DEFAULT 0,
         created_by  INT           DEFAULT NULL,
         assigned_by INT           DEFAULT NULL,
+        super_admin_id INT        DEFAULT NULL,
         created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
         updated_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
         UNIQUE KEY uq_username  (username),
@@ -232,6 +251,7 @@ async function initDb() {
         name       VARCHAR(100) NOT NULL,
         zone_id    INT NOT NULL,
         created_at DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        hq_address TEXT ,
         INDEX idx_zone_id (zone_id),
         FOREIGN KEY (zone_id) REFERENCES zones(id) ON DELETE CASCADE
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
@@ -343,7 +363,7 @@ async function initDb() {
         browser     VARCHAR(100) DEFAULT NULL,
         os          VARCHAR(100) DEFAULT NULL,
         user_agent  TEXT,
-        ip_address  VARCHAR(45),
+        ip_address  VARCHAR(45),        
         is_active   TINYINT(1)   DEFAULT 1,
         created_at  DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
         UNIQUE KEY uq_token    (token(255)),
@@ -359,6 +379,7 @@ async function initDb() {
         admin_id    INT NOT NULL,
         sensitivity ENUM('A++','A','B','C') NOT NULL,
         user_rank   VARCHAR(100) NOT NULL,
+        is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
         required_count INT NOT NULL DEFAULT 1,
         created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
         INDEX idx_admin       (admin_id),
@@ -369,6 +390,31 @@ async function initDb() {
 
     await conn.execute('SET SESSION foreign_key_checks = 1');
     await conn.execute('SET SESSION unique_checks = 1');
+
+
+    // 🔥 AUTO ADD MISSING COLUMNS (same as Python)
+    await ensureColumn(conn, 'users', "pno VARCHAR(50) DEFAULT NULL");
+    await ensureColumn(conn, 'users', "user_rank VARCHAR(100) DEFAULT ''");
+    await ensureColumn(conn, 'users', "district VARCHAR(100) DEFAULT ''");
+    await ensureColumn(conn, 'users', "thana VARCHAR(100) DEFAULT ''");
+    await ensureColumn(conn, 'users', "mobile VARCHAR(15) DEFAULT ''");
+    await ensureColumn(conn, 'users', "assigned_by INT DEFAULT NULL");
+    await ensureColumn(conn, 'users', "super_admin_id INT DEFAULT NULL");
+    await ensureColumn(conn, 'users', "created_by INT DEFAULT NULL");
+    await ensureColumn(conn, 'users', "is_active TINYINT(1) NOT NULL DEFAULT 1");
+    await ensureColumn(conn, 'users', "is_armed TINYINT(1) NOT NULL DEFAULT 0");
+
+    await ensureColumn(conn, 'sectors', "hq_address TEXT");
+
+    await ensureColumn(conn, 'booth_staff_rules', "is_armed TINYINT(1) NOT NULL DEFAULT 0");
+
+    await ensureColumn(conn, 'matdan_sthal', "latitude DECIMAL(10,7) DEFAULT NULL");
+    await ensureColumn(conn, 'matdan_sthal', "longitude DECIMAL(10,7) DEFAULT NULL");
+    await ensureColumn(conn, 'matdan_sthal', "bus_no VARCHAR(50) DEFAULT ''");
+    await ensureColumn(conn, 'matdan_sthal', "thana VARCHAR(150) DEFAULT ''");
+    await ensureColumn(conn, 'matdan_sthal', "center_type ENUM('A++','A','B','C') NOT NULL DEFAULT 'C'");
+
+    await ensureColumn(conn, 'duty_assignments', "bus_no VARCHAR(50) DEFAULT ''");
 
     // ── Seed: master user ─────────────────────────────────────────────────────
     const [rows] = await conn.execute("SELECT id FROM users WHERE username='master'");
@@ -390,6 +436,35 @@ async function initDb() {
   }
 }
 
+// 🔥 MIGRATIONS (ADD THIS)
+async function runMigrations() {
+  const conn = await getPool();
+
+  const migrations = [
+    ["users", "idx_role_district", "(role, district)"],
+    ["users", "idx_role_active", "(role, is_active)"],
+    ["users", "idx_name", "(name)"],
+    ["users", "idx_thana", "(thana)"],
+    ["matdan_sthal", "idx_gp_id", "(gram_panchayat_id)"],
+    ["matdan_sthal", "idx_thana", "(thana)"],
+  ];
+
+  for (const [table, indexName, cols] of migrations) {
+    const [rows] = await conn.execute(
+      `SELECT COUNT(*) AS cnt FROM information_schema.statistics 
+       WHERE table_schema=? AND table_name=? AND index_name=?`,
+      [config.db.database, table, indexName]
+    );
+
+    if (!rows[0].cnt) {
+      await conn.execute(
+        `ALTER TABLE \`${table}\` ADD INDEX \`${indexName}\` ${cols}`
+      );
+      console.log(`✅ Index added: ${table}.${indexName}`);
+    }
+  }
+}
+
 // ── Write Log (fire-and-forget) ───────────────────────────────────────────────
 async function writeLog(level, message, module) {
   try {
@@ -403,4 +478,4 @@ async function writeLog(level, message, module) {
   }
 }
 
-module.exports = { getPool, query, withTransaction, initDb, writeLog, hashPassword, verifyPassword };
+module.exports = { getPool, query, withTransaction, initDb, runMigrations, writeLog, hashPassword, verifyPassword };

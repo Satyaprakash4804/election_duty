@@ -8,7 +8,7 @@ const morgan = require('morgan');
 const cookieParser = require('cookie-parser');
 const rateLimit = require('express-rate-limit');
 const config = require('./config');
-const { initDb } = require('./config/db');
+const { initDb, runMigrations } = require('./config/db');
 const { notFound, errorHandler } = require('./middleware/errorHandler');
 
 // ── Route modules ─────────────────────────────────────────────────────────────
@@ -110,6 +110,7 @@ async function start() {
 
     // Initialise database (create tables, seed master account)
     await initDb();
+    await runMigrations();
 
     const server = app.listen(config.app.port, config.app.host, () => {
       console.log(`✅ Server listening on http://${config.app.host}:${config.app.port}`);

@@ -3,10 +3,13 @@
 const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
+const multer = require('multer');
+const { parse: csvParse } = require('csv-parse/sync');
 const { query, withTransaction, writeLog } = require('../config/db');
 const { ok, err, adminRequired } = require('../middleware/auth');
 const { pageParams, paginated } = require('../utils/pagination');
 const config = require('../config');
+const { log } = require('console');
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const SALT = config.passwordSalt;
@@ -14,7 +17,7 @@ const MAX_BATCH_ROWS = 10_000;
 const INSERT_CHUNK_SIZE = 200;
 const HASH_WORKERS = 8;
 
-const RANK_HIERARCHY = ['SP','ASP','DSP','Inspector','SI','ASI','Head Constable','Constable'];
+const RANK_HIERARCHY = ['SP', 'ASP', 'DSP', 'Inspector', 'SI', 'ASI', 'Head Constable', 'Constable'];
 
 function fastHash(pno) {
   return crypto.createHash('sha256').update(pno + SALT).digest('hex');
@@ -33,20 +36,20 @@ function getAdminId(req) { return req.user.id; }
 
 // ── Insert or upsert officer helper ───────────────────────────────────────────
 async function insertOfficer(conn, table, fkCol, fkVal, o, createdBy) {
-  let uid   = o.userId || o.user_id || null;
-  let name  = (o.name   || '').trim();
-  let pno   = (o.pno    || '').trim();
+  let uid = o.userId || o.user_id || null;
+  let name = (o.name || '').trim();
+  let pno = (o.pno || '').trim();
   let mobile = (o.mobile || '').trim();
-  let rank  = (o.rank   || '').trim();
+  let rank = (o.rank || '').trim();
 
   if (uid) {
-    const [users] = await conn.execute('SELECT name, pno, mobile, user_rank FROM users WHERE id=?', [uid]);
+    const [users] = await conn.execute('SELECT name, pno, mobile, user_rank, is_armed FROM users WHERE id=?', [uid]);
     if (users.length) {
       const u = users[0];
-      if (!name)   name   = u.name      || '';
-      if (!pno)    pno    = u.pno        || '';
-      if (!mobile) mobile = u.mobile     || '';
-      if (!rank)   rank   = u.user_rank  || '';
+      if (!name) name = u.name || '';
+      if (!pno) pno = u.pno || '';
+      if (!mobile) mobile = u.mobile || '';
+      if (!rank) rank = u.user_rank || '';
     }
   } else if (pno) {
     const [existing] = await conn.execute('SELECT id FROM users WHERE pno=?', [pno]);
@@ -56,8 +59,8 @@ async function insertOfficer(conn, table, fkCol, fkVal, o, createdBy) {
       const [usernameCheck] = await conn.execute('SELECT id FROM users WHERE username=?', [pno]);
       const username = usernameCheck.length ? `${pno}_off` : pno;
       const [ins] = await conn.execute(
-        "INSERT INTO users (name, pno, username, password, mobile, user_rank, role, is_active, created_by) VALUES (?,?,?,?,?,?,'staff',1,?)",
-        [name, pno, username, fastHash(pno), mobile, rank, createdBy]
+        "INSERT INTO users (name, pno, username, password, mobile, user_rank, is_armed, role, is_active, created_by) VALUES (?,?,?,?,?,?,?,'staff',1,?)",
+        [name, pno, username, fastHash(pno), mobile, rank, 0, createdBy]
       );
       uid = ins.insertId;
     }
@@ -73,11 +76,11 @@ async function insertOfficer(conn, table, fkCol, fkVal, o, createdBy) {
 // ── Update officer helper (used by kshetra/zonal/sector officer PUT) ──────────
 async function updateOfficer(conn, table, officerId, body, createdBy) {
   const [existing] = await conn.execute(`SELECT user_id FROM ${table} WHERE id=?`, [officerId]);
-  let uid    = body.userId || (existing.length ? existing[0].user_id : null);
-  const name   = body.name   || '';
-  const pno    = body.pno    || '';
+  let uid = body.userId || (existing.length ? existing[0].user_id : null);
+  const name = body.name || '';
+  const pno = body.pno || '';
   const mobile = body.mobile || '';
-  const rank   = body.rank   || '';
+  const rank = body.rank || '';
 
   if (!uid && pno) {
     const [byPno] = await conn.execute('SELECT id FROM users WHERE pno=?', [pno]);
@@ -184,11 +187,18 @@ router.delete('/super-zones/:id', adminRequired, async (req, res) => {
 
 router.get('/super-zones/:id/officers', adminRequired, async (req, res) => {
   try {
-    const [officers, staff] = await Promise.all([
-      query('SELECT * FROM kshetra_officers WHERE super_zone_id=? ORDER BY id', [req.params.id]),
-      query("SELECT id, name, pno, mobile, thana, user_rank FROM users WHERE role='staff' AND is_active=1 ORDER BY name"),
-    ]);
-    return ok(res, { officers: officers.map(formatOfficer), availableStaff: staff });
+    const pool = await require('../config/db').getPool();
+    const [officers] = await pool.execute('SELECT * FROM kshetra_officers WHERE super_zone_id=? ORDER BY id', [req.params.id]);
+    const district = req.user.district || null;
+    const staffSql = district
+      ? "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users WHERE role='staff' AND district=? AND is_active=1 ORDER BY name"
+      : "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users WHERE role='staff' AND is_active=1 ORDER BY name";
+    const staffParams = district ? [district] : [];
+    const [staff] = await pool.execute(staffSql, staffParams);
+    return ok(res, {
+      officers: officers.map(formatOfficer),
+      availableStaff: staff.map(r => ({ id: r.id, name: r.name || '', pno: r.pno || '', mobile: r.mobile || '', rank: r.user_rank || '', isArmed: !!r.is_armed })),
+    });
   } catch (e) { return err(res, e.message, 500); }
 });
 
@@ -297,11 +307,18 @@ router.delete('/zones/:id', adminRequired, async (req, res) => {
 
 router.get('/zones/:id/officers', adminRequired, async (req, res) => {
   try {
-    const [officers, staff] = await Promise.all([
-      query('SELECT * FROM zonal_officers WHERE zone_id=? ORDER BY id', [req.params.id]),
-      query("SELECT id, name, pno, mobile, thana, user_rank FROM users WHERE role='staff' AND is_active=1 ORDER BY name"),
-    ]);
-    return ok(res, { officers: officers.map(formatOfficer), availableStaff: staff });
+    const pool = await require('../config/db').getPool();
+    const [officers] = await pool.execute('SELECT * FROM zonal_officers WHERE zone_id=? ORDER BY id', [req.params.id]);
+    const district = req.user.district || null;
+    const staffSql = district
+      ? "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users WHERE role='staff' AND district=? AND is_active=1 ORDER BY name"
+      : "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users WHERE role='staff' AND is_active=1 ORDER BY name";
+    const staffParams = district ? [district] : [];
+    const [staff] = await pool.execute(staffSql, staffParams);
+    return ok(res, {
+      officers: officers.map(formatOfficer),
+      availableStaff: staff.map(r => ({ id: r.id, name: r.name || '', pno: r.pno || '', mobile: r.mobile || '', rank: r.user_rank || '', isArmed: !!r.is_armed })),
+    });
   } catch (e) { return err(res, e.message, 500); }
 });
 
@@ -351,7 +368,7 @@ router.get('/zones/:zId/sectors', adminRequired, async (req, res) => {
       `SELECT COUNT(*) AS cnt FROM sectors s WHERE s.zone_id=? ${whereExtra}`, params
     );
     const [sectors] = await pool.execute(
-      `SELECT s.id, s.name, COUNT(DISTINCT gp.id) AS gp_count
+      `SELECT s.id, s.name, s.hq_address, COUNT(DISTINCT gp.id) AS gp_count
        FROM sectors s LEFT JOIN gram_panchayats gp ON gp.sector_id=s.id
        WHERE s.zone_id=? ${whereExtra} GROUP BY s.id ORDER BY s.id LIMIT ${limit} OFFSET ${offset}`,
       [...params]
@@ -367,37 +384,39 @@ router.get('/zones/:zId/sectors', adminRequired, async (req, res) => {
     officers.forEach(o => { (officersBySector[o.sector_id] = officersBySector[o.sector_id] || []).push(formatOfficer(o)); });
 
     const result = sectors.map(s => ({
-      id: s.id, name: s.name || '', gpCount: s.gp_count, officers: officersBySector[s.id] || [],
+      id: s.id, name: s.name || '', hqAddress: s.hq_address || '', gpCount: s.gp_count,
+      officers: officersBySector[s.id] || [],
     }));
     return paginated(res, result, total, page, limit);
-  } catch (e) { return err(res, e.message, 500); }
+  } catch (e) { 
+    return err(res, e.message, 500); }
 });
 
 router.post('/zones/:zId/sectors', adminRequired, async (req, res) => {
   try {
-    const { name, officers: offs = [] } = req.body || {};
+    const { name, hqAddress = '', officers: offs = [] } = req.body || {};
     if (!name?.trim()) return err(res, 'name required');
     let sId;
     await withTransaction(async conn => {
-      const [r] = await conn.execute('INSERT INTO sectors (name, zone_id) VALUES (?,?)', [name.trim(), req.params.zId]);
+      const [r] = await conn.execute('INSERT INTO sectors (name, hq_address, zone_id) VALUES (?,?,?)', [name.trim(), hqAddress, req.params.zId]);
       sId = r.insertId;
       for (const o of offs) await insertOfficer(conn, 'sector_officers', 'sector_id', sId, o, req.user.id);
     });
     return ok(res, { id: sId, name: name.trim() }, 'Sector added', 201);
-  } catch (e) { return err(res, e.message, 500); }
+  } catch (e) { 
+    console.log(e);
+    
+    return err(res, e.message, 500); }
 });
 
 router.put('/sectors/:id', adminRequired, async (req, res) => {
   try {
-    const { name, officers: offs = [] } = req.body || {};
-    await withTransaction(async conn => {
-      if (name) await conn.execute('UPDATE sectors SET name=? WHERE id=?', [name, req.params.id]);
-      await conn.execute('DELETE FROM sector_officers WHERE sector_id=?', [req.params.id]);
-      for (const o of offs) {
-        if ((o.name || '').trim()) await insertOfficer(conn, 'sector_officers', 'sector_id', req.params.id, o, req.user.id);
-      }
-    });
-    return ok(res, null, 'Updated');
+    const name = (req.body?.name || '').trim();
+    const hq = (req.body?.hqAddress || '').trim();
+    if (!name) return err(res, 'name required');
+    const pool = await require('../config/db').getPool();
+    await pool.execute('UPDATE sectors SET name=?, hq_address=? WHERE id=?', [name, hq, req.params.id]);
+    return ok(res, { id: req.params.id, name, hqAddress: hq }, 'Updated');
   } catch (e) { return err(res, e.message, 500); }
 });
 
@@ -411,11 +430,18 @@ router.delete('/sectors/:id', adminRequired, async (req, res) => {
 
 router.get('/sectors/:id/officers', adminRequired, async (req, res) => {
   try {
-    const [officers, staff] = await Promise.all([
-      query('SELECT * FROM sector_officers WHERE sector_id=? ORDER BY id', [req.params.id]),
-      query("SELECT id, name, pno, mobile, thana, user_rank FROM users WHERE role='staff' AND is_active=1 ORDER BY name"),
-    ]);
-    return ok(res, { officers: officers.map(formatOfficer), availableStaff: staff });
+    const pool = await require('../config/db').getPool();
+    const [officers] = await pool.execute('SELECT * FROM sector_officers WHERE sector_id=? ORDER BY id', [req.params.id]);
+    const district = req.user.district || null;
+    const staffSql = district
+      ? "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users WHERE role='staff' AND district=? AND is_active=1 ORDER BY name"
+      : "SELECT id, name, pno, mobile, thana, user_rank, is_armed FROM users WHERE role='staff' AND is_active=1 ORDER BY name";
+    const staffParams = district ? [district] : [];
+    const [staff] = await pool.execute(staffSql, staffParams);
+    return ok(res, {
+      officers: officers.map(formatOfficer),
+      availableStaff: staff.map(r => ({ id: r.id, name: r.name || '', pno: r.pno || '', mobile: r.mobile || '', rank: r.user_rank || '', isArmed: !!r.is_armed })),
+    });
   } catch (e) { return err(res, e.message, 500); }
 });
 
@@ -547,8 +573,8 @@ router.get('/gram-panchayats/:gpId/centers', adminRequired, async (req, res) => 
     rulesRows.forEach(r => { (rules[r.sensitivity] = rules[r.sensitivity] || {})[r.user_rank] = r.required_count; });
 
     const data = centers.map(c => {
-      const centerType  = c.center_type || 'C';
-      const assigned    = staffByCenter[c.id] || [];
+      const centerType = c.center_type || 'C';
+      const assigned = staffByCenter[c.id] || [];
       const centerRules = rules[centerType] || {};
       const assignedRankCount = {};
       assigned.forEach(s => { assignedRankCount[s.rank] = (assignedRankCount[s.rank] || 0) + 1; });
@@ -560,7 +586,7 @@ router.get('/gram-panchayats/:gpId/centers', adminRequired, async (req, res) => 
       return {
         id: c.id, name: c.name || '', address: c.address || '', thana: c.thana || '',
         centerType, busNo: c.bus_no || '',
-        latitude:  c.latitude  != null ? parseFloat(c.latitude)  : null,
+        latitude: c.latitude != null ? parseFloat(c.latitude) : null,
         longitude: c.longitude != null ? parseFloat(c.longitude) : null,
         dutyCount: c.duty_count, roomCount: c.room_count,
         assignedStaff: assigned, missingRanks: missing,
@@ -574,7 +600,7 @@ router.post('/gram-panchayats/:gpId/centers', adminRequired, async (req, res) =>
   try {
     const { name, address = '', thana = '', centerType = 'C', busNo = '', latitude, longitude } = req.body || {};
     if (!name?.trim()) return err(res, 'name required');
-    const ct = ['A++','A','B','C'].includes((centerType || '').trim().toUpperCase()) ? (centerType || '').trim().toUpperCase() : 'C';
+    const ct = ['A++', 'A', 'B', 'C'].includes((centerType || '').trim().toUpperCase()) ? (centerType || '').trim().toUpperCase() : 'C';
     const pool = await require('../config/db').getPool();
     const [r] = await pool.execute(
       'INSERT INTO matdan_sthal (name, address, gram_panchayat_id, thana, center_type, bus_no, latitude, longitude) VALUES (?,?,?,?,?,?,?,?)',
@@ -587,7 +613,7 @@ router.post('/gram-panchayats/:gpId/centers', adminRequired, async (req, res) =>
 router.put('/centers/:id', adminRequired, async (req, res) => {
   try {
     const { name = '', address = '', thana = '', centerType = 'C', busNo = '', latitude, longitude } = req.body || {};
-    const ct = ['A++','A','B','C'].includes((centerType || '').trim().toUpperCase()) ? (centerType || '').trim().toUpperCase() : 'C';
+    const ct = ['A++', 'A', 'B', 'C'].includes((centerType || '').trim().toUpperCase()) ? (centerType || '').trim().toUpperCase() : 'C';
     const pool = await require('../config/db').getPool();
     await pool.execute(
       'UPDATE matdan_sthal SET name=?, address=?, thana=?, center_type=?, bus_no=?, latitude=?, longitude=? WHERE id=?',
@@ -644,15 +670,16 @@ router.delete('/rooms/:id', adminRequired, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  STAFF
+//  STAFF — paginated + search
 // ══════════════════════════════════════════════════════════════════════════════
 
 router.get('/staff', adminRequired, async (req, res) => {
   try {
     const { page, limit, offset } = pageParams(req.query);
-    const search   = (req.query.q        || '').trim();
-    const assigned = (req.query.assigned  || '').trim().toLowerCase();
-    const rankFilter = (req.query.rank   || '').trim();
+    const search = (req.query.q || '').trim();
+    const assigned = (req.query.assigned || '').trim().toLowerCase();
+    const rankFilter = (req.query.rank || '').trim();
+    const armed = (req.query.armed || '').trim().toLowerCase();
     const pool = await require('../config/db').getPool();
 
     const params = [];
@@ -674,65 +701,77 @@ router.get('/staff', adminRequired, async (req, res) => {
     if (assigned === 'yes') whereParts.push(OFFICER_EXISTS);
     else if (assigned === 'no') whereParts.push(`NOT ${OFFICER_EXISTS}`);
 
+    // armed filter
+    if (armed === 'yes') whereParts.push('u.is_armed = 1');
+    else if (armed === 'no') whereParts.push('u.is_armed = 0');
+
     const whereSQL = whereParts.join(' AND ');
 
     const [[{ cnt: total }]] = await pool.execute(
       `SELECT COUNT(*) AS cnt FROM users u WHERE ${whereSQL}`, params
     );
     const [rows] = await pool.execute(
-      `SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank,
-         (SELECT da.id       FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS duty_id,
-         (SELECT da.sthal_id FROM duty_assignments da WHERE da.staff_id=u.id LIMIT 1) AS sthal_id,
-         (SELECT ms.name     FROM duty_assignments da JOIN matdan_sthal ms ON ms.id=da.sthal_id WHERE da.staff_id=u.id LIMIT 1) AS center_name,
-         (SELECT sz.name     FROM kshetra_officers ko JOIN super_zones sz ON sz.id=ko.super_zone_id WHERE ko.user_id=u.id LIMIT 1) AS sz_name,
-         (SELECT sz.district FROM kshetra_officers ko JOIN super_zones sz ON sz.id=ko.super_zone_id WHERE ko.user_id=u.id LIMIT 1) AS sz_district,
-         (SELECT sz.block    FROM kshetra_officers ko JOIN super_zones sz ON sz.id=ko.super_zone_id WHERE ko.user_id=u.id LIMIT 1) AS sz_block,
-         (SELECT z.name       FROM zonal_officers zo JOIN zones z ON z.id=zo.zone_id WHERE zo.user_id=u.id LIMIT 1) AS zone_name,
-         (SELECT z.hq_address FROM zonal_officers zo JOIN zones z ON z.id=zo.zone_id WHERE zo.user_id=u.id LIMIT 1) AS zone_hq,
-         (SELECT s.name FROM sector_officers so JOIN sectors s ON s.id=so.sector_id WHERE so.user_id=u.id LIMIT 1) AS sector_name
+      `SELECT
+         u.id, u.name, u.pno, u.mobile, u.thana, u.district, u.user_rank, u.is_armed,
+         (SELECT ms.name FROM duty_assignments da JOIN matdan_sthal ms ON ms.id=da.sthal_id WHERE da.staff_id=u.id LIMIT 1) AS center_name,
+         (SELECT sz.name FROM kshetra_officers ko JOIN super_zones sz ON sz.id=ko.super_zone_id WHERE ko.user_id=u.id LIMIT 1) AS sz_name,
+         (SELECT z.name  FROM zonal_officers zo  JOIN zones z         ON z.id=zo.zone_id          WHERE zo.user_id=u.id  LIMIT 1) AS zone_name,
+         (SELECT s.name  FROM sector_officers so  JOIN sectors s       ON s.id=so.sector_id        WHERE so.user_id=u.id  LIMIT 1) AS sector_name
        FROM users u WHERE ${whereSQL} ORDER BY u.name LIMIT ${limit} OFFSET ${offset}`,
       [...params]
     );
 
     const data = rows.map(r => {
-      const isBooth   = r.sthal_id   != null;
-      const isKshetra = r.sz_name    != null;
-      const isZonal   = r.zone_name  != null;
-      const isSector  = r.sector_name != null;
-      const isAssigned = isBooth || isKshetra || isZonal || isSector;
-      let assignType = '', assignLabel = '', assignDetail = '';
-      if (isBooth)        { assignType = 'booth';   assignLabel = r.center_name || '';  assignDetail = ''; }
-      else if (isKshetra) { assignType = 'kshetra'; assignLabel = r.sz_name || '';      assignDetail = [r.sz_district, r.sz_block].filter(Boolean).join(' • '); }
-      else if (isZonal)   { assignType = 'zone';    assignLabel = r.zone_name || '';    assignDetail = r.zone_hq || ''; }
-      else if (isSector)  { assignType = 'sector';  assignLabel = r.sector_name || ''; assignDetail = ''; }
+      let assignType = '', assignLabel = '';
+      if (r.center_name) { assignType = 'booth'; assignLabel = r.center_name; }
+      else if (r.sz_name) { assignType = 'kshetra'; assignLabel = r.sz_name; }
+      else if (r.zone_name) { assignType = 'zone'; assignLabel = r.zone_name; }
+      else if (r.sector_name) { assignType = 'sector'; assignLabel = r.sector_name; }
       return {
         id: r.id, name: r.name || '', pno: r.pno || '', mobile: r.mobile || '',
         thana: r.thana || '', district: r.district || '', rank: r.user_rank || '',
-        isAssigned, assignType, assignLabel, assignDetail,
-        dutyId: r.duty_id, centerId: r.sthal_id, centerName: r.center_name || '',
+        isArmed: !!r.is_armed,
+        isAssigned: !!assignType, assignType, assignLabel,
       };
     });
     return paginated(res, data, total, page, limit);
-  } catch (e) { return err(res, e.message, 500); }
+  } catch (e) { 
+    console.log(e)
+    return err(res, e.message, 500); }
 });
 
 router.get('/staff/search', adminRequired, async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
+    const armed = (req.query.armed || '').trim().toLowerCase();
     if (!q) return ok(res, []);
     const like = `%${q}%`;
-    const rows = await query(
-      "SELECT id, name, pno, mobile, thana, user_rank, district FROM users WHERE role='staff' AND (name LIKE ? OR pno LIKE ? OR mobile LIKE ? OR district LIKE ?) ORDER BY name LIMIT 20",
-      [like, like, like, like]
+
+    let armedClause = '';
+    const armedParams = [];
+    if (armed === 'yes') { armedClause = ' AND is_armed = 1'; }
+    else if (armed === 'no') { armedClause = ' AND is_armed = 0'; }
+
+    const pool = await require('../config/db').getPool();
+    const [rows] = await pool.execute(
+      `SELECT id, name, pno, mobile, thana, user_rank, district, is_armed
+       FROM users WHERE role='staff' ${armedClause}
+       AND (name LIKE ? OR pno LIKE ? OR mobile LIKE ? OR district LIKE ?)
+       ORDER BY name LIMIT 20`,
+      [like, like, like, like, ...armedParams]
     );
-    return ok(res, rows.map(r => ({ id: r.id, name: r.name || '', pno: r.pno || '', mobile: r.mobile || '', thana: r.thana || '', district: r.district || '', rank: r.user_rank || '' })));
+    return ok(res, rows.map(r => ({
+      id: r.id, name: r.name || '', pno: r.pno || '', mobile: r.mobile || '',
+      thana: r.thana || '', district: r.district || '', rank: r.user_rank || '',
+      isArmed: !!r.is_armed,
+    })));
   } catch (e) { return err(res, e.message, 500); }
 });
 
 router.get('/staff/debug', adminRequired, async (req, res) => {
   try {
-    const [[{ cnt: total }]] = await (await require('../config/db').getPool()).execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff'");
     const pool = await require('../config/db').getPool();
+    const [[{ cnt: total }]] = await pool.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff'");
     const [byDistrict] = await pool.execute("SELECT LOWER(TRIM(district)) AS district_norm, COUNT(*) AS cnt FROM users WHERE role='staff' GROUP BY district_norm ORDER BY cnt DESC LIMIT 20");
     const adminDistrict = (req.user.district || '').trim().toLowerCase();
     let matching = total;
@@ -740,7 +779,11 @@ router.get('/staff/debug', adminRequired, async (req, res) => {
       const [[m]] = await pool.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff' AND LOWER(TRIM(district))=?", [adminDistrict]);
       matching = m.cnt;
     }
-    return ok(res, { adminDistrict: adminDistrict || '(not set)', totalStaffInDB: total, matchingDistrict: matching, byDistrict: byDistrict.map(r => ({ district: r.district_norm || '(empty)', count: r.cnt })) });
+    return ok(res, {
+      adminDistrict: adminDistrict || '(not set)', totalStaffInDB: total, matchingDistrict: matching,
+      byDistrict: byDistrict.map(r => ({ district: r.district_norm || '(empty)', count: r.cnt })),
+      message: 'If matchingDistrict=0 but totalStaffInDB>0, district mismatch is still the bug',
+    });
   } catch (e) { return err(res, e.message, 500); }
 });
 
@@ -748,6 +791,14 @@ router.post('/staff', adminRequired, async (req, res) => {
   try {
     const { name, pno, mobile = '', thana = '', rank = '' } = req.body || {};
     if (!name?.trim() || !pno?.trim()) return err(res, 'name and pno required');
+
+    // Match Python's flexible is_armed parsing
+    const isArmed = (
+      req.body.isArmed in [true, 1, '1', 'true'] ||
+      req.body.is_armed in [true, 1, '1', 'true'] ||
+      ['sastra', 'armed', 'yes'].includes(String(req.body.weapon || '').toLowerCase())
+    ) ? 1 : 0;
+
     const adminId = getAdminId(req);
     const pool = await require('../config/db').getPool();
     const [existing] = await pool.execute('SELECT id FROM users WHERE pno=?', [pno.trim()]);
@@ -756,28 +807,34 @@ router.post('/staff', adminRequired, async (req, res) => {
     const username = usernameCheck.length ? `${pno.trim()}_${adminId}` : pno.trim();
     const district = req.user.district || '';
     const [r] = await pool.execute(
-      "INSERT INTO users (name,pno,username,password,mobile,thana,district,user_rank,role,is_active,created_by) VALUES (?,?,?,?,?,?,?,?,'staff',1,?)",
-      [name.trim(), pno.trim(), username, fastHash(pno.trim()), mobile, thana, district, rank, adminId]
+      "INSERT INTO users (name,pno,username,password,mobile,thana,district,user_rank,is_armed,role,is_active,created_by) VALUES (?,?,?,?,?,?,?,?,?,'staff',1,?)",
+      [name.trim(), pno.trim(), username, fastHash(pno.trim()), mobile, thana, district, rank, isArmed, adminId]
     );
-    await writeLog('INFO', `Staff '${name}' PNO:${pno} added by admin ${adminId}`, 'Staff');
-    return ok(res, { id: r.insertId, name: name.trim(), pno: pno.trim() }, 'Staff added', 201);
+    await writeLog('INFO', `Staff '${name}' PNO:${pno} added (is_armed=${isArmed}) by admin ${adminId}`, 'Staff');
+    return ok(res, { id: r.insertId, name: name.trim(), pno: pno.trim(), isArmed: !!isArmed }, 'Staff added', 201);
   } catch (e) { return err(res, e.message, 500); }
 });
 
-// ── Bulk upload staff with SSE streaming ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  BULK UPLOAD — SSE streaming
+// ══════════════════════════════════════════════════════════════════════════════
+
+const ARMED_VALS = new Set(['1', 'yes', 'हाँ', 'han', 'sastra', 'सशस्त्र', 'armed', 'true']);
+
 router.post('/staff/bulk', adminRequired, async (req, res) => {
-  const body  = req.body || {};
+  const body = req.body || {};
   const items = body.staff || [];
   if (!items.length) return err(res, 'staff list empty');
   if (items.length > MAX_BATCH_ROWS) return err(res, `Too many rows. Max ${MAX_BATCH_ROWS} per upload.`);
 
-  const district  = (req.user.district || '').trim();
-  const adminId   = req.user.id;
+  const district = (req.user.district || '').trim();
+  const adminId = req.user.id;
   const totalInput = items.length;
 
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache, no-store');
   res.setHeader('X-Accel-Buffering', 'no');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
   res.setHeader('Connection', 'keep-alive');
   res.flushHeaders();
 
@@ -789,12 +846,26 @@ router.post('/staff/bulk', adminRequired, async (req, res) => {
     const clean = []; const skipped = []; const seenPnos = new Set();
     for (let i = 0; i < items.length; i++) {
       const s = items[i];
-      const pno  = String(s.pno  || '').trim();
+      const pno = String(s.pno || '').trim();
       const name = String(s.name || '').trim();
-      if (!pno || !name) { skipped.push(pno || `row_${i+1}`); continue; }
+      if (!pno || !name) { skipped.push(pno || `row_${i + 1}`); continue; }
       if (seenPnos.has(pno)) { skipped.push(pno); continue; }
       seenPnos.add(pno);
-      clean.push({ pno, name, rank: String(s.rank||'').trim(), mobile: String(s.mobile||'').trim(), thana: String(s.thana||'').trim(), dist: (String(s.district||'').trim()) || district });
+
+      // Parse is_armed — same logic as Python
+      const armedRaw = String(
+        s.sastra ?? s.armed ?? s.is_armed ?? ''
+      ).trim().toLowerCase();
+      const isArmed = ARMED_VALS.has(armedRaw) ? 1 : 0;
+
+      clean.push({
+        pno, name,
+        rank: String(s.rank || '').trim(),
+        mobile: String(s.mobile || '').trim(),
+        thana: String(s.thana || '').trim(),
+        dist: (String(s.district || '').trim()) || district,
+        is_armed: isArmed,
+      });
     }
     sse({ phase: 'parse', pct: 10, msg: `${clean.length} valid, ${skipped.length} skipped` });
     if (!clean.length) {
@@ -807,7 +878,7 @@ router.post('/staff/bulk', adminRequired, async (req, res) => {
     const allPnos = clean.map(r => r.pno);
     const ph = allPnos.map(() => '?').join(',');
     const pool = await require('../config/db').getPool();
-    const [existingPnoRows] = await pool.execute(`SELECT pno FROM users WHERE pno IN (${ph})`, allPnos);
+    const [existingPnoRows] = await pool.execute(`SELECT pno      FROM users WHERE pno      IN (${ph})`, allPnos);
     const [existingUsernameRows] = await pool.execute(`SELECT username FROM users WHERE username IN (${ph})`, allPnos);
     const existingPnos = new Set(existingPnoRows.map(r => r.pno));
     const existingUsernames = new Set(existingUsernameRows.map(r => r.username));
@@ -824,12 +895,12 @@ router.post('/staff/bulk', adminRequired, async (req, res) => {
       return res.end();
     }
 
-    // Phase 2: hash passwords (parallel using Promise.all chunks)
+    // Phase 2: hash passwords (synchronous — crypto is fast enough at this scale)
     sse({ phase: 'hash', pct: 25, msg: `0/${preInsert.length} passwords hash हो रहे हैं...` });
     const hashed = preInsert.map(r => fastHash(r.pno));
     sse({ phase: 'hash', pct: 55, msg: 'Hash पूर्ण। DB में insert हो रहा है...' });
 
-    // Phase 3: bulk insert in chunks
+    // Phase 3: INSERT in chunks with autocommit=1 (mirrors Python fix)
     let added = 0;
     const conn = await pool.getConnection();
     try {
@@ -837,17 +908,19 @@ router.post('/staff/bulk', adminRequired, async (req, res) => {
       for (let start = 0; start < preInsert.length; start += INSERT_CHUNK_SIZE) {
         const chunk = preInsert.slice(start, start + INSERT_CHUNK_SIZE);
         const chunkHashes = hashed.slice(start, start + INSERT_CHUNK_SIZE);
-        const values = chunk.map((r, i) => [r.name, r.pno, r.username, chunkHashes[i], r.mobile, r.thana, r.dist, r.rank, 'staff', 1, adminId]);
-        const placeholders = values.map(() => '(?,?,?,?,?,?,?,?,?,?,?)').join(',');
-        const flatParams = values.flat();
+        const values = chunk.map((r, i) => [r.name, r.pno, r.username, chunkHashes[i], r.mobile, r.thana, r.dist, r.rank, r.is_armed, 'staff', 1, adminId]);
+        const placeholders = values.map(() => '(?,?,?,?,?,?,?,?,?,?,?,?)').join(',');
         const [insRes] = await conn.execute(
-          `INSERT IGNORE INTO users (name,pno,username,password,mobile,thana,district,user_rank,role,is_active,created_by) VALUES ${placeholders}`,
-          flatParams
+          `INSERT IGNORE INTO users (name,pno,username,password,mobile,thana,district,user_rank,is_armed,role,is_active,created_by) VALUES ${placeholders}`,
+          values.flat()
         );
         added += insRes.affectedRows || 0;
         const pct = 55 + Math.floor(((start + chunk.length) / preInsert.length) * 43);
         sse({ phase: 'insert', pct: Math.min(pct, 98), added, total: preInsert.length, msg: `Insert: ${added}/${preInsert.length}` });
       }
+    } catch (e) {
+      sse({ phase: 'error', message: `Insert error (after ${added} rows saved): ${e.message}` });
+      return res.end();
     } finally {
       conn.release();
     }
@@ -860,11 +933,70 @@ router.post('/staff/bulk', adminRequired, async (req, res) => {
   res.end();
 });
 
+// ── Bulk CSV upload ───────────────────────────────────────────────────────────
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+router.post('/staff/bulk-csv', adminRequired, upload.single('file'), async (req, res) => {
+  if (!req.file) return err(res, "CSV file required (field: 'file')");
+
+  let content;
+  try {
+    // Strip BOM if present (utf-8-sig equivalent)
+    content = req.file.buffer.toString('utf8').replace(/^\uFEFF/, '');
+  } catch (e) {
+    return err(res, `File encoding error: ${e.message}`);
+  }
+
+  let records;
+  try {
+    records = csvParse(content, { columns: true, skip_empty_lines: true, trim: true });
+  } catch (e) {
+    return err(res, `CSV parse error: ${e.message}`);
+  }
+
+  const items = [];
+  for (const row of records) {
+    // Normalize keys to lowercase
+    const norm = {};
+    for (const [k, v] of Object.entries(row)) norm[k.trim().toLowerCase()] = v;
+
+    const pno = norm['pno'] || norm['p.no'] || '';
+    const name = norm['name'] || norm['नाम'] || '';
+    if (!pno && !name) continue;
+
+    const armedRaw = (
+      norm['sastra'] || norm['armed'] || norm['weapon'] || norm['शस्त्र'] || ''
+    ).trim().toLowerCase();
+
+    items.push({
+      pno: pno.trim(),
+      name: name.trim(),
+      mobile: (norm['mobile'] || norm['mob'] || norm['phone'] || '').trim(),
+      thana: (norm['thana'] || norm['थाना'] || norm['ps'] || '').trim(),
+      district: (norm['district'] || norm['dist'] || norm['जिला'] || '').trim(),
+      rank: (norm['rank'] || norm['post'] || norm['पद'] || '').trim(),
+      is_armed: ARMED_VALS.has(armedRaw) ? 1 : 0,
+    });
+  }
+
+  if (!items.length) return err(res, 'No valid rows found in CSV');
+
+  // Delegate to bulk SSE handler by injecting into req.body
+  req.body = { staff: items };
+  // Call the bulk handler directly via the router's stack
+  // Simplest: re-use the same SSE logic inline by forwarding
+  return router.handle({ ...req, url: '/staff/bulk', method: 'POST' }, res, () => { });
+});
+
 router.put('/staff/:id', adminRequired, async (req, res) => {
   try {
     const { name = '', pno = '', mobile = '', thana = '', rank = '' } = req.body || {};
+    const isArmed = req.body.isArmed ? 1 : 0;
     const pool = await require('../config/db').getPool();
-    await pool.execute("UPDATE users SET name=?,pno=?,mobile=?,thana=?,user_rank=? WHERE id=? AND role='staff'", [name, pno, mobile, thana, rank, req.params.id]);
+    await pool.execute(
+      "UPDATE users SET name=?,pno=?,mobile=?,thana=?,user_rank=?,is_armed=? WHERE id=? AND role='staff'",
+      [name, pno, mobile, thana, rank, isArmed, req.params.id]
+    );
     return ok(res, null, 'Staff updated');
   } catch (e) { return err(res, e.message, 500); }
 });
@@ -974,10 +1106,10 @@ router.get('/duties', adminRequired, async (req, res) => {
     );
     if (!rows.length) return paginated(res, [], total, page, limit);
 
-    const szIds    = [...new Set(rows.map(r => r.super_zone_id))];
-    const zIds     = [...new Set(rows.map(r => r.zone_id))];
-    const sIds     = [...new Set(rows.map(r => r.sector_id))];
-    const cIds     = [...new Set(rows.map(r => r.center_id))];
+    const szIds = [...new Set(rows.map(r => r.super_zone_id))];
+    const zIds = [...new Set(rows.map(r => r.zone_id))];
+    const sIds = [...new Set(rows.map(r => r.sector_id))];
+    const cIds = [...new Set(rows.map(r => r.center_id))];
 
     async function fetchMap(sql, ids) {
       if (!ids.length) return {};
@@ -1005,17 +1137,16 @@ router.get('/duties', adminRequired, async (req, res) => {
       sectorName: r.sector_name || '', zoneName: r.zone_name || '',
       superZoneName: r.super_zone_name || '', blockName: r.block_name || '',
       busNo: r.bus_no || '',
-      superOfficers:  strip(superOffMap[r.super_zone_id]),
-      zonalOfficers:  strip(zonalOffMap[r.zone_id]),
+      superOfficers: strip(superOffMap[r.super_zone_id]),
+      zonalOfficers: strip(zonalOffMap[r.zone_id]),
       sectorOfficers: strip(sectorOffMap[r.sector_id]),
-      sahyogi:        strip(sahyogiMap[r.center_id]),
+      sahyogi: strip(sahyogiMap[r.center_id]),
     }));
     return paginated(res, result, total, page, limit);
-  } catch (e) { 
+  } catch (e) {
     console.log(e);
     return err(res, e.message, 500);
-    
-   }
+  }
 });
 
 router.post('/duties', adminRequired, async (req, res) => {
@@ -1082,7 +1213,7 @@ router.get('/centers/all', adminRequired, async (req, res) => {
     const data = rows.map(r => ({
       id: r.id, name: r.name || '', address: r.address || '', thana: r.thana || '',
       centerType: r.center_type || 'C', busNo: r.bus_no || '',
-      latitude:  r.latitude  != null ? parseFloat(r.latitude)  : null,
+      latitude: r.latitude != null ? parseFloat(r.latitude) : null,
       longitude: r.longitude != null ? parseFloat(r.longitude) : null,
       gpName: r.gp_name || '', sectorName: r.sector_name || '',
       zoneName: r.zone_name || '', superZoneName: r.super_zone_name || '',
@@ -1100,46 +1231,121 @@ router.get('/overview', adminRequired, async (req, res) => {
   try {
     const adminId = getAdminId(req);
     const pool = await require('../config/db').getPool();
-    const [[sz], [booths], [staff], [assigned]] = await Promise.all([
+    const [[[sz]], [[booths]], [[staff]], [[assigned]]] = await Promise.all([
       pool.execute('SELECT COUNT(*) AS cnt FROM super_zones WHERE admin_id=?', [adminId]),
-      pool.execute(`SELECT COUNT(DISTINCT ms.id) AS cnt FROM matdan_sthal ms
-        JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-        JOIN sectors s ON s.id=gp.sector_id JOIN zones z ON z.id=s.zone_id
-        JOIN super_zones szn ON szn.id=z.super_zone_id WHERE szn.admin_id=?`, [adminId]),
+      pool.execute(
+        `SELECT COUNT(DISTINCT ms.id) AS cnt FROM matdan_sthal ms
+         JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
+         JOIN sectors s ON s.id=gp.sector_id JOIN zones z ON z.id=s.zone_id
+         JOIN super_zones szn ON szn.id=z.super_zone_id WHERE szn.admin_id=?`, [adminId]
+      ),
       pool.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff' AND is_active=1"),
-      pool.execute("SELECT COUNT(DISTINCT da.id) AS cnt FROM duty_assignments da JOIN users u ON u.id=da.staff_id WHERE u.role='staff'"),
+      pool.execute("SELECT COUNT(*) AS cnt FROM duty_assignments"),
     ]);
-    return ok(res, { superZones: sz[0].cnt, totalBooths: booths[0].cnt, totalStaff: staff[0].cnt, assignedDuties: assigned[0].cnt });
-  } catch (e) { return err(res, e.message, 500); }
+    return res.json({
+      success: true,
+      data: {
+        superZones: parseInt(sz.cnt || 0),
+        totalBooths: parseInt(booths.cnt || 0),
+        totalStaff: parseInt(staff.cnt || 0),
+        assignedDuties: parseInt(assigned.cnt || 0),
+      },
+    });
+  } catch (e) {
+    await writeLog('ERROR', `overview error: ${e.message}`, 'Overview');
+    return res.json({ success: true, data: { superZones: 0, totalBooths: 0, totalStaff: 0, assignedDuties: 0 } });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  BOOTH STAFF RULES
+//  Uses _admin_id() directly — avoids the NULL super_admin_id bug from Python
 // ══════════════════════════════════════════════════════════════════════════════
 
 router.get('/rules', adminRequired, async (req, res) => {
   try {
-    const rows = await query(
-      'SELECT user_rank AS `rank`, required_count FROM booth_staff_rules WHERE admin_id=? AND sensitivity=?',
-      [getAdminId(req), req.query.sensitivity]
-    );
-    return ok(res, rows);
-  } catch (e) { return err(res, e.message, 500); }
+    const sensitivity = (req.query.sensitivity || '').trim();
+    const adminId = getAdminId(req);
+    const pool = await require('../config/db').getPool();
+
+    let rows;
+    if (sensitivity) {
+      const [r] = await pool.execute(
+        'SELECT user_rank AS `rank`, is_armed, required_count AS `count` FROM booth_staff_rules WHERE admin_id=? AND sensitivity=? ORDER BY id',
+        [adminId, sensitivity]
+      );
+      rows = r;
+    } else {
+      const [r] = await pool.execute(
+        "SELECT sensitivity, user_rank AS `rank`, is_armed, required_count AS `count` FROM booth_staff_rules WHERE admin_id=? ORDER BY FIELD(sensitivity,'A++','A','B','C'), id",
+        [adminId]
+      );
+      rows = r;
+    }
+
+    const result = rows.map(r => {
+      const item = { rank: String(r.rank), count: parseInt(r.count), isArmed: !!r.is_armed };
+      if (r.sensitivity !== undefined) item.sensitivity = r.sensitivity;
+      return item;
+    });
+    return ok(res, result);
+  } catch (e) {
+    await writeLog('WARN', `get_rules error: ${e.message}`, 'Rules');
+    return ok(res, []);
+  }
 });
 
 router.post('/rules', adminRequired, async (req, res) => {
   try {
     const { sensitivity, rules = [] } = req.body || {};
     if (!sensitivity) return err(res, 'sensitivity required');
+    if (!['A++', 'A', 'B', 'C'].includes(sensitivity)) return err(res, 'sensitivity must be one of: A++, A, B, C');
+
     const adminId = getAdminId(req);
+    const pool = await require('../config/db').getPool();
+
+    // Ensure table + is_armed column exist (mirrors Python's safe migration)
+    await pool.execute(`
+      CREATE TABLE IF NOT EXISTS booth_staff_rules (
+        id             INT AUTO_INCREMENT PRIMARY KEY,
+        admin_id       INT  NOT NULL,
+        sensitivity    ENUM('A++','A','B','C') NOT NULL,
+        user_rank      VARCHAR(100) NOT NULL,
+        is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
+        required_count INT          NOT NULL DEFAULT 1,
+        created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_admin       (admin_id),
+        INDEX idx_sensitivity (sensitivity),
+        FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
     await withTransaction(async conn => {
-      await conn.execute('DELETE FROM booth_staff_rules WHERE admin_id=? AND sensitivity=?', [adminId, sensitivity]);
+      await conn.execute(
+        'DELETE FROM booth_staff_rules WHERE admin_id=? AND sensitivity=?',
+        [adminId, sensitivity]
+      );
       for (const r of rules) {
-        await conn.execute('INSERT INTO booth_staff_rules (admin_id, sensitivity, user_rank, required_count) VALUES (?,?,?,?)', [adminId, sensitivity, r.rank, r.count]);
+        const rank = String(r.rank || '').trim();
+        if (!rank) continue;
+        const count = parseInt(r.count || r.required_count || 1);
+        const isArmed = (
+          r.isArmed in [true, 1, '1', 'true'] ||
+          r.is_armed in [true, 1, '1', 'true']
+        ) ? 1 : 0;
+        await conn.execute(
+          'INSERT INTO booth_staff_rules (admin_id, sensitivity, user_rank, is_armed, required_count) VALUES (?,?,?,?,?)',
+          [adminId, sensitivity, rank, isArmed, count]
+        );
       }
     });
-    return ok(res, null, 'Rules saved');
-  } catch (e) { return err(res, e.message, 500); }
+
+    await writeLog('INFO', `Rules saved: sensitivity=${sensitivity}, ${rules.length} rules by admin ${adminId}`, 'Rules');
+    return ok(res, null, `${sensitivity} rules saved`);
+  } catch (e) {
+    await writeLog('ERROR', `save_rules error: ${e.message}`, 'Rules');
+    return err(res, `Save failed: ${e.message}`, 500);
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1159,23 +1365,41 @@ router.post('/auto-assign/:centerId', adminRequired, async (req, res) => {
 
     let rules;
     if (customRulesRaw.length) {
-      rules = customRulesRaw.filter(r => r.rank).map(r => ({ user_rank: r.rank, required_count: parseInt(r.count, 10) || 1 }));
+      rules = customRulesRaw.filter(r => r.rank).map(r => ({
+        user_rank: r.rank,
+        required_count: parseInt(r.count, 10) || 1,
+        is_armed: parseInt(r.isArmed || r.is_armed || 0),
+      }));
     } else {
-      const [dbRules] = await pool.execute('SELECT user_rank, required_count FROM booth_staff_rules WHERE admin_id=? AND sensitivity=?', [adminId, sensitivity]);
+      const [dbRules] = await pool.execute(
+        'SELECT user_rank, required_count, is_armed FROM booth_staff_rules WHERE admin_id=? AND sensitivity=?',
+        [adminId, sensitivity]
+      );
       rules = dbRules;
     }
+
     if (!rules.length) {
-      return ok(res, { assigned: [], missing: [], lowerRankUsed: [], total: 0, message: `No rules set for ${sensitivity}. Set rules on Dashboard.` });
+      return ok(res, {
+        assigned: [], missing: [], lowerRankUsed: [], total: 0,
+        message: `No rules set for ${sensitivity}. Set rules on Dashboard.`,
+      });
     }
 
     const assignedList = [], missingList = [], lowerRankUsed = [];
 
     await withTransaction(async conn => {
       for (const rule of rules) {
-        const { user_rank: rank, required_count: count } = rule;
+        const rank = rule.user_rank;
+        const count = rule.required_count;
+        const isArmed = parseInt(rule.is_armed || 0);
+
+        // Primary: matching rank + armed status
         const [available] = await conn.execute(
-          `SELECT id, name, pno, mobile, user_rank FROM users WHERE role='staff' AND user_rank=? AND is_active=1 AND id NOT IN (SELECT staff_id FROM duty_assignments) ORDER BY RAND() LIMIT ${count}`,
-          [rank]
+          `SELECT id, name, pno, mobile, user_rank, is_armed
+           FROM users WHERE role='staff' AND user_rank=? AND is_armed=? AND is_active=1
+           AND NOT EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=id)
+           ORDER BY RAND() LIMIT ${count}`,
+          [rank, isArmed]
         );
 
         let assignedForRank = [...available];
@@ -1186,40 +1410,44 @@ router.post('/auto-assign/:centerId', adminRequired, async (req, res) => {
           let lowerRank = getLowerRank(rank);
           while (lowerRank && needed > 0) {
             const [la] = await conn.execute(
-              `SELECT id, name, pno, mobile, user_rank FROM users WHERE role='staff' AND user_rank=? AND is_active=1 AND id NOT IN (SELECT staff_id FROM duty_assignments) ORDER BY RAND() LIMIT ${needed}`,
-              [lowerRank]
+              `SELECT id, name, pno, mobile, user_rank, is_armed
+               FROM users WHERE role='staff' AND user_rank=? AND is_armed=? AND is_active=1
+               AND NOT EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=id)
+               ORDER BY RAND() LIMIT ${needed}`,
+              [lowerRank, isArmed]
             );
             if (la.length) {
               lowerAssigned.push(...la);
               needed -= la.length;
-              lowerRankUsed.push({ requiredRank: rank, assignedRank: lowerRank, count: la.length });
+              lowerRankUsed.push({ requiredRank: rank, assignedRank: lowerRank, count: la.length, isArmed: !!isArmed });
             }
             lowerRank = getLowerRank(lowerRank);
           }
           const stillMissing = count - available.length - lowerAssigned.length;
           if (stillMissing > 0) {
-            missingList.push({ rank, required: count, available: available.length + lowerAssigned.length, lowerRankSuggestion: getLowerRank(rank) });
+            missingList.push({ rank, required: count, available: count - stillMissing, shortage: stillMissing, isArmed: !!isArmed });
           }
           for (const s of lowerAssigned) {
             await conn.execute('INSERT IGNORE INTO duty_assignments (staff_id, sthal_id, assigned_by) VALUES (?,?,?)', [s.id, centerId, adminId]);
-            assignedList.push({ id: s.id, name: s.name||'', pno: s.pno||'', mobile: s.mobile||'', rank: s.user_rank||'', originalRank: rank, isLowerRank: true });
+            assignedList.push({ id: s.id, name: s.name || '', pno: s.pno || '', rank: s.user_rank || '', originalRank: rank, isLowerRank: true, isArmed: !!s.is_armed });
           }
         }
 
         for (const s of assignedForRank) {
           await conn.execute('INSERT IGNORE INTO duty_assignments (staff_id, sthal_id, assigned_by) VALUES (?,?,?)', [s.id, centerId, adminId]);
-          assignedList.push({ id: s.id, name: s.name||'', pno: s.pno||'', mobile: s.mobile||'', rank: s.user_rank||'', isLowerRank: false });
+          assignedList.push({ id: s.id, name: s.name || '', pno: s.pno || '', rank: s.user_rank || '', isLowerRank: false, isArmed: !!s.is_armed });
         }
 
-        if (!available.length && !lowerRankUsed.length) {
+        // Edge case: nothing found at all
+        if (!assignedForRank.length && needed === count) {
           if (!missingList.find(m => m.rank === rank)) {
-            missingList.push({ rank, required: count, available: 0, lowerRankSuggestion: getLowerRank(rank) });
+            missingList.push({ rank, required: count, available: 0, shortage: count, isArmed: !!isArmed, lowerRankSuggestion: getLowerRank(rank) });
           }
         }
       }
     });
 
-    await writeLog('INFO', `Auto-assign: ${assignedList.length} assigned to center ${centerId} (missing: ${missingList.length})`, 'AutoAssign');
+    await writeLog('INFO', `Auto-assign: ${assignedList.length} to center ${centerId} (missing: ${missingList.length}, lower: ${lowerRankUsed.length})`, 'AutoAssign');
     return ok(res, { assigned: assignedList, missing: missingList, lowerRankUsed, total: assignedList.length });
   } catch (e) { return err(res, e.message, 500); }
 });
@@ -1236,8 +1464,8 @@ router.post('/officers/save-to-users', adminRequired, async (req, res) => {
     const username = usernameCheck.length ? `${pno.trim()}_${req.user.id}` : pno.trim();
     const district = req.user.district || '';
     const [r] = await pool.execute(
-      "INSERT INTO users (name, pno, username, password, mobile, district, user_rank, role, is_active, created_by) VALUES (?,?,?,?,?,?,?,'staff',1,?)",
-      [name.trim(), pno.trim(), username, fastHash(pno.trim()), mobile, district, rank, req.user.id]
+      "INSERT INTO users (name, pno, username, password, mobile, district, user_rank, is_armed, role, is_active, created_by) VALUES (?,?,?,?,?,?,?,?,'staff',1,?)",
+      [name.trim(), pno.trim(), username, fastHash(pno.trim()), mobile, district, rank, 0, req.user.id]
     );
     await writeLog('INFO', `Officer '${name}' PNO:${pno} saved to users by admin ${req.user.id}`, 'Officer');
     return ok(res, { id: r.insertId, existed: false }, 'Officer saved to users', 201);
