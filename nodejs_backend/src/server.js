@@ -47,6 +47,7 @@ app.use(cors({
   exposedHeaders: ['Content-Length', 'X-Request-Id'],
   maxAge: 86400, // 24h preflight cache
 }));
+app.options('*', cors());
 
 // ── Compression (gzip) ────────────────────────────────────────────────────────
 app.use(compression({ level: 6, threshold: 1024 }));
