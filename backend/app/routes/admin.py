@@ -9,6 +9,7 @@ from db import get_db
 from app.routes import ok, err, write_log, admin_required
 import hashlib
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
+from flask_jwt_extended import jwt_required
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PAGE_SIZE = 50
@@ -962,7 +963,7 @@ def get_centers(gp_id):
             for row in cur.fetchall():
                 staff_by_center.setdefault(row["sthal_id"], []).append({
                     "id": row["id"], "name": row["name"] or "", "pno": row["pno"] or "", "rank": row["user_rank"] or ""})
-            cur.execute("SELECT sensitivity, user_rank, required_count FROM booth_staff_rules WHERE admin_id=%s", (_super_admin_id(),))
+            cur.execute("SELECT sensitivity, user_rank, required_count FROM booth_staff_rules WHERE admin_id=%s", (_admin_id(),))
             rules_raw = cur.fetchall()
             rules = {}
             for r in rules_raw:
@@ -2311,30 +2312,33 @@ def get_rules():
     conn = get_db()
     try:
         with conn.cursor() as cur:
+
             if sensitivity:
                 cur.execute("""
-                    SELECT user_rank  AS rank,
+                    SELECT sensitivity,
+                           user_rank AS `rank`,
                            is_armed,
                            required_count AS count
                     FROM booth_staff_rules
                     WHERE admin_id = %s AND sensitivity = %s
                     ORDER BY id
-                """, (_admin_id(), sensitivity))   # ← FIXED
+                """, (_admin_id(), sensitivity))
+
             else:
                 cur.execute("""
                     SELECT sensitivity,
-                           user_rank  AS rank,
+                           user_rank AS `rank`,
                            is_armed,
                            required_count AS count
                     FROM booth_staff_rules
                     WHERE admin_id = %s
                     ORDER BY FIELD(sensitivity,'A++','A','B','C'), id
-                """, (_admin_id(),))               # ← FIXED
+                """, (_admin_id(),))
 
             rows = cur.fetchall()
 
     except Exception as e:
-        write_log("WARN", f"get_rules error: {e}", "Rules")
+        print("GET RULES ERROR:", e)
         return ok([])
 
     finally:
@@ -2342,14 +2346,12 @@ def get_rules():
 
     result = []
     for r in rows:
-        item = {
-            "rank":    str(r["rank"]),
-            "count":   int(r["count"]),
+        result.append({
+            "rank": str(r["rank"]),
+            "count": int(r["count"]),
             "isArmed": bool(r["is_armed"]),
-        }
-        if "sensitivity" in r:
-            item["sensitivity"] = r["sensitivity"]
-        result.append(item)
+            "sensitivity": r["sensitivity"]
+        })
 
     return ok(result)
 
