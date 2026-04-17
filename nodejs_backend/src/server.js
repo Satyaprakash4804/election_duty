@@ -52,7 +52,7 @@ app.use(cors({
 app.use(compression({ level: 6, threshold: 1024 }));
 
 // ── Request logging ───────────────────────────────────────────────────────────
-if (config.app.isDev) {
+if (config.app.isProd) {
   app.use(morgan('dev'));
 } else {
   app.use(morgan('combined', {
