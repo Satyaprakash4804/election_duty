@@ -25,7 +25,7 @@ class Config:
     JWT_EXPIRY  = int(os.getenv("JWT_EXPIRY", 36000))   # seconds (10 hours)
 
     # Base URL — used by health checker and any internal calls
-    BASE_URL = os.getenv("BASE_URL", "http://192.168.1.5:5000")
+    BASE_URL = os.getenv("BASE_URL", "http://192.168.1.12:5000")
     MYSQLDUMP_PATH = os.getenv("MYSQLDUMP_PATH")
 
 # ─────────────────────────────────────────────

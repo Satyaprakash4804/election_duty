@@ -26,7 +26,7 @@ const _kRanks = [
   {'en': 'SI',               'hi': 'उप निरीक्षक',                  'armVariant': false},
   {'en': 'SI_Arms',          'hi': 'उप निरीक्षक (आर्म्स पुलिस)',   'armVariant': true},
   {'en': 'Head Constable',   'hi': 'मुख्य आरक्षी',                 'armVariant': false},
-  {'en': 'HC_Arms',          'hi': 'मुख्य आरक्षी (आर्म्स पुलिस)', 'armVariant': true},
+  {'en': 'Head Constable_Arms',          'hi': 'मुख्य आरक्षी (आर्म्स पुलिस)', 'armVariant': true},
   {'en': 'Constable',        'hi': 'आरक्षी',                       'armVariant': false},
   {'en': 'Constable_Arms',   'hi': 'आरक्षी (आर्म्स पुलिस)',        'armVariant': true},
 ];

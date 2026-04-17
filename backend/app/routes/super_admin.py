@@ -1,6 +1,6 @@
 import time
 from flask import Blueprint, request
-from werkzeug.security import generate_password_hash
+from db import hash_password
 from db import get_db
 from app.routes import ok, err, write_log, super_admin_required
 import jwt
@@ -84,7 +84,7 @@ def create_admin():
             cur.execute("""
                 INSERT INTO users (name, username, password, role, district, is_active, created_by)
                 VALUES (%s, %s, %s, 'admin', %s, 1, %s)
-            """, (name, username, generate_password_hash(password),
+            """, (name, username, hash_password(password),
                   district, request.user["id"]))
             new_id = cur.lastrowid
         conn.commit()
@@ -289,7 +289,7 @@ def reset_password(admin_id):
                 UPDATE users
                 SET password=%s
                 WHERE id=%s
-            """, (generate_password_hash(password), admin_id))
+            """, (hash_password(password), admin_id))
 
         conn.commit()
     finally:

@@ -1,21 +1,3 @@
-// lib/screens/admin/map_view.dart
-//
-// Election Center Map View
-// Navigation: District list → Super Zone list → Zone list → Map with markers
-// Tap a marker → Full center detail bottom sheet
-//
-// FIX 1: Markers now render using addCircle + addSymbol layered approach,
-//         with color-coded circles per center type (A++/A/B/C)
-// FIX 2: Print button added — captures current map view via screenshot
-//         and sends to the system print dialog
-// FIX 3: More responsive layout (safe areas, adaptive padding, scrollable headers)
-//
-// Dependencies needed in pubspec.yaml:
-//   mappls_gl: ^1.2.1
-//   screenshot: ^2.1.0    ← NEW for print capture
-//   printing: ^5.12.0     ← already present (used in duty_card_page)
-//   pdf: ^3.10.8          ← already present
-
 import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
