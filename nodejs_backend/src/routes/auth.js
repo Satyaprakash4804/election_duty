@@ -63,9 +63,11 @@ router.post('/login', async (req, res) => {
       },
     };
 
+    responseData.token = token;
+
     if (!isWeb) {
       // Mobile → return token in JSON
-      responseData.token = token;
+      
       return ok(res, responseData, 'Login successful');
     }
 
