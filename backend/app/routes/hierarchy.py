@@ -126,12 +126,6 @@ def _insert_officer(cur, table: str, fk_col: str, fk_val: int, o: dict):
 @hierarchy.route("/full", methods=["GET", "OPTIONS"])
 @admin_required
 def get_full_hierarchy():
-    """
-    Role-based full hierarchy:
-    admin        → district-based data
-    super_admin  → ALL data
-    master       → ALL data
-    """
 
     conn = get_db()
     try:
@@ -147,13 +141,19 @@ def get_full_hierarchy():
             if role == "admin":
                 district = user.get("district")
 
+                # ✅ DEBUG (safe now)
                 print("Admin district 👉", district)
 
+                cur.execute("SELECT DISTINCT district FROM super_zones")
+                print("DB districts 👉", cur.fetchall())
+
+                # ✅ FIXED FILTER (case + space safe)
                 cur.execute("""
                     SELECT * FROM super_zones
-                    WHERE district = %s
+                    WHERE TRIM(LOWER(district)) = TRIM(LOWER(%s))
+                       OR admin_id = %s
                     ORDER BY id
-                """, (district,))
+                """, (district, user.get("id")))
 
             else:
                 # ✅ super_admin + master → ALL DATA
@@ -202,7 +202,7 @@ def get_full_hierarchy():
                         for gp in cur.fetchall():
                             gp_id = gp["id"]
 
-                            # 🔹 CENTERS (NO updated_at ❌)
+                            # 🔹 CENTERS
                             cur.execute("""
                                 SELECT id, name, address, thana,
                                        center_type, bus_no,
@@ -218,49 +218,49 @@ def get_full_hierarchy():
                                 ms_id = ms["id"]
 
                                 center_list.append({
-                                    "id":           ms["id"],
-                                    "name":         ms["name"] or "",
-                                    "address":      ms["address"] or "",
-                                    "thana":        ms["thana"] or "",
-                                    "center_type":  ms["center_type"] or "C",
-                                    "bus_no":       ms["bus_no"] or "",
-                                    "latitude":     float(ms["latitude"]) if ms["latitude"] else None,
-                                    "longitude":    float(ms["longitude"]) if ms["longitude"] else None,
-                                    "kendras":       _fetch_kendras(cur, ms_id),
+                                    "id": ms["id"],
+                                    "name": ms["name"] or "",
+                                    "address": ms["address"] or "",
+                                    "thana": ms["thana"] or "",
+                                    "center_type": ms["center_type"] or "C",
+                                    "bus_no": ms["bus_no"] or "",
+                                    "latitude": float(ms["latitude"]) if ms["latitude"] else None,
+                                    "longitude": float(ms["longitude"]) if ms["longitude"] else None,
+                                    "kendras": _fetch_kendras(cur, ms_id),
                                     "duty_officers": _fetch_duty_officers(cur, ms_id),
                                 })
 
                             gp_list.append({
-                                "id":      gp["id"],
-                                "name":    gp["name"] or "",
+                                "id": gp["id"],
+                                "name": gp["name"] or "",
                                 "address": gp["address"] or "",
-                                "thana":   gp.get("thana", ""),
+                                "thana": gp.get("thana", ""),
                                 "centers": center_list,
                             })
 
                         sector_list.append({
-                            "id":         s["id"],
-                            "name":       s["name"] or "",
-                            "hq":         s.get("hq_address") or "",
-                            "officers":   _fetch_officers(cur, "sector_officers", "sector_id", s_id),
+                            "id": s["id"],
+                            "name": s["name"] or "",
+                            "hq": s.get("hq_address") or "",
+                            "officers": _fetch_officers(cur, "sector_officers", "sector_id", s_id),
                             "panchayats": gp_list,
                         })
 
                     zone_list.append({
-                        "id":         z["id"],
-                        "name":       z["name"] or "",
+                        "id": z["id"],
+                        "name": z["name"] or "",
                         "hq_address": z["hq_address"] or "",
-                        "officers":   _fetch_officers(cur, "zonal_officers", "zone_id", z_id),
-                        "sectors":    sector_list,
+                        "officers": _fetch_officers(cur, "zonal_officers", "zone_id", z_id),
+                        "sectors": sector_list,
                     })
 
                 result.append({
-                    "id":       sz["id"],
-                    "name":     sz["name"] or "",
+                    "id": sz["id"],
+                    "name": sz["name"] or "",
                     "district": sz["district"] or "",
-                    "block":    sz["block"] or "",
+                    "block": sz["block"] or "",
                     "officers": _fetch_officers(cur, "kshetra_officers", "super_zone_id", sz_id),
-                    "zones":    zone_list,
+                    "zones": zone_list,
                 })
 
         return jsonify(result)
@@ -271,6 +271,8 @@ def get_full_hierarchy():
 
     finally:
         conn.close()
+
+
         
 # ══════════════════════════════════════════════════════════════════════════════
 #  SUPER ZONES   PUT /hierarchy/super-zone/<id>   DELETE /hierarchy/super-zone/<id>
