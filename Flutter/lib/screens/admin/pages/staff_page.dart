@@ -9,6 +9,7 @@ import '../../../services/api_service.dart';
 import '../../../services/auth_service.dart';
 import '../../../core/constants.dart';
 import '../core/widgets.dart';
+import 'dart:typed_data';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const _kBg      = Color(0xFFFDF6E3);
@@ -383,6 +384,61 @@ class _StaffPageState extends State<StaffPage>
       }
     }
   }
+  
+  Future<void> _downloadSampleFile({bool isExcel = false}) async {
+    try {
+      final headers = [
+        'pno',
+        'name',
+        'mobile',
+        'thana',
+        'district',
+        'rank',
+        'sastra'
+      ];
+
+       if (isExcel) {
+        final excel = ex.Excel.createExcel();
+        final sheet = excel['Sheet1'];
+
+        // ✅ FIX: Convert to CellValue
+        sheet.appendRow(headers.map((h) => ex.TextCellValue(h)).toList());
+
+        sheet.appendRow([
+          ex.TextCellValue('12345'),
+          ex.TextCellValue('Rahul Sharma'),
+          ex.TextCellValue('9876543210'),
+          ex.TextCellValue('Civil Lines'),
+          ex.TextCellValue('Lucknow'),
+          ex.TextCellValue('Constable'),
+          ex.TextCellValue('yes'),
+        ]);
+
+        final bytes = excel.encode();
+
+        await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Sample Excel',
+          fileName: 'staff_sample.xlsx',
+          bytes: Uint8List.fromList(bytes!), // ✅ FIX
+        );
+
+      } else {
+        final csv = StringBuffer();
+        csv.writeln(headers.join(','));
+        csv.writeln('12345,Rahul Sharma,9876543210,Civil Lines,Lucknow,Constable,yes');
+
+        await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Sample CSV',
+          fileName: 'staff_sample.csv',
+          bytes: Uint8List.fromList(utf8.encode(csv.toString())), // ✅ FIX
+        );
+      }
+
+      _snack('Sample file downloaded');
+    } catch (e) {
+      _snack('Download failed: ${e.toString()}', error: true);
+    }
+  } 
 
   Future<void> _loadReserve({bool reset = false}) async {
     if (_reserveLoading || (!_reserveHasMore && !reset)) return;
@@ -934,189 +990,280 @@ class _StaffPageState extends State<StaffPage>
     );
   }
 
-  // ── Upload helpers ────────────────────────────────────────────────────────
 
   /// Shows the required headers hint before file picker opens
   Future<bool> _showUploadHint() async {
     final result = await showDialog<bool>(
       context: context,
+      barrierColor: Colors.black.withOpacity(0.4),
       builder: (ctx) => Dialog(
         backgroundColor: Colors.transparent,
+        insetPadding: const EdgeInsets.symmetric(horizontal: 24, vertical: 32),
         child: ConstrainedBox(
           constraints: const BoxConstraints(maxWidth: 420),
           child: Container(
-            decoration: _dlgDec(),
-            child: Column(mainAxisSize: MainAxisSize.min, children: [
-              _dlgHeader('फ़ाइल अपलोड करें',
-                  Icons.upload_file_outlined, ctx),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(14),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.1),
+                  blurRadius: 20,
+                  offset: const Offset(0, 6),
+                ),
+              ],
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // Header
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(18, 16, 12, 16),
+                  child: Row(
                     children: [
-                  // Format chips
-                  Row(children: [
-                    _formatChip('Excel', '.xlsx / .xls',
-                        Icons.table_chart, _kSuccess),
-                    const SizedBox(width: 8),
-                    _formatChip('CSV', '.csv',
-                        Icons.description_outlined, _kInfo),
-                  ]),
-                  const SizedBox(height: 14),
-                  const Text('आवश्यक कॉलम / Required Columns',
-                      style: TextStyle(
-                          color: _kDark,
-                          fontWeight: FontWeight.w800,
-                          fontSize: 13)),
-                  const SizedBox(height: 8),
-                  // Headers table
-                  Container(
-                    decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      border: Border.all(
-                          color: _kBorder.withOpacity(0.4)),
-                    ),
-                    child: Column(
-                      children: _kRequiredHeaders
-                          .asMap()
-                          .entries
-                          .map((e) {
-                        final idx = e.key;
-                        final h   = e.value;
-                        final req = h['req'] as bool;
-                        return Container(
-                          decoration: BoxDecoration(
-                            color: idx.isEven
-                                ? Colors.transparent
-                                : _kSurface.withOpacity(0.3),
-                            borderRadius: idx == 0
-                                ? const BorderRadius.only(
-                                    topLeft: Radius.circular(9),
-                                    topRight: Radius.circular(9))
-                                : idx ==
-                                        _kRequiredHeaders.length - 1
-                                    ? const BorderRadius.only(
-                                        bottomLeft:
-                                            Radius.circular(9),
-                                        bottomRight:
-                                            Radius.circular(9))
-                                    : null,
-                          ),
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 12, vertical: 8),
-                          child: Row(children: [
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF2C3E50)
-                                    .withOpacity(0.08),
-                                borderRadius:
-                                    BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                h['col'] as String,
-                                style: const TextStyle(
-                                    fontFamily: 'monospace',
-                                    color: Color(0xFF2C3E50),
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: Text(h['hi'] as String,
-                                  style: const TextStyle(
-                                      color: _kDark, fontSize: 12)),
-                            ),
-                            Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(
-                                color: req
-                                    ? _kError.withOpacity(0.1)
-                                    : _kSuccess.withOpacity(0.1),
-                                borderRadius:
-                                    BorderRadius.circular(4),
-                              ),
-                              child: Text(
-                                req ? 'ज़रूरी' : 'वैकल्पिक',
-                                style: TextStyle(
-                                    color: req
-                                        ? _kError
-                                        : _kSuccess,
-                                    fontSize: 10,
-                                    fontWeight: FontWeight.w700),
-                              ),
-                            ),
-                          ]),
-                        );
-                      }).toList(),
-                    ),
-                  ),
-                  const SizedBox(height: 10),
-                  // sastra hint
-                  Container(
-                    padding: const EdgeInsets.all(10),
-                    decoration: BoxDecoration(
-                      color: _kArmed.withOpacity(0.06),
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(
-                          color: _kArmed.withOpacity(0.2)),
-                    ),
-                    child: Row(children: [
-                      Icon(Icons.info_outline,
-                          size: 14, color: _kArmed),
-                      const SizedBox(width: 6),
+                      Icon(Icons.upload_file_outlined,
+                          color: _kPrimary, size: 20),
+                      const SizedBox(width: 10),
                       const Expanded(
                         child: Text(
-                          'sastra कॉलम में: 1, yes, हाँ, सशस्त्र, armed → सशस्त्र\n'
-                          'बाकी सब या खाली → निःशस्त्र',
+                          'फ़ाइल अपलोड करें',
                           style: TextStyle(
-                              color: _kDark, fontSize: 11),
+                            fontSize: 15,
+                            fontWeight: FontWeight.w700,
+                            color: _kDark,
+                          ),
                         ),
                       ),
-                    ]),
+                      IconButton(
+                        onPressed: () => Navigator.pop(ctx, false),
+                        icon: const Icon(Icons.close, size: 18, color: _kSubtle),
+                        padding: EdgeInsets.zero,
+                        constraints: const BoxConstraints(),
+                      ),
+                    ],
                   ),
-                ]),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                child: Row(children: [
-                  Expanded(
-                    child: OutlinedButton(
-                      onPressed: () => Navigator.pop(ctx, false),
-                      style: OutlinedButton.styleFrom(
-                          foregroundColor: _kSubtle,
-                          side: const BorderSide(color: _kBorder),
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(10))),
-                      child: const Text('रद्द'),
+                ),
+
+                const Divider(height: 1),
+
+                // Body
+                Flexible(
+                  child: SingleChildScrollView(
+                    padding: const EdgeInsets.all(18),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // Format chips
+                        Row(
+                          children: [
+                            _formatChip('Excel', '.xlsx / .xls',
+                                Icons.table_chart_outlined, _kSuccess),
+                            const SizedBox(width: 8),
+                            _formatChip('CSV', '.csv',
+                                Icons.description_outlined, _kInfo),
+                          ],
+                        ),
+
+                        const SizedBox(height: 16),
+
+                        const Text(
+                          'आवश्यक कॉलम',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w700,
+                            color: _kSubtle,
+                            letterSpacing: 0.4,
+                          ),
+                        ),
+
+                        const SizedBox(height: 8),
+
+                        // Headers table
+                        Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(color: _kBorder),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          clipBehavior: Clip.antiAlias,
+                          child: Column(
+                            children: _kRequiredHeaders.asMap().entries.map((e) {
+                              final isLast = e.key == _kRequiredHeaders.length - 1;
+                              final req = e.value['req'] as bool;
+                              return Container(
+                                color: e.key.isEven
+                                    ? Colors.white
+                                    : const Color(0xFFF8F9FA),
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 12, vertical: 9),
+                                child: Row(
+                                  children: [
+                                    Text(
+                                      e.value['col'] as String,
+                                      style: const TextStyle(
+                                        fontFamily: 'monospace',
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w700,
+                                        color: Color(0xFF2C3E50),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(
+                                        e.value['hi'] as String,
+                                        style: const TextStyle(
+                                            fontSize: 12, color: _kDark),
+                                      ),
+                                    ),
+                                    Container(
+                                      padding: const EdgeInsets.symmetric(
+                                          horizontal: 7, vertical: 2),
+                                      decoration: BoxDecoration(
+                                        color: req
+                                            ? _kError.withOpacity(0.08)
+                                            : _kSuccess.withOpacity(0.08),
+                                        borderRadius: BorderRadius.circular(20),
+                                      ),
+                                      child: Text(
+                                        req ? 'ज़रूरी' : 'वैकल्पिक',
+                                        style: TextStyle(
+                                          color: req ? _kError : _kSuccess,
+                                          fontSize: 10,
+                                          fontWeight: FontWeight.w600,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              );
+                            }).toList(),
+                          ),
+                        ),
+
+                        const SizedBox(height: 12),
+
+                        // Sastra hint
+                        Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: _kArmed.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: _kArmed.withOpacity(0.2)),
+                          ),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(Icons.info_outline,
+                                  size: 13, color: _kArmed),
+                              const SizedBox(width: 7),
+                              const Expanded(
+                                child: Text(
+                                  'sastra: 1, yes, हाँ, armed → सशस्त्र\nबाकी या खाली → निःशस्त्र',
+                                  style: TextStyle(
+                                      fontSize: 11, color: _kDark, height: 1.5),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
                     ),
                   ),
-                  const SizedBox(width: 12),
-                  Expanded(
-                    child: ElevatedButton.icon(
-                      onPressed: () => Navigator.pop(ctx, true),
-                      icon: const Icon(Icons.upload_file, size: 16),
-                      label: const Text('फ़ाइल चुनें'),
-                      style: ElevatedButton.styleFrom(
-                          backgroundColor: _kPrimary,
-                          foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 12),
-                          shape: RoundedRectangleBorder(
-                              borderRadius:
-                                  BorderRadius.circular(10))),
-                    ),
+                ),
+
+                const Divider(height: 1),
+
+                // Footer
+                Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Sample downloads
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _downloadSampleFile(isExcel: false),
+                              icon: const Icon(Icons.download, size: 14),
+                              label: const Text('CSV'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _kSubtle,
+                                side: const BorderSide(color: _kBorder),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                textStyle: const TextStyle(fontSize: 13),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: OutlinedButton.icon(
+                              onPressed: () => _downloadSampleFile(isExcel: true),
+                              icon: const Icon(Icons.download, size: 14),
+                              label: const Text('Excel'),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _kSubtle,
+                                side: const BorderSide(color: _kBorder),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 10),
+                                textStyle: const TextStyle(fontSize: 13),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+
+                      const SizedBox(height: 10),
+
+                      // Actions
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(ctx, false),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: _kSubtle,
+                                side: const BorderSide(color: _kBorder),
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                              child: const Text('रद्द',
+                                  style: TextStyle(fontSize: 13)),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            flex: 2,
+                            child: ElevatedButton.icon(
+                              onPressed: () => Navigator.pop(ctx, true),
+                              icon: const Icon(Icons.upload_file, size: 15),
+                              label: const Text('फ़ाइल चुनें',
+                                  style: TextStyle(fontSize: 13)),
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: _kPrimary,
+                                foregroundColor: Colors.white,
+                                elevation: 0,
+                                padding:
+                                    const EdgeInsets.symmetric(vertical: 12),
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(8)),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
                   ),
-                ]),
-              ),
-            ]),
+                ),
+              ],
+            ),
           ),
         ),
       ),
