@@ -38,7 +38,7 @@ router.get('/full', adminRequired, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const [superZones] = adminId
-      ? await conn.execute('SELECT * FROM super_zones WHERE admin_id=? ORDER BY id', [adminId])
+      ? await conn.execute('SELECT * FROM super_zones ORDER BY id')
       : await conn.execute('SELECT * FROM super_zones ORDER BY id');
 
     const result = [];

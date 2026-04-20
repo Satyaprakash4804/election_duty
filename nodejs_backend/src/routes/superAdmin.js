@@ -177,4 +177,42 @@ router.get('/overview', superAdminRequired, async (req, res) => {
   }
 });
 
+//form data
+router.get('/form-data', async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        u.id            AS adminId,
+        u.name          AS adminName,
+        u.district,
+
+        COUNT(DISTINCT sz.id)  AS superZones,
+        COUNT(DISTINCT z.id)   AS zones,
+        COUNT(DISTINCT s.id)   AS sectors,
+        COUNT(DISTINCT gp.id)  AS gramPanchayats,
+        COUNT(DISTINCT ms.id)  AS centers,
+
+        MAX(ms.created_at)     AS lastUpdated
+
+      FROM users u
+
+      LEFT JOIN super_zones     sz ON sz.admin_id        = u.id
+      LEFT JOIN zones            z ON z.super_zone_id    = sz.id
+      LEFT JOIN sectors          s ON s.zone_id          = z.id
+      LEFT JOIN gram_panchayats gp ON gp.sector_id       = s.id
+      LEFT JOIN matdan_sthal    ms ON ms.gram_panchayat_id = gp.id
+
+      WHERE u.role = 'admin'
+
+      GROUP BY u.id
+      ORDER BY u.id DESC
+    `);
+
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('get_form_data error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
+});
+
 module.exports = router;
