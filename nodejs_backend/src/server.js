@@ -43,7 +43,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: '*',
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With','Cache-Control'],
   exposedHeaders: ['Content-Length', 'X-Request-Id'],
   maxAge: 86400, // 24h preflight cache
 }));
@@ -52,13 +52,14 @@ app.use(cors({
 app.use(compression({ level: 6, threshold: 1024 }));
 
 // ── Request logging ───────────────────────────────────────────────────────────
-if (config.app.isProd) {
-  app.use(morgan('dev'));
-} else {
-  app.use(morgan('combined', {
-    skip: (req) => req.path === '/ping' || req.path === '/health',
-  }));
-}
+app.use(morgan('dev'));
+// if (config.app.isProd) {
+//   app.use(morgan('dev'));
+// } else {
+//   app.use(morgan('combined', {
+//     skip: (req) => req.path === '/ping' || req.path === '/health',
+//   }));
+// }
 
 // ── Body parsing ──────────────────────────────────────────────────────────────
 app.use(express.json({ limit: '10mb' }));
