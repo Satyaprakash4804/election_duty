@@ -388,8 +388,9 @@ router.get('/zones/:zId/sectors', adminRequired, async (req, res) => {
       officers: officersBySector[s.id] || [],
     }));
     return paginated(res, result, total, page, limit);
-  } catch (e) { 
-    return err(res, e.message, 500); }
+  } catch (e) {
+    return err(res, e.message, 500);
+  }
 });
 
 router.post('/zones/:zId/sectors', adminRequired, async (req, res) => {
@@ -403,10 +404,11 @@ router.post('/zones/:zId/sectors', adminRequired, async (req, res) => {
       for (const o of offs) await insertOfficer(conn, 'sector_officers', 'sector_id', sId, o, req.user.id);
     });
     return ok(res, { id: sId, name: name.trim() }, 'Sector added', 201);
-  } catch (e) { 
+  } catch (e) {
     console.log(e);
-    
-    return err(res, e.message, 500); }
+
+    return err(res, e.message, 500);
+  }
 });
 
 router.put('/sectors/:id', adminRequired, async (req, res) => {
@@ -735,9 +737,10 @@ router.get('/staff', adminRequired, async (req, res) => {
       };
     });
     return paginated(res, data, total, page, limit);
-  } catch (e) { 
+  } catch (e) {
     console.log(e)
-    return err(res, e.message, 500); }
+    return err(res, e.message, 500);
+  }
 });
 
 router.get('/staff/search', adminRequired, async (req, res) => {
@@ -1330,8 +1333,8 @@ router.post('/rules', adminRequired, async (req, res) => {
         if (!rank) continue;
         const count = parseInt(r.count || r.required_count || 1);
         const isArmed = (
-          r.isArmed in [true, 1, '1', 'true'] ||
-          r.is_armed in [true, 1, '1', 'true']
+          [true, 1, '1', 'true'].includes(r.isArmed) ||
+          [true, 1, '1', 'true'].includes(r.is_armed)
         ) ? 1 : 0;
         await conn.execute(
           'INSERT INTO booth_staff_rules (admin_id, sensitivity, user_rank, is_armed, required_count) VALUES (?,?,?,?,?)',
