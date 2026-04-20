@@ -6,6 +6,7 @@ import AdminDashboard from './pages/admin/index';
 import SuperDashboard from './pages/super/index';
 import MasterDashboard from './pages/master/index';
 import StaffDashboard from './pages/staff/index';
+import MapViewPage from './pages/Mapviewpage';
 
 export default function App() {
   return (
@@ -30,6 +31,7 @@ export default function App() {
         <Route path="/super/*" element={<ProtectedRoute allowedRoles={['SUPER_ADMIN']}><SuperDashboard /></ProtectedRoute>} />
         <Route path="/master/*" element={<ProtectedRoute allowedRoles={['MASTER']}><MasterDashboard /></ProtectedRoute>} />
         <Route path="/staff/*" element={<ProtectedRoute allowedRoles={['STAFF']}><StaffDashboard /></ProtectedRoute>} />
+        <Route path="/map-view" element={<ProtectedRoute allowedRoles={['STAFF', 'MASTER', 'SUPER_ADMIN', 'ADMIN']}>  <MapViewPage /></ProtectedRoute>} />
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

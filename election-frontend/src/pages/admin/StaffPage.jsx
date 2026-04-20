@@ -700,6 +700,7 @@ async function parseExcel(bytes) {
 
 // ── Background SSE upload ─────────────────────────────────────────────────────
 async function startBackgroundUpload(rows, token) {
+  
   const baseUrl = (await import('../../api/client')).default.defaults.baseURL || '';
   setUploadState({ phase: 'uploading', total: rows.length, added: 0, parsePct: 0, hashPct: 0, insertPct: 0, statusMsg: 'सर्वर पर भेज रहे हैं...' });
   try {
@@ -932,6 +933,9 @@ function RankChip({ rank, selected, onClick }) {
 // ══════════════════════════════════════════════════════════════════════════════
 export default function StaffPage() {
   const { token } = useAuthStore();
+
+  console.log(token);
+  
 
   // Tabs
   const [activeTab, setActiveTab] = useState(0); // 0=assigned, 1=reserve

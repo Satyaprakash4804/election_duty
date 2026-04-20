@@ -4,6 +4,7 @@ import { adminApi } from '../../api/endpoints';
 import { StatCard, Shimmer, Modal, SensChip } from '../../components/common';
 import { SENSITIVITY_CONFIG, RANKS } from '../../utils/helpers';
 import toast from 'react-hot-toast';
+import MapViewButton from '../../components/common/Mapviewbutton';
 
 const SENSITIVITIES = ['A++', 'A', 'B', 'C'];
 const RANK_ROWS = [
@@ -169,6 +170,8 @@ export default function AdminDashboardPage() {
           <ChevronRight size={20} style={{ color: 'var(--border)' }} />
         </div>
       </div>
+
+       <MapViewButton className='w-full mb-4' />
 
       {/* मानक Section */}
       <div className="card p-4">
