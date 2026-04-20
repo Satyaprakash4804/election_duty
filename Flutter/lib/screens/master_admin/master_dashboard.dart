@@ -497,11 +497,11 @@ class _MasterDashboardState extends State<MasterDashboard>
 
   // ── EDIT ELECTION CONFIG DIALOG ───────────
   void _showEditElectionConfig() {
-    final stateCtrl    = TextEditingController(text: _appConfig['state']         ?? '');
-    final yearCtrl     = TextEditingController(text: _appConfig['electionYear']  ?? '');
-    final dateCtrl     = TextEditingController(text: _appConfig['electionDate']  ?? '');
-    final phaseCtrl    = TextEditingController(text: _appConfig['phase']         ?? '');
-    final formKey      = GlobalKey<FormState>();
+    final stateCtrl = TextEditingController(text: _appConfig['state'] ?? '');
+    final yearCtrl  = TextEditingController(text: _appConfig['electionYear'] ?? '');
+    final dateCtrl  = TextEditingController(text: _appConfig['electionDate'] ?? '');
+    final phaseCtrl = TextEditingController(text: _appConfig['phase'] ?? '');
+    final formKey   = GlobalKey<FormState>();
 
     showDialog(
       context: context,
@@ -515,41 +515,77 @@ class _MasterDashboardState extends State<MasterDashboard>
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+
               _dlgField(stateCtrl, 'State', Icons.map_outlined,
                   validator: _notEmpty),
               const SizedBox(height: 12),
-              _dlgField(yearCtrl, 'Election Year', Icons.calendar_today_outlined,
+
+              _dlgField(yearCtrl, 'Election Year',
+                  Icons.calendar_today_outlined,
                   validator: _notEmpty),
               const SizedBox(height: 12),
-              _dlgField(dateCtrl, 'Election Date (e.g. 15 Apr 2026)',
-                  Icons.event_outlined,
-                  validator: _notEmpty),
+
+              // 🔥🔥 UPDATED DATE PICKER FIELD
+              GestureDetector(
+                onTap: () async {
+                  final picked = await showDatePicker(
+                    context: context,
+                    initialDate: dateCtrl.text.isNotEmpty
+                        ? DateTime.tryParse(dateCtrl.text) ?? DateTime.now()
+                        : DateTime.now(),
+                    firstDate: DateTime(2020),
+                    lastDate: DateTime(2100),
+                  );
+
+                  if (picked != null) {
+                    // ✅ store clean ISO format
+                    dateCtrl.text =
+                        picked.toIso8601String().split("T")[0];
+                  }
+                },
+                child: AbsorbPointer(
+                  child: _dlgField(
+                    dateCtrl,
+                    'Election Date',
+                    Icons.event_outlined,
+                    validator: _notEmpty,
+                  ),
+                ),
+              ),
+
               const SizedBox(height: 12),
+
               _dlgField(phaseCtrl, 'Phase (e.g. Phase 1)',
                   Icons.flag_outlined,
                   validator: _notEmpty),
+
               const SizedBox(height: 20),
+
               _dlgActions(
                 onCancel: () => Navigator.pop(ctx),
                 onConfirm: () async {
                   if (!formKey.currentState!.validate()) return;
+
                   try {
                     final token = await AuthService.getToken();
-                    // Batch update all election keys at once
+
                     await ApiService.post(
                       "/master/config",
                       {
                         "state":        stateCtrl.text.trim(),
                         "electionYear": yearCtrl.text.trim(),
-                        "electionDate": dateCtrl.text.trim(),
+                        "electionDate": dateCtrl.text.trim(), // ✅ clean date
                         "phase":        phaseCtrl.text.trim(),
                       },
                       token: token,
                     );
+
                     if (ctx.mounted) Navigator.pop(ctx);
+
                     _snack('Election settings updated ✓', kSuccess);
                     _fetchConfig();
                     _fetchOverview();
+
                   } catch (e) {
                     _snack("Error: $e", kError);
                   }

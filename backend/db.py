@@ -318,6 +318,9 @@ def init_db():
                     staff_id    INT         NOT NULL,
                     sthal_id    INT         NOT NULL,
                     bus_no      VARCHAR(50) DEFAULT '',
+                    election_date DATE DEFAULT NULL,
+                    attended    TINYINT(1) NOT NULL DEFAULT 0,
+                    card_downloaded TINYINT(1) NOT NULL DEFAULT 0,
                     assigned_by INT         DEFAULT NULL,
                     created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_staff_sthal (staff_id, sthal_id),
@@ -396,7 +399,9 @@ def init_db():
             ensure_column(cur, db, "users", "is_active TINYINT(1) NOT NULL DEFAULT 1")
             ensure_column(cur, db, "users", "is_armed TINYINT(1) NOT NULL DEFAULT 0")
 
-
+            # In init_db() ensure_column calls, add:
+            ensure_column(cur, db, "duty_assignments", "attended TINYINT(1) NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "duty_assignments", "election_date DATE DEFAULT NULL")
             # matdan_sthal
             ensure_column(cur, db, "matdan_sthal", "latitude DECIMAL(10,7) DEFAULT NULL")
             ensure_column(cur, db, "matdan_sthal", "longitude DECIMAL(10,7) DEFAULT NULL")
@@ -406,6 +411,7 @@ def init_db():
             ensure_column(cur, db, "booth_staff_rules", "admin_id INT NOT NULL DEFAULT 0")
             # duty_assignments
             ensure_column(cur, db, "duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments", "card_downloaded TINYINT(1) NOT NULL DEFAULT 0")
 
             # ─────────────────────────────────────────────────────────────────
             #  SEED: master user only (no election config — master sets it via API)

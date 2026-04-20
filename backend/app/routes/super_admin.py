@@ -343,15 +343,17 @@ def get_form_data():
 
             cur.execute("""
                 SELECT 
-                    u.id AS admin_id,
-                    u.name AS admin_name,
+                    u.id AS adminId,
+                    u.name AS adminName,
                     u.district,
 
-                    COUNT(DISTINCT sz.id) AS super_zones,
-                    COUNT(DISTINCT z.id)  AS zones,
-                    COUNT(DISTINCT s.id)  AS sectors,
-                    COUNT(DISTINCT gp.id) AS gram_panchayats,
+                    COUNT(DISTINCT sz.id) AS superZones,
+                    COUNT(DISTINCT z.id) AS zones,
+                    COUNT(DISTINCT s.id) AS sectors,
+                    COUNT(DISTINCT gp.id) AS gramPanchayats,
                     COUNT(DISTINCT ms.id) AS centers,
+
+                    MAX(ms.created_at) AS lastUpdated
 
                 FROM users u
                 LEFT JOIN super_zones sz ON sz.admin_id = u.id
@@ -362,8 +364,8 @@ def get_form_data():
 
                 WHERE u.role = 'admin'
 
-                GROUP BY u.id, u.name, u.district
-                ORDER BY u.name
+                GROUP BY u.id
+                ORDER BY u.id DESC
             """)
 
             rows = cur.fetchall()
@@ -372,13 +374,14 @@ def get_form_data():
         conn.close()
 
     return ok([{
-        "adminId":        r["admin_id"],
-        "adminName":      r["admin_name"],
+        "adminId":        r["adminId"],
+        "adminName":      r["adminName"],
         "district":       r["district"],
-        "superZones":     r["super_zones"] or 0,
+        "superZones":     r["superZones"] or 0,
         "zones":          r["zones"] or 0,
         "sectors":        r["sectors"] or 0,
-        "gramPanchayats": r["gram_panchayats"] or 0,
+        "gramPanchayats": r["gramPanchayats"] or 0,
         "centers":        r["centers"] or 0,
-        "lastUpdated":    r["last_updated"].isoformat() if r["last_updated"] else None
+        "lastUpdated":    r["lastUpdated"].isoformat() if r["lastUpdated"] else None
     } for r in rows])
+
