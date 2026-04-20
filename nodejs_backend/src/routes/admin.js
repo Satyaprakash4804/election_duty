@@ -388,8 +388,9 @@ router.get('/zones/:zId/sectors', adminRequired, async (req, res) => {
       officers: officersBySector[s.id] || [],
     }));
     return paginated(res, result, total, page, limit);
-  } catch (e) { 
-    return err(res, e.message, 500); }
+  } catch (e) {
+    return err(res, e.message, 500);
+  }
 });
 
 router.post('/zones/:zId/sectors', adminRequired, async (req, res) => {
@@ -403,10 +404,11 @@ router.post('/zones/:zId/sectors', adminRequired, async (req, res) => {
       for (const o of offs) await insertOfficer(conn, 'sector_officers', 'sector_id', sId, o, req.user.id);
     });
     return ok(res, { id: sId, name: name.trim() }, 'Sector added', 201);
-  } catch (e) { 
+  } catch (e) {
     console.log(e);
-    
-    return err(res, e.message, 500); }
+
+    return err(res, e.message, 500);
+  }
 });
 
 router.put('/sectors/:id', adminRequired, async (req, res) => {
@@ -735,9 +737,10 @@ router.get('/staff', adminRequired, async (req, res) => {
       };
     });
     return paginated(res, data, total, page, limit);
-  } catch (e) { 
+  } catch (e) {
     console.log(e)
-    return err(res, e.message, 500); }
+    return err(res, e.message, 500);
+  }
 });
 
 router.get('/staff/search', adminRequired, async (req, res) => {
@@ -1330,8 +1333,8 @@ router.post('/rules', adminRequired, async (req, res) => {
         if (!rank) continue;
         const count = parseInt(r.count || r.required_count || 1);
         const isArmed = (
-          r.isArmed in [true, 1, '1', 'true'] ||
-          r.is_armed in [true, 1, '1', 'true']
+          [true, 1, '1', 'true'].includes(r.isArmed) ||
+          [true, 1, '1', 'true'].includes(r.is_armed)
         ) ? 1 : 0;
         await conn.execute(
           'INSERT INTO booth_staff_rules (admin_id, sensitivity, user_rank, is_armed, required_count) VALUES (?,?,?,?,?)',
@@ -1470,6 +1473,45 @@ router.post('/officers/save-to-users', adminRequired, async (req, res) => {
     await writeLog('INFO', `Officer '${name}' PNO:${pno} saved to users by admin ${req.user.id}`, 'Officer');
     return ok(res, { id: r.insertId, existed: false }, 'Officer saved to users', 201);
   } catch (e) { return err(res, e.message, 500); }
+});
+
+
+//form data
+router.get('/form-data', async (req, res) => {
+  try {
+    const rows = await query(`
+      SELECT
+        u.id            AS adminId,
+        u.name          AS adminName,
+        u.district,
+
+        COUNT(DISTINCT sz.id)  AS superZones,
+        COUNT(DISTINCT z.id)   AS zones,
+        COUNT(DISTINCT s.id)   AS sectors,
+        COUNT(DISTINCT gp.id)  AS gramPanchayats,
+        COUNT(DISTINCT ms.id)  AS centers,
+
+        MAX(ms.created_at)     AS lastUpdated
+
+      FROM users u
+
+      LEFT JOIN super_zones     sz ON sz.admin_id        = u.id
+      LEFT JOIN zones            z ON z.super_zone_id    = sz.id
+      LEFT JOIN sectors          s ON s.zone_id          = z.id
+      LEFT JOIN gram_panchayats gp ON gp.sector_id       = s.id
+      LEFT JOIN matdan_sthal    ms ON ms.gram_panchayat_id = gp.id
+
+      WHERE u.role = 'admin'
+
+      GROUP BY u.id
+      ORDER BY u.id DESC
+    `);
+
+    return res.json({ success: true, data: rows });
+  } catch (err) {
+    console.error('get_form_data error:', err.message);
+    return res.status(500).json({ success: false, message: err.message });
+  }
 });
 
 module.exports = router;

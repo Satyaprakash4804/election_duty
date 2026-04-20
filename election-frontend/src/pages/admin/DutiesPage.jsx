@@ -90,13 +90,13 @@ function debounce(fn, ms = 350) {
 function printDutyCards(list) {
   if (!list.length) return;
 
-  const loadDevanagari = `
-    <link rel="preconnect" href="https://fonts.googleapis.com">
-    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&display=swap" rel="stylesheet">
-  `;
+  const vd = (v) => (v === null || v === undefined || v === '') ? '—' : String(v);
+  const rh = (v) => vd(v);
+  const isArmedFn = (e) =>
+    e.isArmed === true || e.is_armed === true || e.is_armed === 1;
 
   const cardHTML = list.map((s) => {
-    const sahyogi = (s.sahyogi || s.allStaff || s.all_staff || []);
+    const sahyogi = s.sahyogi || s.allStaff || s.all_staff || [];
     const totalRows = Math.max(12, sahyogi.length);
 
     const zonalOfficers  = s.zonalOfficers  || s.zonal_officers  || [];
@@ -106,7 +106,7 @@ function printDutyCards(list) {
     const zonalMag    = zonalOfficers[0]  || null;
     const sectorMag   = sectorOfficers[0] || null;
     const zonalPolice = superOfficers[0]  || null;
-    const sectorPolice= sectorOfficers[1] || sectorOfficers[0] || null;
+    const sectorPolice = sectorOfficers[1] || sectorOfficers[0] || null;
 
     const busNo = vd(s.busNo || s.bus_no);
     const armed = isArmedFn(s) ? 'सशस्त्र' : 'निःशस्त्र';
@@ -115,160 +115,183 @@ function printDutyCards(list) {
       const e = sahyogi[i] || null;
       const bg = i % 2 === 0 ? '#fff' : '#f5f5f5';
       return `<tr style="background:${bg}">
-        <td>${e ? rh(e.user_rank || e.rank) : ''}</td>
-        <td>${e ? vd(e.pno) : ''}</td>
-        <td style="font-weight:${e?'700':'400'}">${e ? vd(e.name) : ''}</td>
-        <td>${e ? vd(e.mobile) : ''}</td>
-        <td>${e ? vd(e.thana) : ''}</td>
-        <td>${e ? vd(e.district) : ''}</td>
-        <td>${e ? (isArmedFn(e)?'सशस्त्र':'निःशस्त्र') : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${e ? rh(e.user_rank || e.rank) : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${e ? vd(e.pno) : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;font-weight:${e ? '700' : '400'}">${e ? vd(e.name) : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${e ? vd(e.mobile) : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${e ? vd(e.thana) : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${e ? vd(e.district) : ''}</td>
+        <td style="font-size:4.8px;padding:0.5px 1px;border-bottom:0.3px solid #eee;text-align:center;overflow:hidden;white-space:nowrap;text-overflow:ellipsis">${e ? (isArmedFn(e) ? 'सशस्त्र' : 'निःशस्त्र') : ''}</td>
       </tr>`;
     }).join('');
 
     const officerBlock = (title, name, mobile, rank) => `
-      <div class="officer-block">
-        <div class="officer-title">${title}</div>
-        <div class="officer-body">${[rank,name,mobile].filter(Boolean).join('<br>')}</div>
+      <div style="border-bottom:0.4px solid #ccc">
+        <div style="background:#ddd;padding:1px;text-align:center;font-weight:700;font-size:5px;border-bottom:0.4px solid #ccc">${title}</div>
+        <div style="padding:2px;text-align:center;font-size:4.5px;line-height:1.4">${[rank, name, mobile].filter(Boolean).join('<br>')}</div>
       </div>`;
 
     return `
       <div class="card">
-        <div class="header">
-          <div class="header-logo">ECI</div>
-          <div class="header-center">
-            <div class="hc-title">ड्यूटी कार्ड</div>
-            <div class="hc-sub">लोकसभा सामान्य निर्वाचन–2024</div>
-            <div class="hc-dist">जनपद ${vd(s.adminDistrict || s.district || 'बागपत')}</div>
-            <div class="hc-phase">मतदान चरण–द्वितीय &nbsp; दिनांक 26.04.2024 &nbsp; प्रातः 07:00 से सांय 06:00 तक</div>
+
+        <!-- HEADER -->
+        <div style="display:flex;border-bottom:0.8px solid #333;flex-shrink:0">
+          <div style="width:42px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:8px;padding:3px;text-align:center;border-right:0.5px solid #333">ECI</div>
+          <div style="flex:1;padding:2px 4px;text-align:center">
+            <div style="font-size:11px;font-weight:700;text-decoration:underline;line-height:1.2">ड्यूटी कार्ड</div>
+            <div style="font-size:7px;font-weight:700;line-height:1.2">लोकसभा सामान्य निर्वाचन–2024</div>
+            <div style="font-size:6.5px;line-height:1.2">जनपद ${vd(s.adminDistrict || s.district || 'बागपत')}</div>
+            <div style="font-size:5.5px;font-weight:700;border-top:0.5px solid #999;margin-top:1px;padding-top:1px;line-height:1.2">मतदान चरण–द्वितीय &nbsp; दिनांक 26.04.2024 &nbsp; प्रातः 07:00 से सांय 06:00 तक</div>
           </div>
-          <div class="header-logo">उ0प्र0<br>पुलिस</div>
+          <div style="width:42px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:7px;padding:3px;text-align:center;border-left:0.5px solid #333;line-height:1.3">उ0प्र0<br>पुलिस</div>
         </div>
 
-        <table class="primary-table">
-          <thead><tr>
-            <th>नाम अधि0/कर्म0 गण</th><th>पद</th><th>बैज नंबर</th>
-            <th>नाम अधि0/कर्म0</th><th>मोबाइल न0</th><th>तैनाती</th>
-            <th>जनपद</th><th>स0/नि0</th><th>वाहन संख्या</th>
-          </tr></thead>
-          <tbody><tr>
-            <td></td>
-            <td class="bold center">${rh(s.rank || s.user_rank)}</td>
-            <td class="center">${vd(s.pno)}</td>
-            <td class="bold">${vd(s.name)}</td>
-            <td class="center">${vd(s.mobile)}</td>
-            <td class="center">${vd(s.staffThana || s.thana)}</td>
-            <td class="center">${vd(s.district)}</td>
-            <td class="center small">${armed}</td>
-            <td class="center bold">${busNo !== '—' ? 'बस–' + busNo : '—'}</td>
-          </tr></tbody>
+        <!-- PRIMARY TABLE -->
+        <table style="width:100%;border-collapse:collapse;border:0.5px solid #999;flex-shrink:0;table-layout:fixed">
+          <colgroup>
+            <col style="width:14%"><col style="width:8%"><col style="width:10%">
+            <col style="width:18%"><col style="width:11%"><col style="width:11%">
+            <col style="width:10%"><col style="width:8%"><col style="width:10%">
+          </colgroup>
+          <thead>
+            <tr>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">नाम अधि0/<br>कर्म0 गण</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">पद</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">बैज नंबर</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">नाम अधि0/कर्म0</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">मोबाइल न0</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">तैनाती</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">जनपद</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">स0/<br>नि0</th>
+              <th style="background:#ddd;font-weight:700;font-size:5.5px;text-align:center;padding:1px 2px;border:0.5px solid #999;line-height:1.2">वाहन<br>संख्या</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px"></td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;font-weight:700;text-align:center">${rh(s.rank || s.user_rank)}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;text-align:center">${vd(s.pno)}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;font-weight:700">${vd(s.name)}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;text-align:center">${vd(s.mobile)}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;text-align:center">${vd(s.staffThana || s.thana)}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;text-align:center">${vd(s.district)}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:4.5px;text-align:center">${armed}</td>
+              <td style="border:0.5px solid #999;padding:1px 2px;font-size:5.5px;text-align:center;font-weight:700">${busNo !== '—' ? 'बस–' + busNo : '—'}</td>
+            </tr>
+          </tbody>
         </table>
 
-        <div class="middle">
-          <div class="duty-loc">
-            <div class="section-hdr">डियूटी स्थान</div>
-            <div class="duty-name">${vd(s.centerName || s.center_name)}</div>
-            <div class="section-hdr">डियूटी प्रकार</div>
-            <div class="duty-name">बूथ डियूटी</div>
+        <!-- MIDDLE -->
+        <div style="display:flex;flex:1;border-top:0.5px solid #999;overflow:hidden;min-height:0">
+
+          <!-- Duty location -->
+          <div style="width:50px;border-right:0.5px solid #999;display:flex;flex-direction:column;flex-shrink:0">
+            <div style="background:#ddd;padding:1px;text-align:center;font-weight:700;font-size:5.5px;border-bottom:0.5px solid #999;line-height:1.2;flex-shrink:0">डियूटी स्थान</div>
+            <div style="flex:1;padding:2px;text-align:center;font-weight:700;font-size:5.5px;display:flex;align-items:center;justify-content:center;line-height:1.3">${vd(s.centerName || s.center_name)}</div>
+            <div style="background:#ddd;padding:1px;text-align:center;font-weight:700;font-size:5.5px;border-bottom:0.5px solid #999;border-top:0.5px solid #999;line-height:1.2;flex-shrink:0">डियूटी प्रकार</div>
+            <div style="flex:1;padding:2px;text-align:center;font-weight:700;font-size:5.5px;display:flex;align-items:center;justify-content:center;line-height:1.3">बूथ डियूटी</div>
           </div>
 
-          <div class="sahyogi-wrap">
-            <table class="sahyogi-table">
-              <thead><tr>
-                <th>पद</th><th>बैज नंबर</th><th>नाम</th>
-                <th>मोबाइल न0</th><th>तैनाती</th><th>जनपद</th><th>स0/नि0</th>
-              </tr></thead>
+          <!-- Sahyogi table -->
+          <div style="flex:1;overflow:hidden;display:flex;flex-direction:column">
+            <table style="width:100%;border-collapse:collapse;table-layout:fixed">
+              <colgroup>
+                <col style="width:9%"><col style="width:14%"><col style="width:23%">
+                <col style="width:16%"><col style="width:16%"><col style="width:14%"><col style="width:8%">
+              </colgroup>
+              <thead>
+                <tr>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb;border-bottom:0.5px solid #999;line-height:1.2">पद</th>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb;border-bottom:0.5px solid #999;line-height:1.2">बैज नंबर</th>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb;border-bottom:0.5px solid #999;line-height:1.2">नाम</th>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb;border-bottom:0.5px solid #999;line-height:1.2">मोबाइल न0</th>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb;border-bottom:0.5px solid #999;line-height:1.2">तैनाती</th>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb;border-bottom:0.5px solid #999;line-height:1.2">जनपद</th>
+                  <th style="background:#ddd;font-size:4.8px;font-weight:700;text-align:center;padding:1px;border-bottom:0.5px solid #999;line-height:1.2">स0/नि0</th>
+                </tr>
+              </thead>
               <tbody>${staffRows}</tbody>
             </table>
           </div>
 
-          <div class="bus-panel">
-            <div class="section-hdr">बस–${busNo}</div>
-            <div style="padding:4px;text-align:center;font-size:8px;">दिनांक<br><strong>15.2.17</strong></div>
-            <div style="padding:4px;text-align:center;font-size:8px;">सीपीएम एफ</div>
-            <div style="padding:4px;text-align:center;font-size:8px;border-top:0.5px solid #bbb;">1/2 सै0</div>
+          <!-- Bus panel -->
+          <div style="width:28px;border-left:0.5px solid #999;display:flex;flex-direction:column;flex-shrink:0;font-size:5px">
+            <div style="background:#ddd;padding:1px;text-align:center;font-weight:700;font-size:5px;border-bottom:0.5px solid #999;line-height:1.2">बस–${busNo}</div>
+            <div style="padding:2px;text-align:center;font-size:4.8px;line-height:1.3">दिनांक<br><strong>15.2.17</strong></div>
+            <div style="padding:2px;text-align:center;font-size:4.8px;line-height:1.3;border-top:0.5px solid #bbb">सीपीएम एफ</div>
+            <div style="padding:2px;text-align:center;font-size:4.8px;line-height:1.3;border-top:0.5px solid #bbb">1/2 सै0</div>
           </div>
+
         </div>
 
-        <div class="footer">
-          <div class="footer-meta">
+        <!-- FOOTER -->
+        <div style="display:flex;border-top:0.8px solid #333;flex-shrink:0">
+
+          <!-- Meta info -->
+          <div style="width:50px;border-right:0.5px solid #999;flex-shrink:0">
             ${[
-              ['म0 केंद्र सं0', vd(s.centerId || s.center_id)],
-              ['बूथ सं0',       vd(s.boothNo  || s.booth_no)],
+              ['म0 केंद्र सं0', vd(s.centerId  || s.center_id)],
+              ['बूथ सं0',       vd(s.boothNo   || s.booth_no)],
               ['थाना',          vd(s.staffThana || s.thana)],
-              ['जोन न0',        vd(s.zoneName  || s.zone_name)],
-              ['सेक्टर न0',     vd(s.sectorName|| s.sector_name)],
+              ['जोन न0',        vd(s.zoneName   || s.zone_name)],
+              ['सेक्टर न0',     vd(s.sectorName || s.sector_name)],
               ['वि0स0',         '—'],
-              ['श्रेणी',        vd(s.centerType|| s.center_type)],
-            ].map(([k,v]) => `<div class="meta-row"><span class="meta-key">${k}</span><span>${v}</span></div>`).join('')}
+              ['श्रेणी',        vd(s.centerType || s.center_type)],
+            ].map(([k, v]) => `
+              <div style="display:flex;border-bottom:0.3px solid #ddd">
+                <span style="background:#eee;flex:2;padding:1px;font-weight:700;border-right:0.3px solid #ccc;font-size:4.5px;line-height:1.2">${k}</span>
+                <span style="flex:3;padding:1px;font-size:4.5px;line-height:1.2">${v}</span>
+              </div>`).join('')}
           </div>
-          <div class="footer-officers">
-            ${officerBlock('जोनल मजिस्ट्रेट',     zonalMag?.name,   zonalMag?.mobile,   null)}
-            ${officerBlock('जोनल पुलिस अधिकारी',  zonalPolice?.name, zonalPolice?.mobile, zonalPolice ? rh(zonalPolice.user_rank) : null)}
+
+          <!-- Zonal officers -->
+          <div style="flex:1;border-right:0.5px solid #999">
+            ${officerBlock('जोनल मजिस्ट्रेट',    zonalMag?.name,    zonalMag?.mobile,    null)}
+            ${officerBlock('जोनल पुलिस अधिकारी', zonalPolice?.name, zonalPolice?.mobile, zonalPolice ? rh(zonalPolice.user_rank) : null)}
           </div>
-          <div class="footer-officers">
-            ${officerBlock('सैक्टर मजिस्ट्रेट',   sectorMag?.name,   sectorMag?.mobile,   null)}
-            ${officerBlock('सेक्टर पुलिस अधिकारी',sectorPolice?.name, sectorPolice?.mobile, sectorPolice ? rh(sectorPolice.user_rank) : null)}
+
+          <!-- Sector officers -->
+          <div style="flex:1;border-right:0.5px solid #999">
+            ${officerBlock('सैक्टर मजिस्ट्रेट',    sectorMag?.name,    sectorMag?.mobile,    null)}
+            ${officerBlock('सेक्टर पुलिस अधिकारी', sectorPolice?.name, sectorPolice?.mobile, sectorPolice ? rh(sectorPolice.user_rank) : null)}
           </div>
-          <div class="sp-block">
-            <div class="sp-sig"></div>
-            <div class="sp-label">पुलिस अधीक्षक<br>${vd(s.adminDistrict || s.district || 'बागपत')}</div>
+
+          <!-- SP signature -->
+          <div style="width:38px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:3px;flex-shrink:0">
+            <div style="height:18px;width:30px;border-bottom:0.5px solid #333"></div>
+            <div style="font-size:5.5px;font-weight:700;text-align:center;margin-top:2px;line-height:1.3">पुलिस अधीक्षक<br>${vd(s.adminDistrict || s.district || 'बागपत')}</div>
           </div>
+
         </div>
+
       </div>`;
-  }).join('<div class="page-break"></div>');
+  }).join('<div style="page-break-after:always"></div>');
 
   const html = `<!DOCTYPE html><html><head>
     <meta charset="UTF-8">
-    ${loadDevanagari}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;700&display=swap" rel="stylesheet">
     <style>
       *{box-sizing:border-box;margin:0;padding:0}
       body{font-family:'Noto Sans Devanagari',sans-serif;font-size:7px;background:#fff;color:#000}
-      .card{border:1px solid #333;display:flex;flex-direction:column;height:100vh;padding:0}
-      .page-break{page-break-after:always}
-      /* Header */
-      .header{display:flex;border-bottom:0.8px solid #333}
-      .header-logo{width:42px;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:8px;padding:3px;text-align:center;border-right:0.5px solid #333}
-      .header-logo:last-child{border-right:none;border-left:0.5px solid #333}
-      .header-center{flex:1;padding:3px 4px;text-align:center}
-      .hc-title{font-size:12px;font-weight:700;text-decoration:underline}
-      .hc-sub{font-size:8px;font-weight:700}
-      .hc-dist{font-size:7px}
-      .hc-phase{font-size:6px;font-weight:700;border-top:0.5px solid #999;margin-top:2px;padding-top:1px}
-      /* Primary table */
-      .primary-table{width:100%;border-collapse:collapse;border:0.5px solid #999}
-      .primary-table th,.primary-table td{border:0.5px solid #999;padding:1px 2px;font-size:6px;text-align:left}
-      .primary-table th{background:#ddd;font-weight:700;text-align:center}
-      .bold{font-weight:700}.center{text-align:center}.small{font-size:5px}
-      /* Middle */
-      .middle{display:flex;flex:1;border-top:0.5px solid #999}
-      .duty-loc{width:50px;border-right:0.5px solid #999;display:flex;flex-direction:column}
-      .section-hdr{background:#ddd;padding:1px;text-align:center;font-weight:700;font-size:5.5px;border-bottom:0.5px solid #999}
-      .duty-name{flex:1;padding:3px;text-align:center;font-weight:700;font-size:5.5px;display:flex;align-items:center;justify-content:center}
-      .sahyogi-wrap{flex:1;overflow:hidden}
-      .sahyogi-table{width:100%;border-collapse:collapse}
-      .sahyogi-table th{background:#ddd;font-size:5px;font-weight:700;text-align:center;padding:1px;border-right:0.3px solid #bbb}
-      .sahyogi-table td{font-size:5px;padding:0.5px 1px;border-bottom:0.3px solid #eee;border-right:0.3px solid #ddd}
-      .bus-panel{width:28px;border-left:0.5px solid #999;display:flex;flex-direction:column;font-size:5px}
-      /* Footer */
-      .footer{display:flex;border-top:0.8px solid #333}
-      .footer-meta{width:50px;border-right:0.5px solid #999;font-size:4.5px}
-      .meta-row{display:flex;border-bottom:0.3px solid #ddd}
-      .meta-key{background:#eee;flex:2;padding:1px;font-weight:700;border-right:0.3px solid #ccc}
-      .meta-row span:last-child{flex:3;padding:1px}
-      .footer-officers{flex:1;border-right:0.5px solid #999;font-size:4.5px}
-      .officer-block{border-bottom:0.4px solid #ccc}
-      .officer-title{background:#ddd;padding:1px;text-align:center;font-weight:700;font-size:5px;border-bottom:0.4px solid #ccc}
-      .officer-body{padding:2px;text-align:center;font-size:4.5px;line-height:1.4}
-      .sp-block{width:38px;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:4px}
-      .sp-sig{height:20px;width:30px;border-bottom:0.5px solid #333}
-      .sp-label{font-size:5.5px;font-weight:700;text-align:center;margin-top:2px}
+      .card{
+        border:1px solid #333;
+        display:flex;
+        flex-direction:column;
+        width:148mm;
+        overflow:hidden;
+        page-break-after:always;
+      }
       @page{margin:4mm;size:A6 landscape}
-      @media print{.page-break{page-break-after:always}}
+      @media print{
+        html,body{width:148mm;height:105mm}
+        .card{page-break-after:always}
+      }
     </style>
   </head><body>${cardHTML}</body></html>`;
 
   const iframe = document.createElement('iframe');
-  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:297mm;height:210mm;border:none';
+  iframe.style.cssText = 'position:fixed;top:-9999px;left:-9999px;width:148mm;height:105mm;border:none';
   document.body.appendChild(iframe);
   iframe.contentDocument.open();
   iframe.contentDocument.write(html);

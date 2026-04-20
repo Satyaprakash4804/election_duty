@@ -53,7 +53,7 @@ export const adminApi = {
   // Duties
   getDuties: (params) => api.get('/admin/duties', { params }),
   getDutyCard: (id) => api.get(`/admin/duties/${id}`),
-  assignDuty: (data) => api.post('/admin/duties/assign', data),
+  assignDuty: (data) => api.post('/admin/duties', data),
   removeAssignment: (dutyId) => api.delete(`/admin/duties/${dutyId}`),
 
   // Booths / Centers

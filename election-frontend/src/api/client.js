@@ -20,7 +20,7 @@ apiClient.interceptors.request.use((config) => {
 apiClient.interceptors.response.use(
   (res) => res.data,
   (error) => {
-    if (error.response?.status === 401) {
+    if (status === 401 && !url.includes('/auth/login')) {
       localStorage.clear();
       sessionStorage.clear();
       window.location.href = '/login';
