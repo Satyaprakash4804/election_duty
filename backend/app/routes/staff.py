@@ -720,36 +720,7 @@ def change_password():
 
     return ok(None, "पासवर्ड बदल दिया गया")
 
-@staff_bp.route("/profile", methods=["GET"])
-@login_required
-def get_profile():
-    uid  = request.user["id"]
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, name, pno, mobile, thana, district, user_rank, is_armed
-                FROM users
-                WHERE id = %s
-            """, (uid,))
-            row = cur.fetchone()
-    finally:
-        conn.close()
- 
-    if not row:
-        return err("Profile not found", 404)
- 
-    return ok({
-        "id":       row["id"],
-        "name":     row["name"]      or "",
-        "pno":      row["pno"]       or "",
-        "mobile":   row["mobile"]    or "",
-        "thana":    row["thana"]     or "",
-        "district": row["district"]  or "",
-        "rank":     row["user_rank"] or "",
-        "isArmed":  bool(row["is_armed"]),
-    })
- 
+
 @staff_bp.route("/current-duty", methods=["GET"])
 @login_required
 def get_current_duty():

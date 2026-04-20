@@ -4,7 +4,8 @@ import 'services/auth_service.dart';
 // 🔹 ADMIN PAGES
 import 'screens/admin/admin_dashboard.dart';
 import 'screens/staff/staff_dashboard_page.dart';
-// 🔹 LOGIN PAGE
+
+// 🔹 AUTH / LOGIN
 import 'screens/auth/login_page.dart';
 import 'screens/master_admin/master_dashboard.dart';
 import 'screens/super_admin/super_dashboard.dart';
@@ -14,48 +15,51 @@ import 'package:firebase_core/firebase_core.dart';
 import 'package:firebase_messaging/firebase_messaging.dart';
 import 'firebase_options.dart';
 
-// 🔔 LOCAL NOTIFICATIONS (IMPORTANT)
+// 🔔 LOCAL NOTIFICATIONS
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:mappls_gl/mappls_gl.dart';
+
 import 'routes.dart';
 import 'screens/admin/map_view.dart';
-// ✅ GLOBAL INSTANCE (REQUIRED)
+
+// ✅ GLOBAL INSTANCE
 final FlutterLocalNotificationsPlugin flutterLocalNotificationsPlugin =
     FlutterLocalNotificationsPlugin();
 
 /// 🔥 BACKGROUND HANDLER
 @pragma('vm:entry-point')
 Future<void> firebaseMessagingBackgroundHandler(RemoteMessage message) async {
-  await Firebase.initializeApp();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
+  );
   print("🔔 Background message: ${message.messageId}");
 }
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
- 
+
   // 🔥 Firebase init
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
- 
+
   // 🔥 Background messages
   FirebaseMessaging.onBackgroundMessage(firebaseMessagingBackgroundHandler);
- 
-  // ── Mappls SDK Keys ──────────────────────────────────────────────────────
-  MapplsAccountManager.setMapSDKKey(
-    "425ddc32f3f0804e17759093b419b7c1",
-  );
-  MapplsAccountManager.setRestAPIKey(
-    "425ddc32f3f0804e17759093b419b7c1",
-  );
-  MapplsAccountManager.setAtlasClientId(
-    "96dHZVzsAutM-QgqZkpIgMIElHDAROdmtsJMu1Iyfiq7w3cjgvx0IxST_h0Ks0byMFpNX0VkQMmKgbyCnCMdRQ==",
-  );
-  MapplsAccountManager.setAtlasClientSecret(
-    "lrFxI-iSEg8l1bHwBPApQm8q7Bti1e6d786Y0tXnzUV8030fiz4xXymqWP0zMDM1VOoZJefcj85eSXJlY7Tm-r4bz_JFSvXS",
-  );
-  // ── End Mappls Keys ──────────────────────────────────────────────────────
- 
+
+  // 🔔 Initialize local notifications
+  const AndroidInitializationSettings androidInit =
+      AndroidInitializationSettings('@mipmap/ic_launcher');
+  const InitializationSettings initSettings =
+      InitializationSettings(android: androidInit);
+  await flutterLocalNotificationsPlugin.initialize(initSettings);
+
+  // ── Mappls SDK Keys ─────────────────────
+  MapplsAccountManager.setMapSDKKey("YOUR_KEY");
+  MapplsAccountManager.setRestAPIKey("YOUR_KEY");
+  MapplsAccountManager.setAtlasClientId("YOUR_ID");
+  MapplsAccountManager.setAtlasClientSecret("YOUR_SECRET");
+  // ────────────────────────────────────────
+
   runApp(const MyApp());
 }
 
@@ -67,53 +71,49 @@ class MyApp extends StatefulWidget {
 }
 
 class _MyAppState extends State<MyApp> {
-
   @override
   void initState() {
     super.initState();
-
+    requestPermission();
     getToken();
-
-    // 🔐 Permission (important Android 13+)
-    FirebaseMessaging.instance.requestPermission();
-
     setupNotificationChannel();
 
-    // 🔔 FOREGROUND MESSAGE LISTENER
+    // 🔔 Foreground listener
     FirebaseMessaging.onMessage.listen((RemoteMessage message) {
-      print("🔔 Foreground message received");
-
       if (message.notification != null) {
-        print("Title: ${message.notification!.title}");
-        print("Body: ${message.notification!.body}");
-
         showNotification(message);
       }
     });
   }
 
-  /// 🔑 GET FCM TOKEN
+  /// 🔐 REQUEST PERMISSION
+  Future<void> requestPermission() async {
+    NotificationSettings settings =
+        await FirebaseMessaging.instance.requestPermission();
+    print("Permission status: ${settings.authorizationStatus}");
+  }
+
+  /// 🔑 GET TOKEN
   Future<void> getToken() async {
     String? token = await FirebaseMessaging.instance.getToken();
     print("🔥 FCM TOKEN: $token");
   }
 
-  /// 🔔 CREATE NOTIFICATION CHANNEL (ANDROID)
+  /// 🔔 CREATE CHANNEL
   Future<void> setupNotificationChannel() async {
     const AndroidNotificationChannel channel = AndroidNotificationChannel(
       'channel_id',
       'channel_name',
-      description: 'This channel is used for important notifications',
+      description: 'Important notifications',
       importance: Importance.high,
     );
-
     await flutterLocalNotificationsPlugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>()
         ?.createNotificationChannel(channel);
   }
 
-  /// 🔔 SHOW LOCAL NOTIFICATION
+  /// 🔔 SHOW NOTIFICATION
   Future<void> showNotification(RemoteMessage message) async {
     const AndroidNotificationDetails androidDetails =
         AndroidNotificationDetails(
@@ -122,15 +122,13 @@ class _MyAppState extends State<MyApp> {
       importance: Importance.high,
       priority: Priority.high,
     );
-
     const NotificationDetails notificationDetails =
         NotificationDetails(android: androidDetails);
-
     await flutterLocalNotificationsPlugin.show(
-      id: 0,
-      title: message.notification?.title ?? "No Title",
-      body: message.notification?.body ?? "No Body",
-      notificationDetails: notificationDetails,
+      0,
+      message.notification?.title ?? "No Title",
+      message.notification?.body ?? "No Body",
+      notificationDetails,
     );
   }
 
@@ -141,32 +139,40 @@ class _MyAppState extends State<MyApp> {
       debugShowCheckedModeBanner: false,
 
       theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: const Color(0xFF1565C0)),
+        colorScheme:
+            ColorScheme.fromSeed(seedColor: const Color(0xFF1565C0)),
         useMaterial3: true,
-        appBarTheme: const AppBarTheme(
-          backgroundColor: Color(0xFF1565C0),
-          foregroundColor: Colors.white,
-          elevation: 2,
-        ),
       ),
 
-      // ✅ ROUTES
+      // ✅ FIX: initialRoute only — no home: property
+      // '/splash' → OfficerSplashPage (cold-start entry)
+      // '/'       → AuthCheck (checks if already logged in)
+      // After login success → PostLoginSplashPage → dashboard
+      initialRoute: '/splash',
+
       routes: {
-        '/login': (context) => const LoginPage(),
-        '/admin': (context) => const AdminDashboard(),
-        '/master': (context) => const MasterDashboard(),
-        '/super': (context) => const SuperDashboard(),
-        '/staff': (context) => const StaffDashboardPage(),
-        '/map-view': (context) => const MapViewPage(),
+        '/splash':   (_) => const OfficerSplashPage(),      // 🎖️ Cold-start splash
+        '/':         (_) => const AuthCheck(),              // 🔐 Auth gate
+        '/login':    (_) => const LoginPage(),
+        '/admin':    (_) => const AdminDashboard(),
+        '/master':   (_) => const MasterDashboard(),
+        '/super':    (_) => const SuperDashboard(),
+        '/staff':    (_) => const StaffDashboardPage(),
+        '/map-view': (_) => const MapViewPage(),
       },
 
-      // ✅ AUTO LOGIN CHECK
-      home: const AuthCheck(),
+      // ❌ DO NOT add: home: const AuthCheck()
+      // It conflicts with routes['/'] and causes a crash
     );
   }
 }
 
-/// 🔥 AUTH CHECK (UNCHANGED)
+// ═════════════════════════════════════════════
+//  AUTH CHECK
+//  Checks SharedPreferences for saved login token.
+//  If logged in  → go directly to role dashboard (no splash again)
+//  If not logged → show LoginPage
+// ═════════════════════════════════════════════
 class AuthCheck extends StatelessWidget {
   const AuthCheck({super.key});
 
@@ -178,7 +184,6 @@ class AuthCheck extends StatelessWidget {
         AuthService.getRole(),
       ]),
       builder: (context, snapshot) {
-
         if (!snapshot.hasData) {
           return const Scaffold(
             body: Center(child: CircularProgressIndicator()),
@@ -186,25 +191,19 @@ class AuthCheck extends StatelessWidget {
         }
 
         final isLoggedIn = snapshot.data![0] as bool;
-        final role = snapshot.data![1] as String?;
+        final role       = snapshot.data![1] as String?;
 
-        if (!isLoggedIn) {
-          return const LoginPage();
-        }
+        if (!isLoggedIn) return const LoginPage();
 
         switch (role) {
           case "MASTER":
             return const MasterDashboard();
-
           case "SUPER_ADMIN":
             return const SuperDashboard();
-
           case "ADMIN":
             return const AdminDashboard();
-
           case "STAFF":
             return const StaffDashboardPage();
-
           default:
             return const LoginPage();
         }
