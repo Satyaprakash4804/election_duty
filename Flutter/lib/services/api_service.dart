@@ -161,4 +161,22 @@ class ApiService {
     // ❌ CLIENT ERROR
     throw Exception(body["message"] ?? "❌ API Error");
   }
+  static Future<Map<String, dynamic>> getGoswara() async {
+    final token = await AuthService.getToken();
+    return await get('/admin/goswara', token: token);
+  }
+
+  static Future<void> saveNyayPanchayat({
+    required String blockName,
+    required int nyayCount,
+  }) async {
+    final token = await AuthService.getToken();
+    await post(
+      '/admin/goswara/nyay-panchayat',
+      {'blockName': blockName, 'nyayCount': nyayCount},
+      token: token,
+    );
+  }
 }
+
+

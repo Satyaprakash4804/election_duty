@@ -381,6 +381,19 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
             """)
 
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS goswara_nyay_panchayat (
+                    id         INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id   INT NOT NULL,
+                    block_name VARCHAR(100) NOT NULL,
+                    nyay_count INT NOT NULL DEFAULT 0,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_admin_block (admin_id, block_name),
+                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
 
             # ─────────────────────────────────────────────────────────────────
             #  AUTO-ADD MISSING COLUMNS (safe for existing databases)

@@ -677,7 +677,7 @@ class _StaffPageState extends State<StaffPage>
                         {
                           'staffIds': selectedIds,
                           'centerId': selectedCenter!['id'],
-                          'busNo': busCtrl.text.trim(),
+                          
                         },
                         token: token);
                     if (ctx.mounted) Navigator.pop(ctx);
@@ -810,7 +810,7 @@ class _StaffPageState extends State<StaffPage>
                         {
                           'staffId': staff['id'],
                           'centerId': selectedCenter!['id'],
-                          'busNo': busCtrl.text.trim(),
+                          
                         },
                         token: await AuthService.getToken());
                     if (ctx.mounted) Navigator.pop(ctx);

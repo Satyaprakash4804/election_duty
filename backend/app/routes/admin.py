@@ -2006,23 +2006,40 @@ def get_duties():
         conn.close()
     return _paginated(result, total, page, limit)
 
-
 @admin_bp.route("/duties", methods=["POST"])
 @admin_required
 def assign_duty():
     body     = request.get_json() or {}
     staff_id = body.get("staffId")
     sthal_id = body.get("centerId")
+
     if not staff_id or not sthal_id:
         return err("staffId and centerId required")
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            # Fetch election date from app_config
+
+            # 🔹 1. Get election date
             cur.execute("SELECT value FROM app_config WHERE `key`='electionDate' LIMIT 1")
             cfg = cur.fetchone()
             electiondate = cfg["value"] if cfg else None
 
+            # 🔹 2. 🔥 FETCH BUS NUMBER FROM CENTER (IMPORTANT)
+            cur.execute("""
+                SELECT bus_no 
+                FROM matdan_sthal   -- ⚠️ change table name if different (centers)
+                WHERE id = %s
+                LIMIT 1
+            """, (sthal_id,))
+            
+            center = cur.fetchone()
+            if not center:
+                return err("Center not found")
+
+            bus_no = center.get("bus_no") or ""   # ✅ AUTO FETCHED
+
+            # 🔹 3. Insert duty
             cur.execute("""
                 INSERT INTO duty_assignments
                     (staff_id, sthal_id, bus_no, assigned_by, election_date)
@@ -2032,13 +2049,20 @@ def assign_duty():
                     bus_no=VALUES(bus_no),
                     assigned_by=VALUES(assigned_by),
                     election_date=VALUES(election_date)
-            """, (staff_id, sthal_id, body.get("busNo", ""), _admin_id(), electiondate))
+            """, (staff_id, sthal_id, bus_no, _admin_id(), electiondate))
+
         conn.commit()
+
     finally:
         conn.close()
-    write_log("INFO", f"Duty: staff {staff_id} → center {sthal_id}", "Duty")
-    return ok(None, "Duty assigned", 201)
- 
+
+    write_log("INFO", f"Duty: staff {staff_id} → center {sthal_id} (Bus: {bus_no})", "Duty")
+
+    return ok({
+        "busNo": bus_no   # optional: return to frontend
+    }, "Duty assigned", 201)
+
+
 
 @admin_bp.route("/duties/<int:duty_id>", methods=["DELETE"])
 @admin_required
@@ -2397,7 +2421,7 @@ def auto_assign(center_id):
 
             # Get center type
             cur.execute(
-                "SELECT center_type FROM matdan_sthal WHERE id=%s",
+                "SELECT center_type,bus_no FROM matdan_sthal WHERE id=%s",
                 (center_id,)
             )
             center = cur.fetchone()
@@ -2506,9 +2530,9 @@ def auto_assign(center_id):
                     for s in lower_assigned:
                         cur.execute("""
                             INSERT IGNORE INTO duty_assignments
-                                (staff_id, sthal_id, assigned_by)
-                            VALUES (%s, %s, %s)
-                        """, (s["id"], center_id, _admin_id()))
+                                (staff_id, sthal_id, assigned_by,bus_no)
+                            VALUES (%s, %s, %s,%s)
+                        """, (s["id"], center_id, _admin_id(), center["bus_no"]))
                         assigned_list.append({
                             "id":           s["id"],
                             "name":         s["name"]      or "",
@@ -2517,15 +2541,16 @@ def auto_assign(center_id):
                             "originalRank": rank,
                             "isLowerRank":  True,
                             "isArmed":      bool(s["is_armed"]),
+                            "bus_no":       center["bus_no"]
                         })
 
                 # Assign primary
                 for s in assigned_for_rank:
                     cur.execute("""
                         INSERT IGNORE INTO duty_assignments
-                            (staff_id, sthal_id, assigned_by)
-                        VALUES (%s, %s, %s)
-                    """, (s["id"], center_id, _admin_id()))
+                            (staff_id, sthal_id, assigned_by,bus_no)
+                        VALUES (%s, %s, %s,%s)
+                    """, (s["id"], center_id, _admin_id(), center["bus_no"]))
                     assigned_list.append({
                         "id":          s["id"],
                         "name":        s["name"]      or "",
@@ -2533,6 +2558,7 @@ def auto_assign(center_id):
                         "rank":        s["user_rank"] or "",
                         "isLowerRank": False,
                         "isArmed":     bool(s["is_armed"]),
+                        "bus_no":       center["bus_no"]
                     })
 
                 # Edge case: nothing found at all
@@ -2563,6 +2589,7 @@ def auto_assign(center_id):
         "lowerRankUsed": lower_rank_used,
         "total":         len(assigned_list),
     })
+
 
 @admin_bp.route("/officers/save-to-users", methods=["POST"])
 @admin_required
@@ -2768,3 +2795,156 @@ def mark_attendance(duty_id):
     finally:
         conn.close()
     return ok(None, "Attendance updated")
+
+
+@admin_bp.route("/goswara", methods=["GET"])
+@admin_required
+def get_goswara():
+    current_id   = _admin_id()
+    current_role = request.user.get("role", "admin")
+    district     = (request.user.get("district") or "").strip()
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+ 
+            # ── Election config ───────────────────────────────────────────────
+            cur.execute("""
+                SELECT `key`, value FROM app_config
+                WHERE `key` IN ('electionDate', 'phase')
+            """)
+            cfg = {r["key"]: r["value"] for r in cur.fetchall()}
+ 
+            # ── Determine which admin IDs to aggregate ────────────────────────
+            #
+            # super_admin  → all admins whose district == super_admin's district
+            # admin        → only themselves
+            #
+            if current_role == "super_admin":
+                if district:
+                    cur.execute(
+                        "SELECT id FROM users WHERE role='admin' AND district=%s",
+                        (district,)
+                    )
+                    rows_ids = cur.fetchall()
+                    admin_ids = [r["id"] for r in rows_ids] if rows_ids else []
+                else:
+                    # super_admin has no district set — fallback to self only
+                    admin_ids = [current_id]
+            else:
+                # plain admin — only themselves
+                admin_ids = [current_id]
+ 
+            # If no matching admins found, return empty
+            if not admin_ids:
+                from flask import jsonify
+                return jsonify({
+                    "success":      True,
+                    "electionDate": cfg.get("electionDate", ""),
+                    "phase":        cfg.get("phase", ""),
+                    "data":         [],
+                })
+ 
+            # ── Goswara query (supports multiple admin_ids via IN clause) ─────
+            ph = ",".join(["%s"] * len(admin_ids))
+ 
+            cur.execute(f"""
+                SELECT
+                    sz.block AS block_name,
+ 
+                    COUNT(DISTINCT zo.id)     AS zonal_count,
+                    COUNT(DISTINCT so_off.id) AS sector_count,
+                    COUNT(DISTINCT gp.id)     AS gram_panchayat_count
+ 
+                FROM super_zones sz
+ 
+                LEFT JOIN zones z
+                    ON z.super_zone_id = sz.id
+ 
+                LEFT JOIN zonal_officers zo
+                    ON zo.zone_id = z.id
+ 
+                LEFT JOIN sectors s
+                    ON s.zone_id = z.id
+ 
+                LEFT JOIN sector_officers so_off
+                    ON so_off.sector_id = s.id
+ 
+                LEFT JOIN gram_panchayats gp
+                    ON gp.sector_id = s.id
+ 
+                WHERE sz.admin_id IN ({ph})
+                  AND sz.block IS NOT NULL
+                  AND TRIM(sz.block) != ''
+ 
+                GROUP BY sz.block
+                ORDER BY sz.block
+            """, admin_ids)
+ 
+            rows = cur.fetchall()
+ 
+            # ── न्याय पंचायत manual counts ────────────────────────────────────
+            # Aggregate nyay counts for all relevant admin_ids
+            cur.execute(f"""
+                SELECT block_name, SUM(nyay_count) AS nyay_count
+                FROM goswara_nyay_panchayat
+                WHERE admin_id IN ({ph})
+                GROUP BY block_name
+            """, admin_ids)
+ 
+            nyay_map = {r["block_name"]: int(r["nyay_count"] or 0)
+                        for r in cur.fetchall()}
+ 
+            data = []
+            for r in rows:
+                block = r["block_name"] or ""
+                data.append({
+                    "block_name":           block,
+                    "zonal_count":          int(r["zonal_count"]          or 0),
+                    "sector_count":         int(r["sector_count"]         or 0),
+                    "nyay_panchayat_count": nyay_map.get(block, 0),
+                    "gram_panchayat_count": int(r["gram_panchayat_count"] or 0),
+                })
+ 
+    finally:
+        conn.close()
+ 
+    from flask import jsonify
+    return jsonify({
+        "success":      True,
+        "electionDate": cfg.get("electionDate", ""),
+        "phase":        cfg.get("phase", ""),
+        "data":         data,
+    })
+ 
+ 
+@admin_bp.route("/goswara/nyay-panchayat", methods=["POST"])
+@admin_required
+def save_nyay_panchayat():
+    """
+    Saves/updates a manual nyay panchayat count for a block.
+    Always saves against the currently logged-in user's id.
+    Super admins saving here will save under their own id — which is then
+    aggregated alongside the admin's count in get_goswara().
+    """
+    body       = request.get_json() or {}
+    block_name = (body.get("blockName") or "").strip()
+    nyay_count = int(body.get("nyayCount") or 0)
+ 
+    if not block_name:
+        return err("blockName required")
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                INSERT INTO goswara_nyay_panchayat (admin_id, block_name, nyay_count)
+                VALUES (%s, %s, %s)
+                ON DUPLICATE KEY UPDATE nyay_count = VALUES(nyay_count)
+            """, (_admin_id(), block_name, nyay_count))
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    return ok(None, "saved")
+ 
