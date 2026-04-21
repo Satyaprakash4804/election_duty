@@ -157,6 +157,82 @@ class _MasterDashboardState extends State<MasterDashboard>
 
   late final AnimationController _fadeCtrl;
   late final Animation<double>   _fadeAnim;
+  
+  final List<String> _upDistricts = [
+    'आगरा',
+    'आज़मगढ़',
+    'बिजनौर',
+    'इटावा',
+    'अलीगढ़',
+    'बागपत',
+    'बदायूं',
+    'फर्रुखाबाद',
+    'अंबेडकर नगर',
+    'बहराइच',
+    'बुलंदशहर',
+    'फतेहपुर',
+    'अमेठी',
+    'बलिया',
+    'चंदौली',
+    'फिरोजाबाद',
+    'अमरोहा',
+    'बलरामपुर',
+    'चित्रकूट',
+    'गौतम बुद्ध नगर',
+    'औरैया',
+    'बांदा',
+    'देवरिया',
+    'गाज़ियाबाद',
+    'अयोध्या',
+    'बाराबंकी',
+    'एटा',
+    'गाज़ीपुर',
+    'गोंडा',
+    'जालौन',
+    'कासगंज',
+    'लखनऊ',
+    'गोरखपुर',
+    'जौनपुर',
+    'कौशांबी',
+    'महाराजगंज',
+    'हमीरपुर',
+    'झांसी',
+    'कुशीनगर',
+    'महोबा',
+    'हापुड़',
+    'कन्नौज',
+    'लखीमपुर खीरी',
+    'मैनपुरी',
+    'हरदोई',
+    'कानपुर देहात',
+    'ललितपुर',
+    'मथुरा',
+    'हाथरस',
+    'कानपुर नगर',
+    'मऊ',
+    'पीलीभीत',
+    'संभल',
+    'सोनभद्र',
+    'मेरठ',
+    'प्रतापगढ़',
+    'संतकबीर नगर',
+    'सुल्तानपुर',
+    'मिर्जापुर',
+    'प्रयागराज',
+    'भदोही (संत रविदास नगर)',
+    'उन्नाव',
+    'मुरादाबाद',
+    'रायबरेली',
+    'शाहजहाँपुर',
+    'वाराणसी',
+    'मुजफ्फरनगर',
+    'रामपुर',
+    'शामली',
+    'सहारनपुर',
+    'श्रावस्ती',
+    'सिद्धार्थनगर',
+    'सीतापुर',
+  ];
 
   // ── Data ───────────────────────────────────
   List<SuperAdminModel> _superAdmins = [];
@@ -319,7 +395,7 @@ class _MasterDashboardState extends State<MasterDashboard>
   void _showCreateSuperAdmin() {
     final nameCtrl     = TextEditingController();
     final userCtrl     = TextEditingController();
-    final districtCtrl = TextEditingController(); // ✅ NEW
+    String? selectedDistrict; // ✅ NEW
     final passCtrl     = TextEditingController();
     final confirmCtrl  = TextEditingController();
 
@@ -350,11 +426,21 @@ class _MasterDashboardState extends State<MasterDashboard>
                 const SizedBox(height: 12),
 
                 // ✅ NEW DISTRICT FIELD
-                _dlgField(
-                  districtCtrl,
-                  'District',
-                  Icons.location_city_outlined,
-                  validator: _notEmpty,
+                DropdownButtonFormField<String>(
+                  value: selectedDistrict,
+                  dropdownColor: kBg,
+                  decoration: _dlgDecoration(
+                    'District',
+                    Icons.location_city_outlined,
+                  ),
+                  items: _upDistricts
+                      .map((d) => DropdownMenuItem(
+                            value: d,
+                            child: Text(d),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setDlg(() => selectedDistrict = v),
+                  validator: (v) => v == null ? 'Select a district' : null,
                 ),
                 const SizedBox(height: 12),
 
@@ -389,7 +475,7 @@ class _MasterDashboardState extends State<MasterDashboard>
                           "name": nameCtrl.text.trim(),
                           "username": userCtrl.text.trim(),
                           "password": passCtrl.text,
-                          "district": districtCtrl.text.trim(), // ✅ SEND
+                          "district": selectedDistrict, // ✅ SEND
                         },
                         token: token,
                       );
@@ -418,7 +504,7 @@ class _MasterDashboardState extends State<MasterDashboard>
   void _showCreateAdmin() {
     final nameCtrl     = TextEditingController();
     final userCtrl     = TextEditingController();
-    final districtCtrl = TextEditingController();
+    String? selectedDistrict;
     final passCtrl     = TextEditingController();
     final confirmCtrl  = TextEditingController();
     bool  obscureP     = true;
@@ -444,8 +530,22 @@ class _MasterDashboardState extends State<MasterDashboard>
                 _dlgField(userCtrl, 'Username', Icons.alternate_email,
                     validator: _notEmpty),
                 const SizedBox(height: 12),
-                _dlgField(districtCtrl, 'District', Icons.location_city_outlined,
-                    validator: _notEmpty),
+                DropdownButtonFormField<String>(
+                  value: selectedDistrict,
+                  dropdownColor: kBg,
+                  decoration: _dlgDecoration(
+                    'District',
+                    Icons.location_city_outlined,
+                  ),
+                  items: _upDistricts
+                      .map((d) => DropdownMenuItem(
+                            value: d,
+                            child: Text(d),
+                          ))
+                      .toList(),
+                  onChanged: (v) => setDlg(() => selectedDistrict = v),
+                  validator: (v) => v == null ? 'Select a district' : null,
+                ),
                 const SizedBox(height: 12),
                 _dlgField(passCtrl, 'Password', Icons.lock_outline,
                     obscure: obscureP,
@@ -472,7 +572,7 @@ class _MasterDashboardState extends State<MasterDashboard>
                         {
                           "name":     nameCtrl.text.trim(),
                           "username": userCtrl.text.trim(),
-                          "district": districtCtrl.text.trim(),
+                          "district": selectedDistrict,
                           "password": passCtrl.text,
                         },
                         token: token,
@@ -595,6 +695,36 @@ class _MasterDashboardState extends State<MasterDashboard>
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  InputDecoration _dlgDecoration(String label, IconData icon) {
+    return InputDecoration(
+      labelText: label,
+      prefixIcon: Icon(icon, color: kSubtle),
+      filled: true,
+      fillColor: Colors.white,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
+
+      border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: kBorder.withOpacity(0.5)),
+      ),
+
+      enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: BorderSide(color: kBorder.withOpacity(0.5)),
+      ),
+
+      focusedBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: kDevAccent, width: 1.5),
+      ),
+
+      errorBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: kError),
       ),
     );
   }

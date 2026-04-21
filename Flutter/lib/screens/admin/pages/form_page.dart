@@ -68,6 +68,18 @@ class _RankRule {
 // ══════════════════════════════════════════════════════════════════════════════
 //  FORM PAGE — 5-step stepper
 // ══════════════════════════════════════════════════════════════════════════════
+final List<String> upDistrictsHindi = [
+  'आगरा','आज़मगढ़','बिजनौर','इटावा','अलीगढ़','बागपत','बदायूं','फर्रुखाबाद',
+  'अंबेडकर नगर','बहराइच','बुलंदशहर','फतेहपुर','अमेठी','बलिया','चंदौली','फिरोजाबाद',
+  'अमरोहा','बलरामपुर','चित्रकूट','गौतम बुद्ध नगर','औरैया','बांदा','देवरिया','गाज़ियाबाद',
+  'अयोध्या','बाराबंकी','एटा','गाज़ीपुर','गोंडा','जालौन','कासगंज','लखनऊ',
+  'गोरखपुर','जौनपुर','कौशांबी','महाराजगंज','हमीरपुर','झांसी','कुशीनगर','महोबा',
+  'हापुड़','कन्नौज','लखीमपुर खीरी','मैनपुरी','हरदोई','कानपुर देहात','ललितपुर','मथुरा',
+  'हाथरस','कानपुर नगर','मऊ','पीलीभीत','संभल','सोनभद्र','मेरठ','प्रतापगढ़',
+  'संतकबीर नगर','सुल्तानपुर','मिर्जापुर','प्रयागराज','भदोही (संत रविदास नगर)','उन्नाव',
+  'मुरादाबाद','रायबरेली','शाहजहाँपुर','वाराणसी','मुजफ्फरनगर','रामपुर','शामली',
+  'सहारनपुर','श्रावस्ती','सिद्धार्थनगर','सीतापुर',
+];
 
 class FormPage extends StatefulWidget {
   const FormPage({super.key});
@@ -849,48 +861,175 @@ class _ItemDialogState extends State<_ItemDialog> {
             ),
             Flexible(child: SingleChildScrollView(
               padding: const EdgeInsets.all(16),
-              child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              child: Column(crossAxisAlignment: CrossAxisAlignment.start, 
+              children: [
+
+                // ── FORM FIELDS ─────────────────────────────
                 ...widget.fields.map((f) => Padding(
-                  padding: const EdgeInsets.only(bottom: 10),
-                  child: TextFormField(controller: _ctrls[f],
-                    style: const TextStyle(color: _kDark, fontSize: 13),
-                    decoration: InputDecoration(labelText: _fieldLabel(f),
-                      labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-                      prefixIcon: Icon(_fieldIcon(f), size: 18, color: widget.color),
-                      filled: true, fillColor: Colors.white, isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-                      border: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _kBorder)),
-                      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: _kBorder)),
-                      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: BorderSide(color: widget.color, width: 2)))),
-                )),
+                      padding: const EdgeInsets.only(bottom: 10),
+                      child: f == 'district'
+                          ? DropdownButtonFormField<String>(
+                              value: _ctrls[f]?.text.isNotEmpty == true
+                                  ? _ctrls[f]!.text
+                                  : null,
+                              items: upDistrictsHindi
+                                  .map((d) => DropdownMenuItem(
+                                        value: d,
+                                        child: Text(
+                                          d,
+                                          style: const TextStyle(
+                                            color: _kDark,
+                                            fontSize: 13,
+                                          ),
+                                        ),
+                                      ))
+                                  .toList(),
+                              onChanged: (val) {
+                                if (val != null) {
+                                  _ctrls[f]!.text = val;
+                                }
+                              },
+                              decoration: InputDecoration(
+                                labelText: 'जिला',
+                                labelStyle: const TextStyle(
+                                  color: _kSubtle,
+                                  fontSize: 12,
+                                ),
+                                prefixIcon: Icon(
+                                  Icons.location_city_outlined,
+                                  size: 18,
+                                  color: widget.color,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                                isDense: true,
+                                contentPadding:
+                                    const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: _kBorder),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: _kBorder),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide:
+                                      BorderSide(color: widget.color, width: 2),
+                                ),
+                              ),
+                            )
+                          : TextFormField(
+                              controller: _ctrls[f],
+                              style: const TextStyle(color: _kDark, fontSize: 13),
+                              decoration: InputDecoration(
+                                labelText: _fieldLabel(f),
+                                labelStyle: const TextStyle(
+                                    color: _kSubtle, fontSize: 12),
+                                prefixIcon: Icon(
+                                  _fieldIcon(f),
+                                  size: 18,
+                                  color: widget.color,
+                                ),
+                                filled: true,
+                                fillColor: Colors.white,
+                                isDense: true,
+                                contentPadding:
+                                    const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: _kBorder),
+                                ),
+                                enabledBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide: const BorderSide(color: _kBorder),
+                                ),
+                                focusedBorder: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(10),
+                                  borderSide:
+                                      BorderSide(color: widget.color, width: 2),
+                                ),
+                              ),
+                            ),
+                    )), // ✅ IMPORTANT COMMA FIX HERE
+
+
+                // ── OFFICER SECTION ─────────────────────────
                 if (widget.officerRanks.isNotEmpty) ...[
                   const SizedBox(height: 6),
-                  Row(children: [
-                    Container(width: 3, height: 14, decoration: BoxDecoration(color: widget.color, borderRadius: BorderRadius.circular(2))),
-                    const SizedBox(width: 8),
-                    Expanded(child: Text(widget.officerTitle, style: TextStyle(color: widget.color, fontSize: 12, fontWeight: FontWeight.w800))),
-                    GestureDetector(
-                      onTap: () => setState(() => _officers.add(_OfficerEntry())),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                        decoration: BoxDecoration(color: widget.color.withOpacity(0.1), borderRadius: BorderRadius.circular(7),
-                            border: Border.all(color: widget.color.withOpacity(0.3))),
-                        child: Row(mainAxisSize: MainAxisSize.min, children: [
-                          Icon(Icons.person_add_outlined, size: 12, color: widget.color),
-                          const SizedBox(width: 4),
-                          Text('+ जोड़ें', style: TextStyle(color: widget.color, fontSize: 11, fontWeight: FontWeight.w700)),
-                        ]),
+
+                  Row(
+                    children: [
+                      Container(
+                        width: 3,
+                        height: 14,
+                        decoration: BoxDecoration(
+                          color: widget.color,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
                       ),
-                    ),
-                  ]),
+                      const SizedBox(width: 8),
+
+                      Expanded(
+                        child: Text(
+                          widget.officerTitle,
+                          style: TextStyle(
+                            color: widget.color,
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+
+                      GestureDetector(
+                        onTap: () =>
+                            setState(() => _officers.add(_OfficerEntry())),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: widget.color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(7),
+                            border: Border.all(
+                                color: widget.color.withOpacity(0.3)),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(Icons.person_add_outlined,
+                                  size: 12, color: widget.color),
+                              const SizedBox(width: 4),
+                              Text(
+                                '+ जोड़ें',
+                                style: TextStyle(
+                                  color: widget.color,
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+
                   const SizedBox(height: 10),
-                  ..._officers.asMap().entries.map((entry) => _OfficerCard(
-                    key: ValueKey(entry.key), index: entry.key, officer: entry.value,
-                    color: widget.color, allowedRanks: widget.officerRanks,
-                    canRemove: _officers.length > 1,
-                    onRemove: () => setState(() => _officers.removeAt(entry.key)),
-                    onChanged: () => setState(() {}),
-                  )),
+
+                  ..._officers.asMap().entries.map(
+                    (entry) => _OfficerCard(
+                      key: ValueKey(entry.key),
+                      index: entry.key,
+                      officer: entry.value,
+                      color: widget.color,
+                      allowedRanks: widget.officerRanks,
+                      canRemove: _officers.length > 1,
+                      onRemove: () =>
+                          setState(() => _officers.removeAt(entry.key)),
+                      onChanged: () => setState(() {}),
+                    ),
+                  ),
                 ],
               ]),
             )),

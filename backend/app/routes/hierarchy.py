@@ -141,27 +141,20 @@ def get_full_hierarchy():
             if role == "admin":
                 district = user.get("district")
 
-                # ✅ DEBUG (safe now)
-                print("Admin district 👉", district)
-
-                cur.execute("SELECT DISTINCT district FROM super_zones")
-                print("DB districts 👉", cur.fetchall())
-
-                # ✅ FIXED FILTER (case + space safe)
                 cur.execute("""
                     SELECT * FROM super_zones
                     WHERE TRIM(LOWER(district)) = TRIM(LOWER(%s))
-                       OR admin_id = %s
                     ORDER BY id
-                """, (district, user.get("id")))
+                """, (district,))
 
             else:
-                # ✅ super_admin + master → ALL DATA
-                print("Loading ALL data (no filter)")
+                district = user.get("district")
+
                 cur.execute("""
                     SELECT * FROM super_zones
+                    WHERE TRIM(LOWER(district)) = TRIM(LOWER(%s))
                     ORDER BY id
-                """)
+                """, (district,))
 
             super_zones = cur.fetchall()
             result = []
@@ -273,7 +266,7 @@ def get_full_hierarchy():
         conn.close()
 
 
-        
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  SUPER ZONES   PUT /hierarchy/super-zone/<id>   DELETE /hierarchy/super-zone/<id>
 # ══════════════════════════════════════════════════════════════════════════════
@@ -665,11 +658,12 @@ def get_available_staff():
          OR EXISTS (SELECT 1 FROM sector_officers      so WHERE so.user_id    = u.id)
         )
     """
-
+    user = request.user
+    district = user.get("district")
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            params = []
+            params = [district]
             search_clause = ""
             if q:
                 search_clause = "AND (u.name LIKE %s OR u.pno LIKE %s OR u.thana LIKE %s)"
@@ -678,7 +672,7 @@ def get_available_staff():
 
             cur.execute(
                 f"SELECT COUNT(*) AS cnt FROM users u "
-                f"WHERE u.role='staff' AND u.is_active=1 AND {NOT_ASSIGNED} {search_clause}",
+                f"WHERE u.role='staff' AND u.is_active=1 AND TRIM(LOWER(u.district)) = TRIM(LOWER(%s)) AND {NOT_ASSIGNED} {search_clause}",
                 params
             )
             total = cur.fetchone()["cnt"]
@@ -686,7 +680,7 @@ def get_available_staff():
             cur.execute(
                 f"""SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.user_rank
                     FROM users u
-                    WHERE u.role='staff' AND u.is_active=1 AND {NOT_ASSIGNED} {search_clause}
+                    WHERE u.role='staff' AND u.is_active=1 AND TRIM(LOWER(u.district)) = TRIM(LOWER(%s)) AND {NOT_ASSIGNED} {search_clause}
                     ORDER BY u.name
                     LIMIT %s OFFSET %s""",
                 params + [limit, offset]

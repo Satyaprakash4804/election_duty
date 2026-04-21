@@ -490,6 +490,7 @@ def create_admin():
             cur.execute("SELECT id FROM users WHERE username=%s", (username,))
             if cur.fetchone():
                 return err("Username already taken", 409)
+
             cur.execute(
                 "INSERT INTO users (name, username, password, role, district, is_active, created_by) "
                 "VALUES (%s,%s,%s,'admin',%s,1,%s)",
@@ -501,9 +502,11 @@ def create_admin():
         conn.close()
 
     write_log("INFO", f"Admin '{name}' (district:{district}) created directly by master", "Auth")
-    return ok({"id": new_id, "name": name, "username": username, "district": district},
-              "Admin created", 201)
-
+    return ok(
+        {"id": new_id, "name": name, "username": username, "district": district},
+        "Admin created",
+        201
+    )
 
 @master_bp.route("/admins/<int:admin_id>", methods=["PUT"])
 @master_required
