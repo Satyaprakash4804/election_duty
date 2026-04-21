@@ -1891,34 +1891,66 @@ def assign_duty():
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute("SELECT value FROM app_config WHERE `key`='electionDate' LIMIT 1")
-            cfg = cur.fetchone()
-            electiondate = cfg["value"] if cfg else None
 
-            cur.execute("SELECT bus_no FROM matdan_sthal WHERE id = %s LIMIT 1", (sthal_id,))
+            # ✅ 1. Fetch election date
+            cur.execute(
+                "SELECT value FROM app_config WHERE `key`='electionDate' LIMIT 1"
+            )
+            cfg = cur.fetchone()
+
+            if not cfg or not cfg.get("value"):
+                return err("Election date not set by master", 400)
+
+            electiondate = cfg["value"]   # format: YYYY-MM-DD
+
+            # ✅ 2. Validate center belongs to admin district
+            district = request.user.get("district")
+
+            cur.execute("""
+                SELECT ms.bus_no
+                FROM matdan_sthal ms
+                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s ON s.id = gp.sector_id
+                JOIN zones z ON z.id = s.zone_id
+                JOIN super_zones sz ON sz.id = z.super_zone_id
+                WHERE ms.id = %s AND sz.district = %s
+                LIMIT 1
+            """, (sthal_id, district))
+
             center = cur.fetchone()
+
             if not center:
-                return err("Center not found")
+                return err("Center not found or not in your district", 403)
 
             bus_no = center.get("bus_no") or ""
 
+            # ✅ 3. Insert / Update duty
             cur.execute("""
                 INSERT INTO duty_assignments
                     (staff_id, sthal_id, bus_no, assigned_by, election_date)
                 VALUES (%s, %s, %s, %s, %s)
                 ON DUPLICATE KEY UPDATE
-                    sthal_id=VALUES(sthal_id),
-                    bus_no=VALUES(bus_no),
-                    assigned_by=VALUES(assigned_by),
-                    election_date=VALUES(election_date)
+                    sthal_id      = VALUES(sthal_id),
+                    bus_no        = VALUES(bus_no),
+                    assigned_by   = VALUES(assigned_by),
+                    election_date = VALUES(election_date)
             """, (staff_id, sthal_id, bus_no, _admin_id(), electiondate))
 
         conn.commit()
+
     finally:
         conn.close()
 
-    write_log("INFO", f"Duty: staff {staff_id} → center {sthal_id} (Bus: {bus_no})", "Duty")
-    return ok({"busNo": bus_no}, "Duty assigned", 201)
+    write_log(
+        "INFO",
+        f"Duty: staff {staff_id} → center {sthal_id} (Bus: {bus_no}, Date: {electiondate})",
+        "Duty"
+    )
+
+    return ok({
+        "busNo": bus_no,
+        "electionDate": electiondate   # ✅ return to frontend
+    }, "Duty assigned", 201)
 
 
 @admin_bp.route("/duties/<int:duty_id>", methods=["DELETE"])
@@ -2646,3 +2678,16 @@ def save_nyay_panchayat():
         conn.close()
 
     return ok(None, "saved")
+
+
+@admin_bp.route("/config", methods=["GET"])
+@admin_required
+def get_admin_config():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT `key`, value FROM app_config")
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+    return ok({r["key"]: r["value"] for r in rows})
