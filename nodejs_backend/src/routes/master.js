@@ -8,8 +8,54 @@ const fs = require('fs');
 const { query, withTransaction, writeLog, hashPassword, verifyPassword } = require('../config/db');
 const { ok, err, masterRequired } = require('../middleware/auth');
 const config = require('../config');
+const jwt = require('jsonwebtoken');
 
-// ── 1. GET /api/master/config ─────────────────────────────────────────────────
+// ── Helper ────────────────────────────────────────────────────────────────────
+/** Safely convert a Date value to ISO string, matching Python's .isoformat() */
+function toISO(d) {
+  if (!d) return null;
+  return d instanceof Date ? d.toISOString() : d;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  0. POST /api/master/login
+//     ✅ Missing entirely from JS — added from Python
+// ══════════════════════════════════════════════════════════════════════════════
+router.post('/login', async (req, res) => {
+  try {
+    const { username, password } = req.body || {};
+    if (!username?.trim() || !password)
+      return err(res, 'Username and password required');
+
+    const rows = await query(
+      "SELECT * FROM users WHERE username=? AND role='master' AND is_active=1",
+      [username.trim()]
+    );
+    if (!rows.length) return err(res, 'Invalid credentials', 401);
+
+    const user = rows[0];
+    if (!verifyPassword(password, user.password))
+      return err(res, 'Invalid credentials', 401);
+
+    const payload = {
+      id: user.id,
+      username: user.username,
+      role: 'master',
+    };
+    const token = jwt.sign(payload, config.jwtSecret, {
+      expiresIn: config.jwtExpiry || '7d',
+    });
+
+    await writeLog('INFO', `Master '${username}' logged in`, 'Auth');
+    return ok(res, { token, name: user.name, username: user.username }, 'Login successful');
+  } catch (e) {
+    return err(res, e.message, 500);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  1. GET /api/master/config
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/config', masterRequired, async (req, res) => {
   try {
     const rows = await query('SELECT `key`, value FROM app_config');
@@ -21,7 +67,9 @@ router.get('/config', masterRequired, async (req, res) => {
   }
 });
 
-// ── 2. POST /api/master/config ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  2. POST /api/master/config
+// ══════════════════════════════════════════════════════════════════════════════
 router.post('/config', masterRequired, async (req, res) => {
   try {
     const body = req.body || {};
@@ -50,7 +98,9 @@ router.post('/config', masterRequired, async (req, res) => {
   }
 });
 
-// ── 3. DELETE /api/master/config/:key ────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  3. DELETE /api/master/config/:key
+// ══════════════════════════════════════════════════════════════════════════════
 router.delete('/config/:key', masterRequired, async (req, res) => {
   try {
     const [result] = await (await (require('../config/db').getPool()))
@@ -63,7 +113,9 @@ router.delete('/config/:key', masterRequired, async (req, res) => {
   }
 });
 
-// ── 4. GET /api/master/super-admins ──────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  4. GET /api/master/super-admins
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/super-admins', masterRequired, async (req, res) => {
   try {
     const rows = await query(`
@@ -79,17 +131,17 @@ router.get('/super-admins', masterRequired, async (req, res) => {
     cfgRows.forEach(r => { cfg[r.key] = r.value; });
 
     return ok(res, rows.map(r => ({
-      id:          r.id,
-      name:        r.name,
-      username:    r.username,
-      isActive:    Boolean(r.is_active),
-      createdAt:   r.created_at,
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      isActive: Boolean(r.is_active),
+      createdAt: toISO(r.created_at),
       adminsUnder: r.admins_under,
       electionInfo: {
-        state:        cfg.state || '',
+        state: cfg.state || '',
         electionYear: cfg.electionYear || '',
         electionDate: cfg.electionDate || '',
-        phase:        cfg.phase || '',
+        phase: cfg.phase || '',
       },
     })));
   } catch (e) {
@@ -97,12 +149,15 @@ router.get('/super-admins', masterRequired, async (req, res) => {
   }
 });
 
-// ── 5. POST /api/master/super-admins ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  5. POST /api/master/super-admins
+//     ✅ district field added — was missing from JS, required in Python
+// ══════════════════════════════════════════════════════════════════════════════
 router.post('/super-admins', masterRequired, async (req, res) => {
   try {
-    const { name, username, password } = req.body || {};
-    if (!name?.trim() || !username?.trim() || !password)
-      return err(res, 'name, username and password are required');
+    const { name, username, password, district } = req.body || {};
+    if (!name?.trim() || !username?.trim() || !password || !district?.trim())
+      return err(res, 'name, username, password and district are required');
     if (password.length < 6) return err(res, 'Password must be at least 6 characters');
 
     const existing = await query('SELECT id FROM users WHERE username=?', [username.trim()]);
@@ -110,17 +165,24 @@ router.post('/super-admins', masterRequired, async (req, res) => {
 
     const pool = await require('../config/db').getPool();
     const [result] = await pool.execute(
-      "INSERT INTO users (name, username, password, role, is_active, created_by) VALUES (?,?,?,'super_admin',1,?)",
-      [name.trim(), username.trim(), hashPassword(password), req.user.id]
+      "INSERT INTO users (name, username, password, role, district, is_active, created_by) VALUES (?,?,?,'super_admin',?,1,?)",
+      [name.trim(), username.trim(), hashPassword(password), district.trim(), req.user.id]
     );
     await writeLog('INFO', `Super Admin '${name}' created by master`, 'Auth');
-    return ok(res, { id: result.insertId, name: name.trim(), username: username.trim() }, 'Super Admin created', 201);
+    return ok(res, {
+      id: result.insertId,
+      name: name.trim(),
+      username: username.trim(),
+      district: district.trim(),
+    }, 'Super Admin created', 201);
   } catch (e) {
     return err(res, e.message, 500);
   }
 });
 
-// ── 6. GET /api/master/super-admins/:id ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  6. GET /api/master/super-admins/:id
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/super-admins/:id', masterRequired, async (req, res) => {
   try {
     const rows = await query(
@@ -129,13 +191,21 @@ router.get('/super-admins/:id', masterRequired, async (req, res) => {
     );
     if (!rows.length) return err(res, 'Super Admin not found', 404);
     const r = rows[0];
-    return ok(res, { id: r.id, name: r.name, username: r.username, isActive: Boolean(r.is_active), createdAt: r.created_at });
+    return ok(res, {
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      isActive: Boolean(r.is_active),
+      createdAt: toISO(r.created_at),
+    });
   } catch (e) {
     return err(res, e.message, 500);
   }
 });
 
-// ── 7. PUT /api/master/super-admins/:id ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  7. PUT /api/master/super-admins/:id
+// ══════════════════════════════════════════════════════════════════════════════
 router.put('/super-admins/:id', masterRequired, async (req, res) => {
   try {
     const { name, username } = req.body || {};
@@ -156,7 +226,9 @@ router.put('/super-admins/:id', masterRequired, async (req, res) => {
   }
 });
 
-// ── 8. DELETE /api/master/super-admins/:id ───────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  8. DELETE /api/master/super-admins/:id
+// ══════════════════════════════════════════════════════════════════════════════
 router.delete('/super-admins/:id', masterRequired, async (req, res) => {
   try {
     const id = req.params.id;
@@ -172,7 +244,9 @@ router.delete('/super-admins/:id', masterRequired, async (req, res) => {
   }
 });
 
-// ── 9. PATCH /api/master/super-admins/:id/status ─────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  9. PATCH /api/master/super-admins/:id/status
+// ══════════════════════════════════════════════════════════════════════════════
 router.patch('/super-admins/:id/status', masterRequired, async (req, res) => {
   try {
     const { isActive } = req.body || {};
@@ -190,7 +264,9 @@ router.patch('/super-admins/:id/status', masterRequired, async (req, res) => {
   }
 });
 
-// ── 10. PATCH /api/master/super-admins/:id/reset-password ────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  10. PATCH /api/master/super-admins/:id/reset-password
+// ══════════════════════════════════════════════════════════════════════════════
 router.patch('/super-admins/:id/reset-password', masterRequired, async (req, res) => {
   try {
     const { password } = req.body || {};
@@ -207,7 +283,9 @@ router.patch('/super-admins/:id/reset-password', masterRequired, async (req, res
   }
 });
 
-// ── 11. GET /api/master/admins ────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  11. GET /api/master/admins
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/admins', masterRequired, async (req, res) => {
   try {
     const rows = await query(`
@@ -220,13 +298,13 @@ router.get('/admins', masterRequired, async (req, res) => {
       ORDER BY u.created_at DESC
     `);
     return ok(res, rows.map(r => ({
-      id:             r.id,
-      name:           r.name,
-      username:       r.username,
-      district:       r.district || '',
-      isActive:       Boolean(r.is_active),
-      createdAt:      r.created_at,
-      createdBy:      r.created_by_name || 'master',
+      id: r.id,
+      name: r.name,
+      username: r.username,
+      district: r.district || '',
+      isActive: Boolean(r.is_active),
+      createdAt: toISO(r.created_at),
+      createdBy: r.created_by_name || 'master',
       superZoneCount: r.super_zone_count,
     })));
   } catch (e) {
@@ -234,7 +312,9 @@ router.get('/admins', masterRequired, async (req, res) => {
   }
 });
 
-// ── 12. POST /api/master/admins ───────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  12. POST /api/master/admins
+// ══════════════════════════════════════════════════════════════════════════════
 router.post('/admins', masterRequired, async (req, res) => {
   try {
     const { name, username, district, password } = req.body || {};
@@ -257,7 +337,9 @@ router.post('/admins', masterRequired, async (req, res) => {
   }
 });
 
-// ── 13. PUT /api/master/admins/:id ────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  13. PUT /api/master/admins/:id
+// ══════════════════════════════════════════════════════════════════════════════
 router.put('/admins/:id', masterRequired, async (req, res) => {
   try {
     const { name, username, district } = req.body || {};
@@ -277,7 +359,9 @@ router.put('/admins/:id', masterRequired, async (req, res) => {
   }
 });
 
-// ── 14. DELETE /api/master/admins/:id ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  14. DELETE /api/master/admins/:id
+// ══════════════════════════════════════════════════════════════════════════════
 router.delete('/admins/:id', masterRequired, async (req, res) => {
   try {
     const id = req.params.id;
@@ -292,7 +376,9 @@ router.delete('/admins/:id', masterRequired, async (req, res) => {
   }
 });
 
-// ── 15. PATCH /api/master/admins/:id/status ───────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  15. PATCH /api/master/admins/:id/status
+// ══════════════════════════════════════════════════════════════════════════════
 router.patch('/admins/:id/status', masterRequired, async (req, res) => {
   try {
     const { isActive } = req.body || {};
@@ -310,7 +396,9 @@ router.patch('/admins/:id/status', masterRequired, async (req, res) => {
   }
 });
 
-// ── 16. PATCH /api/master/admins/:id/reset-password ──────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  16. PATCH /api/master/admins/:id/reset-password
+// ══════════════════════════════════════════════════════════════════════════════
 router.patch('/admins/:id/reset-password', masterRequired, async (req, res) => {
   try {
     const { password } = req.body || {};
@@ -327,7 +415,9 @@ router.patch('/admins/:id/reset-password', masterRequired, async (req, res) => {
   }
 });
 
-// ── 17. GET /api/master/overview ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  17. GET /api/master/overview
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/overview', masterRequired, async (req, res) => {
   try {
     const [[superAdmins], [admins], [staff], [booths], [duties], cfgRows] = await Promise.all([
@@ -342,15 +432,15 @@ router.get('/overview', masterRequired, async (req, res) => {
     cfgRows.forEach(r => { cfg[r.key] = r.value; });
     return ok(res, {
       totalSuperAdmins: superAdmins.cnt,
-      totalAdmins:      admins.cnt,
-      totalStaff:       staff.cnt,
-      totalBooths:      booths.cnt,
-      assignedDuties:   duties.cnt,
+      totalAdmins: admins.cnt,
+      totalStaff: staff.cnt,
+      totalBooths: booths.cnt,
+      assignedDuties: duties.cnt,
       electionInfo: {
-        state:        cfg.state || 'Not set',
+        state: cfg.state || 'Not set',
         electionYear: cfg.electionYear || 'Not set',
         electionDate: cfg.electionDate || 'Not set',
-        phase:        cfg.phase || 'Not set',
+        phase: cfg.phase || 'Not set',
       },
     });
   } catch (e) {
@@ -358,20 +448,22 @@ router.get('/overview', masterRequired, async (req, res) => {
   }
 });
 
-// ── 18. GET /api/master/system-stats ─────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  18. GET /api/master/system-stats
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/system-stats', masterRequired, async (req, res) => {
   try {
     const [sizeRow] = await query(`
       SELECT ROUND(SUM(data_length+index_length)/1024/1024,2) AS size_mb
       FROM information_schema.tables WHERE table_schema=DATABASE()
     `);
-    const tables = ['users','duty_assignments','matdan_kendra','matdan_sthal','sectors','zones','super_zones','gram_panchayats'];
+    const tables = ['users', 'duty_assignments', 'matdan_kendra', 'matdan_sthal', 'sectors', 'zones', 'super_zones', 'gram_panchayats'];
     let total = 0;
     for (const t of tables) {
       try {
         const [r] = await query(`SELECT COUNT(*) AS cnt FROM \`${t}\``);
         total += r.cnt;
-      } catch {}
+      } catch { }
     }
     const [backupRow] = await query(
       "SELECT time FROM system_logs WHERE module='DB' AND message LIKE 'Database backup%' ORDER BY time DESC LIMIT 1"
@@ -386,22 +478,24 @@ router.get('/system-stats', masterRequired, async (req, res) => {
       uptime = `${d}d ${h}h ${m}m`;
     }
     return ok(res, {
-      dbSize:       sizeRow?.size_mb ? `${sizeRow.size_mb} MB` : 'N/A',
+      dbSize: sizeRow?.size_mb ? `${sizeRow.size_mb} MB` : 'N/A',
       totalRecords: total,
       uptime,
-      lastBackup:   backupRow?.time ? new Date(backupRow.time).toLocaleString() : 'Never',
-      backend:      'Node.js/Express',
+      lastBackup: backupRow?.time ? new Date(backupRow.time).toLocaleString() : 'Never',
+      backend: 'Node.js/Express',
     });
   } catch (e) {
     return err(res, e.message, 500);
   }
 });
 
-// ── 19. GET /api/master/logs ──────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  19. GET /api/master/logs
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/logs', masterRequired, async (req, res) => {
   try {
-    const level  = (req.query.level || 'ALL').toUpperCase();
-    const limit  = Math.min(parseInt(req.query.limit, 10) || 100, 500);
+    const level = (req.query.level || 'ALL').toUpperCase();
+    const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
     const offset = Math.max(0, parseInt(req.query.offset, 10) || 0);
 
     const rows = level === 'ALL'
@@ -409,18 +503,20 @@ router.get('/logs', masterRequired, async (req, res) => {
       : await query(`SELECT * FROM system_logs WHERE level=? ORDER BY time DESC LIMIT ${limit} OFFSET ${offset}`, [level]);
 
     return ok(res, rows.map(r => ({
-      id:      r.id,
-      level:   r.level,
+      id: r.id,
+      level: r.level,
       message: r.message,
-      module:  r.module,
-      time:    r.time,
+      module: r.module,
+      time: toISO(r.time),
     })));
   } catch (e) {
     return err(res, e.message, 500);
   }
 });
 
-// ── 20. POST /api/master/db/backup ───────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  20. POST /api/master/db/backup
+// ══════════════════════════════════════════════════════════════════════════════
 router.post('/db/backup', masterRequired, async (req, res) => {
   try {
     const backupDir = config.backup.backupDir;
@@ -447,13 +543,17 @@ router.post('/db/backup', masterRequired, async (req, res) => {
   }
 });
 
-// ── 21. POST /api/master/db/flush-cache ──────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  21. POST /api/master/db/flush-cache
+// ══════════════════════════════════════════════════════════════════════════════
 router.post('/db/flush-cache', masterRequired, async (req, res) => {
   await writeLog('INFO', 'Cache flushed by master', 'System');
   return ok(res, null, 'Cache flushed successfully');
 });
 
-// ── 22. POST /api/master/migrate ──────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  22. POST /api/master/migrate
+// ══════════════════════════════════════════════════════════════════════════════
 router.post('/migrate', masterRequired, async (req, res) => {
   try {
     const { initDb } = require('../config/db');
@@ -465,7 +565,9 @@ router.post('/migrate', masterRequired, async (req, res) => {
   }
 });
 
-// ── 23. PATCH /api/master/change-password ────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  23. PATCH /api/master/change-password
+// ══════════════════════════════════════════════════════════════════════════════
 router.patch('/change-password', masterRequired, async (req, res) => {
   try {
     const { oldPassword, newPassword } = req.body || {};
@@ -485,7 +587,9 @@ router.patch('/change-password', masterRequired, async (req, res) => {
   }
 });
 
-// ── 24. GET /api/master/ping ──────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  24. GET /api/master/ping
+// ══════════════════════════════════════════════════════════════════════════════
 router.get('/ping', (req, res) => ok(res, 'pong'));
 
 module.exports = router;
