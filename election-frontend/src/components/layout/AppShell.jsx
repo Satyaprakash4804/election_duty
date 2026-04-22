@@ -3,7 +3,8 @@ import { useNavigate } from 'react-router-dom';
 import {
   LayoutDashboard, Users, GitBranch, Vote, MapPin, LogOut,
   ChevronRight, Menu, X, Key, FileText, Group, Shield,
-  Activity, Settings
+  Activity, Settings,
+  TableOfContents
 } from 'lucide-react';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
@@ -11,28 +12,30 @@ import toast from 'react-hot-toast';
 const NAV_BY_ROLE = {
   ADMIN: [
     { label: 'Dashboard', icon: LayoutDashboard, path: 'dashboard' },
-    { label: 'Staff',     icon: Users,           path: 'staff' },
-    { label: 'Structure', icon: GitBranch,        path: 'structure' },
-    { label: 'Duties',    icon: Vote,             path: 'duties' },
-    { label: 'Booths',    icon: MapPin,           path: 'booths' },
+    { label: 'Staff', icon: Users, path: 'staff' },
+    { label: 'Structure', icon: GitBranch, path: 'structure' },
+    { label: 'Duties', icon: Vote, path: 'duties' },
+    { label: 'Booths', icon: MapPin, path: 'booths' },
+    { label: 'Manual Page', icon: TableOfContents , path: 'manual_page' },
   ],
   SUPER_ADMIN: [
-    { label: 'Overview',  icon: LayoutDashboard, path: 'overview' },
-    { label: 'Admins',    icon: Shield,          path: 'admins' },
-    { label: 'Form Data', icon: FileText,        path: 'formdata' },
+    { label: 'Overview', icon: LayoutDashboard, path: 'overview' },
+    { label: 'Admins', icon: Shield, path: 'admins' },
+    { label: 'Form Data', icon: FileText, path: 'formdata' },
+    // { label: 'Manual Page', icon: TableOfContents , path: 'manual_page' },
   ],
   MASTER: [
-    { label: 'Overview',     icon: LayoutDashboard, path: 'overview' },
-    { label: 'Super Admins', icon: Shield,          path: 'superadmins' },
-    { label: 'Admins',       icon: Users,           path: 'admins' },
-    { label: 'System Logs',  icon: Activity,        path: 'logs' },
+    { label: 'Overview', icon: LayoutDashboard, path: 'overview' },
+    { label: 'Super Admins', icon: Shield, path: 'superadmins' },
+    { label: 'Admins', icon: Users, path: 'admins' },
+    { label: 'System Logs', icon: Activity, path: 'logs' },
   ],
   STAFF: [
     { label: 'Dashboard', icon: LayoutDashboard, path: 'dashboard' },
-    { label: 'My Duty',   icon: MapPin,          path: 'duty' },
-    { label: 'Co-Staff',  icon: Group,           path: 'costaff' },
-    { label: 'Duty Card', icon: FileText,        path: 'dutycard' },
-    { label: 'Password',  icon: Key,             path: 'password' },
+    { label: 'My Duty', icon: MapPin, path: 'duty' },
+    { label: 'Co-Staff', icon: Group, path: 'costaff' },
+    { label: 'Duty Card', icon: FileText, path: 'dutycard' },
+    { label: 'Password', icon: Key, path: 'password' },
   ],
 };
 
@@ -60,21 +63,40 @@ export default function AppShell({ children, activePage, onNavigate }) {
   const Sidebar = () => (
     <aside className="hidden lg:flex flex-col w-52 shrink-0 h-screen sticky top-0"
       style={{ background: 'var(--dark)' }}>
+
       {/* Logo */}
-      <div className="px-4 py-4 border-b" style={{ borderColor: 'rgba(212,168,67,0.2)' }}>
+      <div className="px-4 pb-3 border-b flex justify-center mt-3" style={{ borderColor: 'rgba(212,168,67,0.2)' }}>
         <div className="flex items-center gap-2.5">
-          <div className="w-9 h-9 rounded-full flex items-center justify-center font-bold text-sm"
-            style={{ background: 'var(--primary)', color: 'var(--border)' }}>
-            UP
-          </div>
           <div>
-            <p className="text-xs font-bold leading-tight" style={{ color: 'var(--border)' }}>
+            <p className="text-lg font-bold leading-tight" style={{ color: 'var(--border)' }}>
               Election Cell
             </p>
-            <p className="text-[10px]" style={{ color: 'rgba(212,168,67,0.6)' }}>
+            <p className="text-[10px] text-center text-lg" style={{ color: 'rgba(212,168,67,0.6)' }}>
               उ.प्र. निर्वाचन कक्ष
             </p>
           </div>
+        </div>
+      </div>
+      <div className="mb-3 px-1 flex flex-col items-center gap-2 my-4 border-b border-[#d4a84333]">
+        <div className='flex gap-2'>
+          <div className="w-12 h-12 rounded-full flex items-center justify-center font-bold text-sm"
+            style={{ background: 'var(--primary)', color: 'var(--border)' }}>
+            UP
+          </div>
+          <img
+            src="/IPS.jpeg"
+            alt="IPS"
+            className="w-12 h-12 rounded-full object-cover border"
+            style={{ borderColor: 'rgba(212,168,67,0.4)' }}
+          /></div>
+
+        <div className="min-w-0">
+          <p className="text-white text-xs font-semibold truncate">
+            Suraj Kumar Rai
+          </p>
+          <p className="text-[10px] text-center text-lg" style={{ color: 'rgba(212,168,67,0.7)' }}>
+            IPS
+          </p>
         </div>
       </div>
 
@@ -93,6 +115,7 @@ export default function AppShell({ children, activePage, onNavigate }) {
           );
         })}
       </nav>
+
 
       {/* User + Logout */}
       <div className="border-t px-3 py-3" style={{ borderColor: 'rgba(212,168,67,0.2)' }}>

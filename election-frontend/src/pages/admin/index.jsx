@@ -5,6 +5,7 @@ import StaffPage from './StaffPage';
 import StructurePage from './StructurePage';
 import DutyCardPage from './DutiesPage';
 import BoothPage from './BoothsPage';
+import DynamicTablesPage from '../Dynamictablespage';
 
 const PAGES = {
   dashboard: AdminDashboardPage,
@@ -12,6 +13,7 @@ const PAGES = {
   structure: StructurePage,
   duties: DutyCardPage,
   booths: BoothPage,
+  manual_page: DynamicTablesPage,
 };
 
 export default function AdminDashboard() {

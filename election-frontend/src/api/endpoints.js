@@ -88,7 +88,7 @@ export const masterApi = {
   getLogs: (params) => api.get('/master/logs', { params }),
   getSystemStats: () => api.get('/master/system-stats'),
   getConfig: () => api.get('/master/config'),
-  updateConfig: (data) => api.put('/master/config', data),
+  updateConfig: (data) => api.post('/master/config', data),
 };
 
 // ── STAFF ─────────────────────────────────────────────────────────────────────

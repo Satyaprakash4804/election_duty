@@ -5,6 +5,7 @@ import { StatCard, Shimmer, Modal, SensChip } from '../../components/common';
 import { SENSITIVITY_CONFIG, RANKS } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 import MapViewButton from '../../components/common/Mapviewbutton';
+import { useNavigate } from 'react-router-dom';
 
 const SENSITIVITIES = ['A++', 'A', 'B', 'C'];
 const RANK_ROWS = [
@@ -86,6 +87,7 @@ function ManakModal({ sensitivity, initialRules, onSave, onClose }) {
 
 // ── Main Dashboard ────────────────────────────────────────────────────────────
 export default function AdminDashboardPage() {
+  const nav = useNavigate();
   const [stats, setStats] = useState(null);
   const [loadingStats, setLoadingStats] = useState(true);
   const [rules, setRules] = useState({ 'A++': {}, A: {}, B: {}, C: {} });
@@ -157,8 +159,22 @@ export default function AdminDashboardPage() {
         }
       </div>
 
+      {/* Goswara Banner */}
+      <div onClick={()=>nav('/goswara-page')} className="card p-4 mb-4 cursor-pointer hover:shadow-lg transition-shadow"
+        style={{ background: 'linear-gradient(135deg, var(--dark) 0%, #C4A30A 100%)' }}>
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-xs font-semibold mb-0.5" style={{ color: 'var(--border)' }}>
+              Goswara Report
+            </p>
+            <p className="text-white/70 text-xs">Summary Report of Booth Staff</p>
+          </div>
+          <ChevronRight size={20} style={{ color: 'var(--border)' }} />
+        </div>
+      </div>
+
       {/* Hierarchy Banner */}
-      <div className="card p-4 mb-4 cursor-pointer hover:shadow-lg transition-shadow"
+      <div onClick={()=>nav('/heirarchy-report')} className="card p-4 mb-4 cursor-pointer hover:shadow-lg transition-shadow"
         style={{ background: 'linear-gradient(135deg, var(--dark) 0%, #3a2400 100%)' }}>
         <div className="flex items-center justify-between">
           <div>
