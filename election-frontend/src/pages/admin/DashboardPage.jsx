@@ -16,7 +16,7 @@ const RANK_ROWS = [
   { en: 'SI', hi: 'उप निरीक्षक', armed: false },
   { en: 'SI_Arms', hi: 'उप निरीक्षक (आर्म्स)', armed: true },
   { en: 'Head Constable', hi: 'मुख्य आरक्षी', armed: false },
-  { en: 'HC_Arms', hi: 'मुख्य आरक्षी (आर्म्स)', armed: true },
+  { en: 'Head Constable_Arms', hi: 'मुख्य आरक्षी (आर्म्स)', armed: true },
   { en: 'Constable', hi: 'आरक्षी', armed: false },
   { en: 'Constable_Arms', hi: 'आरक्षी (आर्म्स)', armed: true },
 ];

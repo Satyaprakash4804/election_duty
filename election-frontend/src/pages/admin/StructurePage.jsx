@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { adminApi } from '../../api/endpoints';
 import apiClient from '../../api/client';          // ← axios instance
-import { RANKS, debounce,UP_DISTRICTS  } from '../../utils/helpers';
+import { RANKS, debounce, UP_DISTRICTS } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../../store/authStore';
 
