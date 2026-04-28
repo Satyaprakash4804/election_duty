@@ -2131,144 +2131,6 @@ def debug_staff():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  RULES — DISTRICT SHARING
-#  Rules are saved per admin_id but read from ALL district admins combined.
-#  This means if Admin 1 sets rules for "A", Admin 2 in same district sees them.
-#  When saving, always save under current admin's own ID (no conflict).
-# ══════════════════════════════════════════════════════════════════════════════
-
-@admin_bp.route("/rules", methods=["POST"])
-@admin_required
-def save_rules():
-    body        = request.get_json() or {}
-    sensitivity = (body.get("sensitivity") or "").strip()
-    rules       = body.get("rules", [])
-
-    if not sensitivity:
-        return err("sensitivity required")
-    if sensitivity not in ("A++", "A", "B", "C"):
-        return err("sensitivity must be one of: A++, A, B, C")
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS booth_staff_rules (
-                    id             INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id       INT  NOT NULL,
-                    sensitivity    ENUM('A++','A','B','C') NOT NULL,
-                    user_rank      VARCHAR(100) NOT NULL,
-                    is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
-                    required_count INT          NOT NULL DEFAULT 1,
-                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_admin       (admin_id),
-                    INDEX idx_sensitivity (sensitivity),
-                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-            cur.execute("""
-                SELECT COUNT(*) AS cnt FROM information_schema.columns
-                WHERE table_schema = DATABASE()
-                  AND table_name   = 'booth_staff_rules'
-                  AND column_name  = 'is_armed'
-            """)
-            if cur.fetchone()["cnt"] == 0:
-                cur.execute("ALTER TABLE booth_staff_rules ADD COLUMN is_armed TINYINT(1) NOT NULL DEFAULT 0 AFTER user_rank")
-
-            # DISTRICT SHARING: when saving rules, delete for ALL district admins
-            # and save fresh under current admin_id only.
-            # This prevents duplicates when district admins each save rules.
-            d_ids = _district_admin_ids()
-            d_ph, d_params = _district_placeholder(d_ids)
-            cur.execute(
-                f"DELETE FROM booth_staff_rules WHERE admin_id IN ({d_ph}) AND sensitivity=%s",
-                d_params + [sensitivity]
-            )
-
-            # Save new rules under current admin_id
-            for r in rules:
-                rank = str(r.get("rank", "")).strip()
-                if not rank:
-                    continue
-                count = int(r.get("count") or r.get("required_count") or 1)
-                is_armed = 1 if (
-                    r.get("isArmed") in [True, 1, "1", "true"] or
-                    r.get("is_armed") in [True, 1, "1", "true"]
-                ) else 0
-                cur.execute("""
-                    INSERT INTO booth_staff_rules
-                        (admin_id, sensitivity, user_rank, is_armed, required_count)
-                    VALUES (%s, %s, %s, %s, %s)
-                """, (_admin_id(), sensitivity, rank, is_armed, count))
-
-        conn.commit()
-
-    except Exception as e:
-        try: conn.rollback()
-        except: pass
-        write_log("ERROR", f"save_rules error: {e}", "Rules")
-        return err(f"Save failed: {str(e)}", 500)
-    finally:
-        conn.close()
-
-    write_log("INFO", f"Rules saved: sensitivity={sensitivity}, {len(rules)} rules by admin {_admin_id()}", "Rules")
-    return ok(None, f"{sensitivity} rules saved")
-
-
-@admin_bp.route("/rules", methods=["GET"])
-@admin_required
-def get_rules():
-    sensitivity = (request.args.get("sensitivity") or "").strip()
-
-    # DISTRICT SHARING: read rules from ALL admins in same district
-    d_ids = _district_admin_ids()
-    d_ph, d_params = _district_placeholder(d_ids)
-
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            if sensitivity:
-                cur.execute(f"""
-                    SELECT sensitivity,
-                           user_rank AS `rank`,
-                           is_armed,
-                           required_count AS count
-                    FROM booth_staff_rules
-                    WHERE admin_id IN ({d_ph}) AND sensitivity = %s
-                    ORDER BY id
-                """, d_params + [sensitivity])
-            else:
-                cur.execute(f"""
-                    SELECT sensitivity,
-                           user_rank AS `rank`,
-                           is_armed,
-                           required_count AS count
-                    FROM booth_staff_rules
-                    WHERE admin_id IN ({d_ph})
-                    ORDER BY FIELD(sensitivity,'A++','A','B','C'), id
-                """, d_params)
-
-            rows = cur.fetchall()
-
-    except Exception as e:
-        print("GET RULES ERROR:", e)
-        return ok([])
-    finally:
-        conn.close()
-
-    result = []
-    for r in rows:
-        result.append({
-            "rank":        str(r["rank"]),
-            "count":       int(r["count"]),
-            "isArmed":     bool(r["is_armed"]),
-            "sensitivity": r["sensitivity"]
-        })
-
-    return ok(result)
-
-
-# ══════════════════════════════════════════════════════════════════════════════
 #  AUTO-ASSIGN — uses district-wide rules
 # ══════════════════════════════════════════════════════════════════════════════
 
@@ -2691,3 +2553,267 @@ def get_admin_config():
     finally:
         conn.close()
     return ok({r["key"]: r["value"] for r in rows})
+
+# ══════════════════════════════════════════════════════════════════════════
+#  मानक v2 — BOOTH RULES (per sensitivity × booth count)
+# ══════════════════════════════════════════════════════════════════════════
+ 
+
+VALID_SENS = ("A++", "A", "B", "C")
+ 
+ 
+def _serialize_booth_rule(r):
+    return {
+        "boothCount":        r["booth_count"],
+        "siArmedCount":      r["si_armed_count"],
+        "siUnarmedCount":    r["si_unarmed_count"],
+        "hcArmedCount":      r["hc_armed_count"],
+        "hcUnarmedCount":    r["hc_unarmed_count"],
+        "constArmedCount":   r["const_armed_count"],
+        "constUnarmedCount": r["const_unarmed_count"],
+        "auxForceCount":     r["aux_force_count"],
+        "pacCount":          float(r["pac_count"] or 0),
+    }
+ 
+ 
+@admin_bp.route("/booth-rules", methods=["GET"])
+@admin_required
+def get_booth_rules():
+    """
+    Returns booth rules grouped by sensitivity.
+    Optional query: ?sensitivity=A++ to fetch only one.
+    """
+    sens = (request.args.get("sensitivity") or "").strip()
+ 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            if sens:
+                if sens not in VALID_SENS:
+                    return err("invalid sensitivity")
+                cur.execute(f"""
+                    SELECT * FROM booth_rules
+                    WHERE admin_id IN ({d_ph}) AND sensitivity = %s
+                    ORDER BY booth_count
+                """, d_params + [sens])
+            else:
+                cur.execute(f"""
+                    SELECT * FROM booth_rules
+                    WHERE admin_id IN ({d_ph})
+                    ORDER BY FIELD(sensitivity,'A++','A','B','C'), booth_count
+                """, d_params)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+ 
+    grouped = {"A++": [], "A": [], "B": [], "C": []}
+    for r in rows:
+        grouped[r["sensitivity"]].append(_serialize_booth_rule(r))
+    return ok(grouped)
+ 
+ 
+@admin_bp.route("/booth-rules", methods=["POST"])
+@admin_required
+def save_booth_rules():
+    """
+    Body:
+    {
+      "sensitivity": "A++",
+      "rules": [
+        {
+          "boothCount": 1,
+          "siArmedCount": 0, "siUnarmedCount": 0,
+          "hcArmedCount": 1, "hcUnarmedCount": 0,
+          "constArmedCount": 2, "constUnarmedCount": 0,
+          "auxForceCount": 4, "pacCount": 0
+        },
+        ...
+      ]
+    }
+    """
+    body  = request.get_json() or {}
+    sens  = (body.get("sensitivity") or "").strip()
+    rules = body.get("rules", [])
+ 
+    if sens not in VALID_SENS:
+        return err("sensitivity must be A++, A, B, or C")
+    if not isinstance(rules, list):
+        return err("rules must be a list")
+ 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                f"DELETE FROM booth_rules WHERE admin_id IN ({d_ph}) AND sensitivity=%s",
+                d_params + [sens]
+            )
+ 
+            for r in rules:
+                bc = int(r.get("boothCount") or 0)
+                if bc < 1 or bc > 15:
+                    continue
+ 
+                cur.execute("""
+                    INSERT INTO booth_rules
+                    (admin_id, sensitivity, booth_count,
+                     si_armed_count, si_unarmed_count,
+                     hc_armed_count, hc_unarmed_count,
+                     const_armed_count, const_unarmed_count,
+                     aux_force_count, pac_count)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    _admin_id(), sens, bc,
+                    int(r.get("siArmedCount")      or 0),
+                    int(r.get("siUnarmedCount")    or 0),
+                    int(r.get("hcArmedCount")      or 0),
+                    int(r.get("hcUnarmedCount")    or 0),
+                    int(r.get("constArmedCount")   or 0),
+                    int(r.get("constUnarmedCount") or 0),
+                    int(r.get("auxForceCount")     or 0),
+                    float(r.get("pacCount")        or 0),
+                ))
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except: pass
+        write_log("ERROR", f"save_booth_rules: {e}", "Rules")
+        return err(f"Save failed: {e}", 500)
+    finally:
+        conn.close()
+ 
+    write_log("INFO", f"Booth rules saved: {sens}, {len(rules)} rows by admin {_admin_id()}", "Rules")
+    return ok(None, f"{sens} मानक saved")
+ 
+ 
+# ══════════════════════════════════════════════════════════════════════════
+#  मानक v2 — DISTRICT-LEVEL RULES (जनपदीय कानून व्यवस्था)
+# ══════════════════════════════════════════════════════════════════════════
+ 
+DEFAULT_DISTRICT_DUTIES = [
+    ("cluster_mobile",        "क्लस्टर मोबाईल",                  10),
+    ("thana_mobile",          "थाना मोबाईल",                     20),
+    ("thana_reserve",         "थाना रिजर्व",                     30),
+    ("thana_extra_mobile",    "थाना अतिरिक्त मोबाईल",            40),
+    ("sector_pol_mag_mobile", "सैक्टर पुलिस / मजिस्ट्रेट मोबाईल",  50),
+    ("zonal_pol_mag_mobile",  "जोनल पुलिस / मजिस्ट्रेट मोबाईल",    60),
+    ("sdm_co_mobile",         "एसडीएम / सीओ मोबाईल",             70),
+    ("chowki_mobile",         "चौकी मोबाईल",                     80),
+    ("barrier_picket",        "बैरियर / पिकैट",                  90),
+    ("evm_security",          "ईवीएम सुरक्षा",                  100),
+    ("adm_sp_mobile",         "एडीएम / एसपी मोबाईल",            110),
+    ("dm_sp_mobile",          "डीएम / एसपी मोबाईल",             120),
+    ("observer_security",     "पर्यवेक्षक सुरक्षा",               130),
+    ("hq_reserve",            "मुख्यालय रिजर्व",                 140),
+]
+ 
+ 
+def _serialize_district_rule(r):
+    return {
+        "dutyType":          r["duty_type"],
+        "dutyLabelHi":       r["duty_label_hi"] or "",
+        "sankhya":           r["sankhya"],
+        "siArmedCount":      r["si_armed_count"],
+        "siUnarmedCount":    r["si_unarmed_count"],
+        "hcArmedCount":      r["hc_armed_count"],
+        "hcUnarmedCount":    r["hc_unarmed_count"],
+        "constArmedCount":   r["const_armed_count"],
+        "constUnarmedCount": r["const_unarmed_count"],
+        "auxForceCount":     r["aux_force_count"],
+        "pacCount":          float(r["pac_count"] or 0),
+        "sortOrder":         r["sort_order"],
+    }
+ 
+ 
+@admin_bp.route("/district-rules", methods=["GET"])
+@admin_required
+def get_district_rules():
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT * FROM district_rules
+                WHERE admin_id IN ({d_ph})
+                ORDER BY sort_order, id
+            """, d_params)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+ 
+    if rows:
+        return ok([_serialize_district_rule(r) for r in rows])
+ 
+    return ok([{
+        "dutyType":          dt,
+        "dutyLabelHi":       label,
+        "sankhya":           0,
+        "siArmedCount":      0, "siUnarmedCount":    0,
+        "hcArmedCount":      0, "hcUnarmedCount":    0,
+        "constArmedCount":   0, "constUnarmedCount": 0,
+        "auxForceCount":     0, "pacCount":          0.0,
+        "sortOrder":         order,
+    } for dt, label, order in DEFAULT_DISTRICT_DUTIES])
+ 
+ 
+@admin_bp.route("/district-rules", methods=["POST"])
+@admin_required
+def save_district_rules():
+    body  = request.get_json() or {}
+    rules = body.get("rules", [])
+    if not isinstance(rules, list):
+        return err("rules must be a list")
+ 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"DELETE FROM district_rules WHERE admin_id IN ({d_ph})", d_params)
+ 
+            for r in rules:
+                duty_type = (r.get("dutyType") or "").strip()
+                if not duty_type:
+                    continue
+                cur.execute("""
+                    INSERT INTO district_rules
+                    (admin_id, duty_type, duty_label_hi, sankhya,
+                     si_armed_count, si_unarmed_count,
+                     hc_armed_count, hc_unarmed_count,
+                     const_armed_count, const_unarmed_count,
+                     aux_force_count, pac_count, sort_order)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                """, (
+                    _admin_id(), duty_type,
+                    (r.get("dutyLabelHi") or "").strip(),
+                    int(r.get("sankhya")             or 0),
+                    int(r.get("siArmedCount")        or 0),
+                    int(r.get("siUnarmedCount")      or 0),
+                    int(r.get("hcArmedCount")        or 0),
+                    int(r.get("hcUnarmedCount")      or 0),
+                    int(r.get("constArmedCount")     or 0),
+                    int(r.get("constUnarmedCount")   or 0),
+                    int(r.get("auxForceCount")       or 0),
+                    float(r.get("pacCount")          or 0),
+                    int(r.get("sortOrder")           or 0),
+                ))
+        conn.commit()
+    except Exception as e:
+        try: conn.rollback()
+        except: pass
+        write_log("ERROR", f"save_district_rules: {e}", "Rules")
+        return err(f"Save failed: {e}", 500)
+    finally:
+        conn.close()
+ 
+    write_log("INFO", f"District rules saved: {len(rules)} rows by admin {_admin_id()}", "Rules")
+    return ok(None, "जनपदीय मानक saved")
+ 

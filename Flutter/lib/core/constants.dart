@@ -1,7 +1,7 @@
 class AppConstants {
   // 🔥 BASE URL (change when deploying)
   // static const String baseUrl = "https://election-duty-api.venus360.in/api";
-  static const String baseUrl = "http://192.168.1.13:5000/api";
+  static const String baseUrl = "http://192.168.1.2:5000/api";
   // 🔐 AUTH
   static const String login = "$baseUrl/login";
 

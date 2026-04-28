@@ -1,4 +1,3 @@
-
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/constants.dart';
@@ -78,7 +77,7 @@ class ApiService {
     }
   }
 
-  // 🔹 PATCH REQUEST ✅ (FIX ADDED)
+  // 🔹 PATCH REQUEST
   static Future<dynamic> patch(String endpoint, Map<String, dynamic> data,
       {String? token}) async {
     final url = Uri.parse("${AppConstants.baseUrl}$endpoint");
@@ -101,16 +100,22 @@ class ApiService {
     }
   }
 
-  // 🔹 DELETE REQUEST
-  static Future<dynamic> delete(String endpoint, {String? token}) async {
+  // ✅ FINAL DELETE METHOD (ONLY ONE)
+  static Future<dynamic> delete(
+    String endpoint, {
+    String? token,
+    Map<String, dynamic>? body,
+  }) async {
     final url = Uri.parse("${AppConstants.baseUrl}$endpoint");
 
     print("🌐 DELETE: $url");
 
     try {
-      final response = await http
-          .delete(url, headers: await _headers(token: token))
-          .timeout(const Duration(seconds: 20));
+      final response = await http.delete(
+        url,
+        headers: await _headers(token: token),
+        body: body != null ? jsonEncode(body) : null,
+      ).timeout(const Duration(seconds: 20));
 
       return _handleResponse(response);
     } catch (e) {
@@ -118,19 +123,17 @@ class ApiService {
     }
   }
 
-  // 🔥 RESPONSE HANDLER (ADVANCED)
+  // 🔥 RESPONSE HANDLER
   static dynamic _handleResponse(http.Response response) {
     final raw = response.body;
 
     print("📡 STATUS: ${response.statusCode}");
     print("📨 RESPONSE: $raw");
 
-    // 🚨 HTML ERROR (wrong URL / backend down)
     if (raw.startsWith("<!DOCTYPE") || raw.startsWith("<html")) {
       throw Exception("❌ Server returned HTML (Check API URL / Server)");
     }
 
-    // 🚨 EMPTY RESPONSE
     if (raw.isEmpty) {
       throw Exception("❌ Empty response from server");
     }
@@ -142,25 +145,22 @@ class ApiService {
       throw Exception("❌ Invalid JSON response");
     }
 
-    // ✅ SUCCESS
     if (response.statusCode >= 200 && response.statusCode < 300) {
       return body;
     }
 
-    // 🔐 UNAUTHORIZED → AUTO LOGOUT
     if (response.statusCode == 401) {
       AuthService.logout();
       throw Exception("🔐 Session expired. Please login again.");
     }
 
-    // ❌ SERVER ERROR
     if (response.statusCode >= 500) {
       throw Exception("🔥 Server error (${response.statusCode})");
     }
 
-    // ❌ CLIENT ERROR
     throw Exception(body["message"] ?? "❌ API Error");
   }
+
   static Future<Map<String, dynamic>> getGoswara() async {
     final token = await AuthService.getToken();
     return await get('/admin/goswara', token: token);
@@ -178,5 +178,3 @@ class ApiService {
     );
   }
 }
-
-

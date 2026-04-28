@@ -54,10 +54,10 @@ void main() async {
   await flutterLocalNotificationsPlugin.initialize(initSettings);
 
   // ── Mappls SDK Keys ─────────────────────
-  MapplsAccountManager.setMapSDKKey("YOUR_KEY");
-  MapplsAccountManager.setRestAPIKey("YOUR_KEY");
-  MapplsAccountManager.setAtlasClientId("YOUR_ID");
-  MapplsAccountManager.setAtlasClientSecret("YOUR_SECRET");
+  MapplsAccountManager.setMapSDKKey("425ddc32f3f0804e17759093b419b7c1");
+  MapplsAccountManager.setRestAPIKey("425ddc32f3f0804e17759093b419b7c1");
+  MapplsAccountManager.setAtlasClientId("96dHZVzsAutM-QgqZkpIgMIElHDAROdmtsJMu1Iyfiq7w3cjgvx0IxST_h0Ks0byMFpNX0VkQMmKgbyCnCMdRQ==");
+  MapplsAccountManager.setAtlasClientSecret("lrFxI-iSEg8l1bHwBPApQm8q7Bti1e6d786Y0tXnzUV8030fiz4xXymqWP0zMDM1VOoZJefcj85eSXJlY7Tm-r4bz_JFSvXS");
   // ────────────────────────────────────────
 
   runApp(const MyApp());

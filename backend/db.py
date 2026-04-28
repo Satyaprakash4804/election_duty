@@ -29,6 +29,7 @@ def create_database_if_not_exists():
 
 # 🔥 CREATE DATABASE FIRST
 create_database_if_not_exists()
+
 # ── Optional connection pool ──────────────────────────────────────────────────
 try:
     from dbutils.pooled_db import PooledDB
@@ -42,7 +43,6 @@ try:
         host=Config.DB_HOST,
         user=Config.DB_USER,
         password=Config.DB_PASS,
-        
         cursorclass=pymysql.cursors.DictCursor,
         autocommit=False,
         charset="utf8mb4",
@@ -78,15 +78,12 @@ except ImportError:
             pass
         return conn
 
+
 # ══════════════════════════════════════════════════════════════════════════════
 #  ENSURE COLUMN — safely adds a column if it doesn't exist
 # ══════════════════════════════════════════════════════════════════════════════
 
 def ensure_column(cur, db_name: str, table: str, column_def: str):
-    """
-    Adds a column to `table` if it doesn't already exist.
-    `column_def` must start with the column name, e.g. "pno VARCHAR(50) DEFAULT NULL"
-    """
     col_name = column_def.strip().split()[0].strip("`")
     cur.execute("""
         SELECT COUNT(*) AS cnt
@@ -99,11 +96,10 @@ def ensure_column(cur, db_name: str, table: str, column_def: str):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  INIT DB — auto-creates database, all tables, all required columns
+#  INIT DB
 # ══════════════════════════════════════════════════════════════════════════════
 
 def init_db():
-    # Connect WITHOUT selecting a database first so we can CREATE it
     conn = pymysql.connect(
         host=Config.DB_HOST,
         user=Config.DB_USER,
@@ -115,20 +111,14 @@ def init_db():
     try:
         with conn.cursor() as cur:
 
-            # ── 1. Create database if needed ──────────────────────────────────
             cur.execute(
                 f"CREATE DATABASE IF NOT EXISTS `{Config.DB_NAME}` "
                 f"CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci"
             )
             cur.execute(f"USE `{Config.DB_NAME}`")
 
-            # ── 2. Session tuning for fast init ───────────────────────────────
             cur.execute("SET SESSION foreign_key_checks = 0")
             cur.execute("SET SESSION unique_checks = 0")
-
-            # ─────────────────────────────────────────────────────────────────
-            #  CREATE TABLES (IF NOT EXISTS)
-            # ─────────────────────────────────────────────────────────────────
 
             # ── users ─────────────────────────────────────────────────────────
             cur.execute("""
@@ -162,14 +152,89 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── app_config ────────────────────────────────────────────────────
-            # Created early so master can populate election details
+            # ── app_config ── (kept for global/non-district settings like maintenanceMode)
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS app_config (
                     `key`      VARCHAR(100) PRIMARY KEY,
                     value      TEXT,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
                                ON UPDATE CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            # ══════════════════════════════════════════════════════════════════
+            #  🆕 election_configs — district-wise, versioned election details
+            # ══════════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS election_configs (
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    district        VARCHAR(100) NOT NULL,
+                    state           VARCHAR(100) NOT NULL DEFAULT '',
+                    election_type   VARCHAR(100) NOT NULL DEFAULT '',
+                    election_name   VARCHAR(200) NOT NULL DEFAULT '',
+                    phase           VARCHAR(50)  NOT NULL DEFAULT '',
+                    election_year   VARCHAR(10)  NOT NULL DEFAULT '',
+                    election_date   DATE         DEFAULT NULL,
+                    pratah_samay    VARCHAR(20)  DEFAULT '',
+                    saya_samay      VARCHAR(20)  DEFAULT '',
+                    instructions    TEXT,
+                    is_active       TINYINT(1)   NOT NULL DEFAULT 1,
+                    is_archived     TINYINT(1)   NOT NULL DEFAULT 0,
+                    archived_at     DATETIME     DEFAULT NULL,
+                    created_by      INT          DEFAULT NULL,
+                    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                 ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_district        (district),
+                    INDEX idx_district_active (district, is_active),
+                    INDEX idx_archived        (is_archived),
+                    INDEX idx_election_date   (election_date),
+                    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            # ══════════════════════════════════════════════════════════════════
+            #  🆕 api_request_logs — every API hit (writes + reads + errors)
+            # ══════════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS api_request_logs (
+                    id              BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    method          VARCHAR(10)  NOT NULL,
+                    path            VARCHAR(500) NOT NULL,
+                    status_code     INT          NOT NULL DEFAULT 0,
+                    duration_ms     INT          NOT NULL DEFAULT 0,
+                    user_id         INT          DEFAULT NULL,
+                    username        VARCHAR(100) DEFAULT NULL,
+                    role            VARCHAR(30)  DEFAULT NULL,
+                    ip_address      VARCHAR(45)  DEFAULT NULL,
+                    user_agent      VARCHAR(500) DEFAULT NULL,
+                    request_body    TEXT,
+                    error_message   TEXT,
+                    level           ENUM('INFO','WARN','ERROR') NOT NULL DEFAULT 'INFO',
+                    created_at      DATETIME(3)  NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+                    INDEX idx_created_at  (created_at),
+                    INDEX idx_status_code (status_code),
+                    INDEX idx_path        (path(100)),
+                    INDEX idx_user_id     (user_id),
+                    INDEX idx_role        (role),
+                    INDEX idx_level       (level)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            # ══════════════════════════════════════════════════════════════════
+            #  🆕 token_revocations — for force-logout by role
+            #  JWTs issued BEFORE `revoke_before` for given role are invalid.
+            # ══════════════════════════════════════════════════════════════════
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS token_revocations (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    role          VARCHAR(30)  NOT NULL,
+                    revoke_before BIGINT       NOT NULL,
+                    revoked_by    INT          DEFAULT NULL,
+                    reason        VARCHAR(255) DEFAULT '',
+                    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_role (role),
+                    INDEX idx_revoke_before (revoke_before)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
@@ -187,7 +252,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── kshetra_officers ──────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS kshetra_officers (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -204,7 +268,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── zones ─────────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS zones (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -217,7 +280,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── zonal_officers ────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS zonal_officers (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -234,7 +296,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── sectors ───────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sectors (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -247,7 +308,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── sector_officers ───────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sector_officers (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -264,7 +324,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── gram_panchayats ───────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS gram_panchayats (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -278,7 +337,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── matdan_sthal (election centers) ───────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS matdan_sthal (
                     id                INT AUTO_INCREMENT PRIMARY KEY,
@@ -299,7 +357,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── matdan_kendra (rooms) ─────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS matdan_kendra (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -311,7 +368,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── duty_assignments ──────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS duty_assignments (
                     id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -332,7 +388,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── system_logs ───────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS system_logs (
                     id      INT AUTO_INCREMENT PRIMARY KEY,
@@ -346,7 +401,6 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── fcm_tokens ────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS fcm_tokens (
                     id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -365,21 +419,63 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # In init_db(), replace the booth_staff_rules CREATE TABLE with:
+            # ── booth_rules: per (admin_id, sensitivity, booth_count) ─────────────────
             cur.execute("""
-                CREATE TABLE IF NOT EXISTS booth_staff_rules (
-                    id             INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id       INT  NOT NULL,
-                    sensitivity    ENUM('A++','A','B','C') NOT NULL,
-                    user_rank      VARCHAR(100) NOT NULL,
-                    is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
-                    required_count INT          NOT NULL DEFAULT 1,
-                    created_at     DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_admin       (admin_id),
-                    INDEX idx_sensitivity (sensitivity),
+                CREATE TABLE IF NOT EXISTS booth_rules (
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id              INT NOT NULL,
+                    sensitivity           ENUM('A++','A','B','C') NOT NULL,
+                    booth_count           INT NOT NULL,        -- 1..14, 15 = "15 और उससे अधिक"
+            
+                    si_armed_count        INT NOT NULL DEFAULT 0,
+                    si_unarmed_count      INT NOT NULL DEFAULT 0,
+                    hc_armed_count        INT NOT NULL DEFAULT 0,
+                    hc_unarmed_count      INT NOT NULL DEFAULT 0,
+                    const_armed_count     INT NOT NULL DEFAULT 0,
+                    const_unarmed_count   INT NOT NULL DEFAULT 0,
+            
+                    aux_force_count       INT          NOT NULL DEFAULT 0,
+                    pac_count             DECIMAL(4,1) NOT NULL DEFAULT 0,
+            
+                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_admin_sens_booth (admin_id, sensitivity, booth_count),
+                    INDEX idx_admin_sens (admin_id, sensitivity),
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
+            
+            # ── district_rules: per (admin_id, duty_type) ──────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS district_rules (
+                    id                    INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id              INT          NOT NULL,
+                    duty_type             VARCHAR(80)  NOT NULL,
+                    duty_label_hi         VARCHAR(150) NOT NULL DEFAULT '',
+                    sankhya               INT          NOT NULL DEFAULT 0,
+            
+                    si_armed_count        INT NOT NULL DEFAULT 0,
+                    si_unarmed_count      INT NOT NULL DEFAULT 0,
+                    hc_armed_count        INT NOT NULL DEFAULT 0,
+                    hc_unarmed_count      INT NOT NULL DEFAULT 0,
+                    const_armed_count     INT NOT NULL DEFAULT 0,
+                    const_unarmed_count   INT NOT NULL DEFAULT 0,
+            
+                    aux_force_count       INT          NOT NULL DEFAULT 0,
+                    pac_count             DECIMAL(4,1) NOT NULL DEFAULT 0,
+                    sort_order            INT          NOT NULL DEFAULT 0,
+            
+                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                        ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_admin_duty (admin_id, duty_type),
+                    INDEX idx_admin (admin_id),
+                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            
+            
 
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS goswara_nyay_panchayat (
@@ -394,13 +490,11 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-
             # ─────────────────────────────────────────────────────────────────
             #  AUTO-ADD MISSING COLUMNS (safe for existing databases)
             # ─────────────────────────────────────────────────────────────────
             db = Config.DB_NAME
 
-            # users
             ensure_column(cur, db, "users", "pno VARCHAR(50) DEFAULT NULL")
             ensure_column(cur, db, "users", "user_rank VARCHAR(100) DEFAULT ''")
             ensure_column(cur, db, "users", "district VARCHAR(100) DEFAULT ''")
@@ -412,22 +506,28 @@ def init_db():
             ensure_column(cur, db, "users", "is_active TINYINT(1) NOT NULL DEFAULT 1")
             ensure_column(cur, db, "users", "is_armed TINYINT(1) NOT NULL DEFAULT 0")
 
-            # In init_db() ensure_column calls, add:
             ensure_column(cur, db, "duty_assignments", "attended TINYINT(1) NOT NULL DEFAULT 0")
             ensure_column(cur, db, "duty_assignments", "election_date DATE DEFAULT NULL")
-            # matdan_sthal
             ensure_column(cur, db, "matdan_sthal", "latitude DECIMAL(10,7) DEFAULT NULL")
             ensure_column(cur, db, "matdan_sthal", "longitude DECIMAL(10,7) DEFAULT NULL")
             ensure_column(cur, db, "matdan_sthal", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "thana VARCHAR(150) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "center_type ENUM('A++','A','B','C') NOT NULL DEFAULT 'C'")
-            ensure_column(cur, db, "booth_staff_rules", "admin_id INT NOT NULL DEFAULT 0")
-            # duty_assignments
+           
             ensure_column(cur, db, "duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "duty_assignments", "card_downloaded TINYINT(1) NOT NULL DEFAULT 0")
 
+            # 🆕 Ensure new columns on election_configs (for existing DBs being upgraded)
+            ensure_column(cur, db, "election_configs", "election_type VARCHAR(100) NOT NULL DEFAULT ''")
+            ensure_column(cur, db, "election_configs", "election_name VARCHAR(200) NOT NULL DEFAULT ''")
+            ensure_column(cur, db, "election_configs", "pratah_samay VARCHAR(20) DEFAULT ''")
+            ensure_column(cur, db, "election_configs", "saya_samay VARCHAR(20) DEFAULT ''")
+            ensure_column(cur, db, "election_configs", "instructions TEXT")
+            ensure_column(cur, db, "election_configs", "is_archived TINYINT(1) NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "election_configs", "archived_at DATETIME DEFAULT NULL")
+
             # ─────────────────────────────────────────────────────────────────
-            #  SEED: master user only (no election config — master sets it via API)
+            #  SEED
             # ─────────────────────────────────────────────────────────────────
             cur.execute("SET SESSION foreign_key_checks = 1")
             cur.execute("SET SESSION unique_checks = 1")
@@ -454,7 +554,7 @@ def init_db():
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  MIGRATION HELPER — run on existing DBs to add any missing indexes
+#  MIGRATION HELPER
 # ══════════════════════════════════════════════════════════════════════════════
 
 def run_migrations():
@@ -482,6 +582,15 @@ def run_migrations():
         ("system_logs",      "idx_level",         "INDEX (level)"),
         ("system_logs",      "idx_module",        "INDEX (module)"),
         ("fcm_tokens",       "idx_user_id",       "INDEX (user_id)"),
+        # 🆕 new indexes
+        ("election_configs",  "idx_district_active", "INDEX (district, is_active)"),
+        ("election_configs",  "idx_archived",        "INDEX (is_archived)"),
+        ("api_request_logs",  "idx_created_at",      "INDEX (created_at)"),
+        ("api_request_logs",  "idx_status_code",     "INDEX (status_code)"),
+        ("api_request_logs",  "idx_level",           "INDEX (level)"),
+        ("token_revocations", "idx_revoke_before",   "INDEX (revoke_before)"),
+        ("booth_rules",     "idx_admin_sens",  "INDEX (admin_id, sensitivity)"),
+        ("district_rules",  "idx_admin",       "INDEX (admin_id)"),
     ]
 
     conn = get_db()
