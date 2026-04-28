@@ -5,7 +5,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import L from 'leaflet';
 import apiClient from '../api/client';
-import {CircleX} from 'lucide-react'
+import {CircleX, MoveDown} from 'lucide-react'
+import { useNavigate } from 'react-router-dom';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const C = {
@@ -55,6 +56,9 @@ export default function MapViewPage({ onBack }) {
   const [districts, setDistricts]   = useState([]);
   const [loading, setLoading]       = useState(false);
   const [error, setError]           = useState(null);
+
+  const nav = useNavigate();
+  
   const mapViewRef = useRef(null);
 
   useEffect(() => { loadHierarchy(); }, []);
@@ -107,8 +111,10 @@ export default function MapViewPage({ onBack }) {
     <div style={{ display:'flex', flexDirection:'column', height:'100vh', backgroundColor:C.bg, fontFamily:"'Noto Sans Devanagari','Segoe UI',sans-serif" }}>
       {/* AppBar */}
       <div style={{ backgroundColor:C.primary, padding:'0 16px', display:'flex', alignItems:'center', gap:8, minHeight:56, flexShrink:0, boxShadow:'0 2px 8px rgba(0,0,0,0.2)', position:'relative', zIndex:2000 }}>
-        {level !== 'district' && (
-          <button onClick={goBack} style={styles.iconBtn}>
+        { (
+          <button onClick={()=>{
+            level !== 'district' ? goBack() : nav("/");
+          }} style={styles.iconBtn}>
             <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="2.5" strokeLinecap="round"><polyline points="15 18 9 12 15 6"/></svg>
           </button>
         )}
@@ -681,7 +687,7 @@ function CenterDetailSheet({ center, onClose }) {
     <>
       <div style={{ position:'fixed', bottom:0, left:0, right:0, zIndex:1101, background:C.bg, borderRadius:'20px 20px 0 0', maxHeight:'90vh', display:'flex', flexDirection:'column', boxShadow:'0 -8px 32px rgba(0,0,0,0.2)' }}>
         <div style={{ display:'flex', justifyContent:'center', padding:'10px 0 6px' }}>
-          <div className='cursor-pointer' onClick={onClose} style={{ width:44, height:4, borderRadius:2, backgroundColor:C.border }}/>
+          <MoveDown className='cursor-pointer text-gray-500' onClick={onClose} />
         </div>
         <div style={{ margin:'0 16px 8px', background:`linear-gradient(135deg,${tColor},${tColor}B3)`, borderRadius:14, padding:14, display:'flex', alignItems:'center', gap:12 }}>
           <div style={{ padding:'6px 10px', background:'rgba(255,255,255,0.2)', borderRadius:8, color:'#fff', fontSize:16, fontWeight:900 }}>{type}</div>

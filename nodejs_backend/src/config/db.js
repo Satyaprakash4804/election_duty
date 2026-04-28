@@ -330,6 +330,9 @@ async function initDb() {
         bus_no      VARCHAR(50) DEFAULT '',
         assigned_by INT         DEFAULT NULL,
         created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        election_date DATE DEFAULT NULL,
+        attended    TINYINT(1) NOT NULL DEFAULT 0,
+        card_downloaded TINYINT(1) NOT NULL DEFAULT 0,
         UNIQUE KEY uq_staff_sthal (staff_id, sthal_id),
         INDEX idx_sthal_id    (sthal_id),
         INDEX idx_assigned_by (assigned_by),
@@ -388,6 +391,21 @@ async function initDb() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
+    // ── goswara_nyay_panchayat ─────────────────────────────────────────────────────
+    await conn.execute(`
+     CREATE TABLE IF NOT EXISTS goswara_nyay_panchayat (
+                    id         INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id   INT NOT NULL,
+                    block_name VARCHAR(100) NOT NULL,
+                    nyay_count INT NOT NULL DEFAULT 0,
+                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                            ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_admin_block (admin_id, block_name),
+                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+    `);
+
+
     await conn.execute('SET SESSION foreign_key_checks = 1');
     await conn.execute('SET SESSION unique_checks = 1');
 
@@ -415,6 +433,9 @@ async function initDb() {
     await ensureColumn(conn, 'matdan_sthal', "center_type ENUM('A++','A','B','C') NOT NULL DEFAULT 'C'");
 
     await ensureColumn(conn, 'duty_assignments', "bus_no VARCHAR(50) DEFAULT ''");
+    await ensureColumn(conn, 'duty_assignments', "election_date DATE DEFAULT NULL");
+    await ensureColumn(conn, 'duty_assignments', "attended    TINYINT(1) NOT NULL DEFAULT 0");
+    await ensureColumn(conn, 'duty_assignments', "card_downloaded TINYINT(1) NOT NULL DEFAULT 0");
 
     // ── Seed: master user ─────────────────────────────────────────────────────
     const [rows] = await conn.execute("SELECT id FROM users WHERE username='master'");

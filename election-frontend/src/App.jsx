@@ -7,6 +7,9 @@ import SuperDashboard from './pages/super/index';
 import MasterDashboard from './pages/master/index';
 import StaffDashboard from './pages/staff/index';
 import MapViewPage from './pages/Mapviewpage';
+import HierarchyReportPage from './pages/Hierarchyreportpage';
+import DutyHistoryPage from './pages/staff/HistoryPage';
+import GoswaraPage from './pages/admin/GoswaraPage';
 
 export default function App() {
   return (
@@ -32,6 +35,9 @@ export default function App() {
         <Route path="/master/*" element={<ProtectedRoute allowedRoles={['MASTER']}><MasterDashboard /></ProtectedRoute>} />
         <Route path="/staff/*" element={<ProtectedRoute allowedRoles={['STAFF']}><StaffDashboard /></ProtectedRoute>} />
         <Route path="/map-view" element={<ProtectedRoute allowedRoles={['STAFF', 'MASTER', 'SUPER_ADMIN', 'ADMIN']}>  <MapViewPage /></ProtectedRoute>} />
+        <Route path="/staff/history" element={<ProtectedRoute allowedRoles={['STAFF']}>  <DutyHistoryPage /></ProtectedRoute>} />
+        <Route path="/goswara-page" element={<ProtectedRoute allowedRoles={['ADMIN','SUPER_ADMIN']}>  <GoswaraPage /></ProtectedRoute>} />
+        <Route path="/heirarchy-report" element={<ProtectedRoute allowedRoles={['STAFF', 'MASTER', 'SUPER_ADMIN', 'ADMIN']}>  <HierarchyReportPage role="admin" onBack={() => navigate(-1)} /></ProtectedRoute>} />
         <Route path="/" element={<Navigate to="/login" replace />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>

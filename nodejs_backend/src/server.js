@@ -18,7 +18,9 @@ const superAdminRoutes = require('./routes/superAdmin');
 const adminRoutes = require('./routes/admin');
 const staffRoutes = require('./routes/staff');
 const hierarchyRoutes = require('./routes/hierarchy');
+const dynamicRoutes = require('./routes/dynamicTables');
 const fcmRoutes = require('./routes/fcm');
+const { connectMongo } = require('./config/mongo');
 
 const app = express();
 
@@ -43,7 +45,7 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With','Cache-Control'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'Cache-Control'],
   exposedHeaders: ['Content-Length', 'X-Request-Id'],
   maxAge: 86400, // 24h preflight cache
 }));
@@ -97,6 +99,7 @@ app.use('/api/super', superAdminRoutes);                   // /api/super/…
 app.use('/api/admin', adminRoutes);                        // /api/admin/…
 app.use('/api/admin/hierarchy', hierarchyRoutes);                // /api/admin/hierarchy/…
 app.use('/api/staff', staffRoutes);                        // /api/staff/…
+app.use('/api/dynamic', dynamicRoutes);
 app.use('/', fcmRoutes);                          // /save-token, /send-notification
 
 // ── 404 & error handlers ──────────────────────────────────────────────────────
@@ -112,6 +115,7 @@ async function start() {
     // Initialise database (create tables, seed master account)
     await initDb();
     await runMigrations();
+    await connectMongo();
 
     const server = app.listen(config.app.port, config.app.host, () => {
       console.log(`✅ Server listening on http://${config.app.host}:${config.app.port}`);
@@ -126,6 +130,12 @@ async function start() {
           const pool = await getPool();
           await pool.end();
           console.log('✅ MySQL pool closed');
+
+          const mongoose = require('mongoose');
+          await mongoose.connection.close();
+          console.log('🍃 MongoDB connection closed');
+
+
         } catch { }
         console.log('✅ Server closed');
         process.exit(0);

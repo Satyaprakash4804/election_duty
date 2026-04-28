@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import { adminApi } from '../../api/endpoints';
 import apiClient from '../../api/client';          // ← axios instance
-import { RANKS, debounce } from '../../utils/helpers';
+import { RANKS, debounce, UP_DISTRICTS } from '../../utils/helpers';
 import toast from 'react-hot-toast';
 import { useAuthStore } from '../../store/authStore';
 
@@ -466,10 +466,36 @@ function ItemDialog({ title, color, Icon: I, fields, officerTitle, officerRanks,
     <Modal open onClose={onClose} maxWidth={520}>
       <ModalHeader title={title} Icon={I} color={color} onClose={onClose} />
       <div style={{ overflowY: 'auto', flex: 1, padding: 16 }}>
-        {fields.map(f => (
-          <FieldInput key={f} label={fieldLabel(f)} icon={fieldIcon(f)} color={color}
-            value={form[f]} onChange={v => setForm(p => ({ ...p, [f]: v }))} />
-        ))}
+        {fields.map(f => {
+          if (f === 'district') {
+            return (
+              <div key="district" style={{ marginBottom: 10 }}>
+                <label style={{ fontSize: 11, color: C.subtle, fontWeight: 600, display: 'block', marginBottom: 4 }}>
+                  जिला *
+                </label>
+                <select
+                  value={form[f]}
+                  onChange={e => setForm(p => ({ ...p, district: e.target.value }))}
+                  style={{
+                    width: '100%', padding: '10px 12px', background: 'white',
+                    border: `1.5px solid ${color}`, borderRadius: 10,
+                    fontSize: 13, color: form[f] ? C.dark : C.subtle,
+                    outline: 'none', fontFamily: 'inherit', cursor: 'pointer',
+                  }}
+                >
+                  <option value="">-- जिला चुनें --</option>
+                  {UP_DISTRICTS.map(d => (
+                    <option key={d} value={d}>{d}</option>
+                  ))}
+                </select>
+              </div>
+            );
+          }
+          return (
+            <FieldInput key={f} label={fieldLabel(f)} icon={fieldIcon(f)} color={color}
+              value={form[f]} onChange={v => setForm(p => ({ ...p, [f]: v }))} />
+          );
+        })}
 
         {officerRanks.length > 0 && (
           <>

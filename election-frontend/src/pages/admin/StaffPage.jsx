@@ -4,7 +4,8 @@ import {
   Shield, ShieldOff, Badge, Phone, MapPin, Building2,
   Star, CheckCircle, AlertTriangle, ChevronLeft, ChevronRight,
   UserPlus, UserMinus, Vote, Lock, Bus,
-  FileSpreadsheet, FileText, Info, Layers, Grid, CheckSquare, Square
+  FileSpreadsheet, FileText, Info, Layers, Grid, CheckSquare, Square,
+  Download
 } from 'lucide-react';
 import { adminApi } from '../../api/endpoints';
 import { RANKS, debounce } from '../../utils/helpers';
@@ -17,30 +18,30 @@ const PAGE_SIZE = 50;
 const ARMED_VALS = new Set(['1', 'yes', 'हाँ', 'han', 'sastra', 'सशस्त्र', 'armed', 'true']);
 
 const REQUIRED_HEADERS = [
-  { col: 'pno',      label: 'PNO / बैज नंबर',     req: true  },
-  { col: 'name',     label: 'नाम',                req: true  },
-  { col: 'mobile',   label: 'मोबाइल',              req: false },
-  { col: 'thana',    label: 'थाना',                req: false },
-  { col: 'district', label: 'जिला',                req: false },
-  { col: 'rank',     label: 'पद / रैंक',           req: false },
-  { col: 'sastra',   label: 'सशस्त्र (1/yes/हाँ)', req: false },
+  { col: 'pno', label: 'PNO / बैज नंबर', req: true },
+  { col: 'name', label: 'नाम', req: true },
+  { col: 'mobile', label: 'मोबाइल', req: false },
+  { col: 'thana', label: 'थाना', req: false },
+  { col: 'district', label: 'जिला', req: false },
+  { col: 'rank', label: 'पद / रैंक', req: false },
+  { col: 'sastra', label: 'सशस्त्र (1/yes/हाँ)', req: false },
 ];
 
 const ALL_RANKS = ['All', ...RANKS];
 
 // ── Color helpers ─────────────────────────────────────────────────────────────
 const colors = {
-  bg:      '#FDF6E3',
+  bg: '#FDF6E3',
   surface: '#F5E6C8',
   primary: '#8B6914',
-  accent:  '#B8860B',
-  dark:    '#4A3000',
-  subtle:  '#AA8844',
-  border:  '#D4A843',
-  error:   '#C0392B',
+  accent: '#B8860B',
+  dark: '#4A3000',
+  subtle: '#AA8844',
+  border: '#D4A843',
+  error: '#C0392B',
   success: '#2D6A1E',
-  info:    '#1A5276',
-  armed:   '#1B5E20',
+  info: '#1A5276',
+  armed: '#1B5E20',
   unarmed: '#37474F',
 };
 
@@ -73,7 +74,7 @@ function UploadProgressBanner() {
   const up = useUploadProgress();
   if (up.phase === 'idle') return null;
 
-  const isErr  = up.phase === 'error';
+  const isErr = up.phase === 'error';
   const isDone = up.phase === 'done';
   const overall = Math.min(1, (up.parsePct * 0.15) + (up.hashPct * 0.30) + (up.insertPct * 0.55));
   const color = isErr ? colors.error : isDone ? colors.success : colors.primary;
@@ -90,7 +91,7 @@ function UploadProgressBanner() {
         <div style={{ width: 24, height: 24, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
           {isErr ? <AlertTriangle size={20} color={colors.error} />
             : isDone ? <CheckCircle size={20} color={colors.success} />
-            : <UploadSpinner color={color} />}
+              : <UploadSpinner color={color} />}
         </div>
         <div style={{ flex: 1 }}>
           <div style={{ color, fontWeight: 800, fontSize: 13 }}>
@@ -337,7 +338,7 @@ function AssignDialog({ title, staffCard, onAssign, onClose, assignLabel = 'ड�
       setCenterList(prev => reset ? data : [...prev, ...data]);
       setCHasMore((reset ? data.length : centerList.length + data.length) < total);
       setCPage(pg + 1);
-    } catch (_) {}
+    } catch (_) { }
     setCLoading(false);
   }, [cLoading, cPage, cHasMore, centerQ, centerList.length]);
 
@@ -394,23 +395,23 @@ function AssignDialog({ title, staffCard, onAssign, onClose, assignLabel = 'ड�
             : centerList.length === 0
               ? <div style={{ textAlign: 'center', padding: 24, color: colors.subtle, fontSize: 12 }}>कोई केंद्र नहीं मिला</div>
               : centerList.map(c => {
-                  const isSel = selectedCenter?.id === c.id;
-                  const type = String(c.centerType || 'C');
-                  const tc = type === 'A' ? colors.error : type === 'B' ? colors.accent : colors.info;
-                  return (
-                    <div key={c.id} onClick={() => setSelectedCenter(c)}
-                      style={{ margin: '4px 6px', padding: 10, borderRadius: 8, cursor: 'pointer', border: `${isSel ? 1.5 : 1}px solid ${isSel ? colors.primary : colors.border + '66'}`, background: isSel ? `${colors.primary}14` : 'transparent', display: 'flex', alignItems: 'center', gap: 10, transition: 'all 0.12s' }}>
-                      <div style={{ width: 28, height: 28, borderRadius: '50%', background: `${tc}1E`, border: `1px solid ${tc}66`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
-                        <span style={{ color: tc, fontSize: 10, fontWeight: 900 }}>{type}</span>
-                      </div>
-                      <div style={{ flex: 1, overflow: 'hidden' }}>
-                        <div style={{ fontWeight: 700, fontSize: 13, color: isSel ? colors.primary : colors.dark, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>
-                        <div style={{ fontSize: 10, color: colors.subtle, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.thana} • {c.gpName}</div>
-                      </div>
-                      {isSel && <CheckCircle size={18} color={colors.primary} />}
+                const isSel = selectedCenter?.id === c.id;
+                const type = String(c.centerType || 'C');
+                const tc = type === 'A' ? colors.error : type === 'B' ? colors.accent : colors.info;
+                return (
+                  <div key={c.id} onClick={() => setSelectedCenter(c)}
+                    style={{ margin: '4px 6px', padding: 10, borderRadius: 8, cursor: 'pointer', border: `${isSel ? 1.5 : 1}px solid ${isSel ? colors.primary : colors.border + '66'}`, background: isSel ? `${colors.primary}14` : 'transparent', display: 'flex', alignItems: 'center', gap: 10, transition: 'all 0.12s' }}>
+                    <div style={{ width: 28, height: 28, borderRadius: '50%', background: `${tc}1E`, border: `1px solid ${tc}66`, display: 'flex', alignItems: 'center', justifyContent: 'center', flexShrink: 0 }}>
+                      <span style={{ color: tc, fontSize: 10, fontWeight: 900 }}>{type}</span>
                     </div>
-                  );
-                })
+                    <div style={{ flex: 1, overflow: 'hidden' }}>
+                      <div style={{ fontWeight: 700, fontSize: 13, color: isSel ? colors.primary : colors.dark, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.name}</div>
+                      <div style={{ fontSize: 10, color: colors.subtle, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{c.thana} • {c.gpName}</div>
+                    </div>
+                    {isSel && <CheckCircle size={18} color={colors.primary} />}
+                  </div>
+                );
+              })
           }
           {cLoading && centerList.length > 0 && (
             <div style={{ padding: 10, display: 'flex', justifyContent: 'center' }}><Spinner size={18} /></div>
@@ -434,6 +435,48 @@ function AssignDialog({ title, staffCard, onAssign, onClose, assignLabel = 'ड�
   );
 }
 
+const downloadSampleCSV = () => {
+  const headers = REQUIRED_HEADERS.map(h => h.col);
+
+  // 👉 Example data row (customize based on your columns)
+  const sampleRow = headers.map((col) => {
+    switch (col.toLowerCase()) {
+      case 'name':
+        return 'Ishant Tyagi';
+      case 'mobile':
+      case 'phone':
+        return '93183XXXXX';
+      case 'rank':
+        return 'SI';
+      case 'sastra':
+      case 'is_armed':
+        return '1'; // armed example
+      case 'booth':
+      case 'booth_no':
+        return '101';
+      case 'zone':
+        return 'Zone 1';
+      default:
+        return 'Sample';
+    }
+  });
+
+  const csvContent =
+    headers.join(',') + '\n' +   // header row
+    sampleRow.join(',');         // sample data row
+
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = 'sample_upload_format.csv';
+
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+};
+
 // ── Upload Hint + File Preview Dialog ────────────────────────────────────────
 function UploadHintDialog({ onConfirm, onClose }) {
   return (
@@ -441,7 +484,7 @@ function UploadHintDialog({ onConfirm, onClose }) {
       <div style={{ padding: '16px' }}>
         <div style={{ display: 'flex', gap: 8, marginBottom: 14 }}>
           {[['Excel', '.xlsx / .xls', colors.success], ['CSV', '.csv', colors.info]].map(([fmt, ext, c]) => (
-            <div key={fmt} style={{ flex: 1, padding: '8px 10px', background: `${c}12`, border: `1px solid ${c}40`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
+            <div className='cursor-pointer' key={fmt} onClick={downloadSampleCSV} style={{ flex: 1, padding: '8px 10px', background: `${c}12`, border: `1px solid ${c}40`, borderRadius: 8, display: 'flex', alignItems: 'center', gap: 8 }}>
               <FileSpreadsheet size={16} color={c} />
               <div>
                 <div style={{ color: c, fontWeight: 800, fontSize: 12 }}>{fmt}</div>
@@ -525,40 +568,40 @@ function PreviewDialog({ rows: initialRows, onUpload, onClose }) {
         {pageRows.length === 0
           ? <div style={{ textAlign: 'center', padding: 24, color: colors.subtle }}>कोई row नहीं</div>
           : pageRows.map((r, i) => {
-              const isOk = (r.pno || '').trim() && (r.name || '').trim();
-              const armed = r.is_armed === 1;
-              return (
-                <div key={i} style={{
-                  marginBottom: 6, borderRadius: 9,
-                  border: `1px solid ${isOk ? colors.border + '66' : colors.error + '59'}`,
-                  background: isOk ? 'white' : `${colors.error}0A`,
-                  display: 'flex', overflow: 'hidden',
-                }}>
-                  <div style={{ width: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isOk ? `${colors.surface}99` : `${colors.error}0F`, flexShrink: 0 }}>
-                    <span style={{ color: isOk ? colors.subtle : colors.error, fontSize: 10, fontWeight: 700 }}>{r._row}</span>
-                  </div>
-                  <div style={{ flex: 1, padding: '8px 10px' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
-                      <span style={{ fontWeight: 700, fontSize: 13, color: (r.name || '').trim() ? colors.dark : colors.error, flex: 1 }}>
-                        {(r.name || '').trim() || '⚠ नाम आवश्यक'}
-                      </span>
-                      <span style={{ padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 700, background: armed ? `${colors.armed}1E` : `${colors.unarmed}14`, color: armed ? colors.armed : colors.unarmed }}>
-                        {armed ? '🔫 सशस्त्र' : '🛡 निःशस्त्र'}
-                      </span>
-                    </div>
-                    <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-                      <MiniTag icon={Badge} text={(r.pno || '').trim() ? `PNO: ${r.pno}` : '⚠ PNO आवश्यक'} color={(r.pno || '').trim() ? undefined : colors.error} />
-                      {(r.mobile || '').trim() && <MiniTag icon={Phone} text={r.mobile} />}
-                      {(r.thana || '').trim() && <MiniTag icon={MapPin} text={r.thana} />}
-                      {(r.rank || '').trim() && <MiniTag icon={Star} text={r.rank} color={colors.info} />}
-                    </div>
-                  </div>
-                  <button onClick={() => removeRow(r)} style={{ width: 36, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                    <X size={14} color={colors.error} />
-                  </button>
+            const isOk = (r.pno || '').trim() && (r.name || '').trim();
+            const armed = r.is_armed === 1;
+            return (
+              <div key={i} style={{
+                marginBottom: 6, borderRadius: 9,
+                border: `1px solid ${isOk ? colors.border + '66' : colors.error + '59'}`,
+                background: isOk ? 'white' : `${colors.error}0A`,
+                display: 'flex', overflow: 'hidden',
+              }}>
+                <div style={{ width: 32, display: 'flex', alignItems: 'center', justifyContent: 'center', background: isOk ? `${colors.surface}99` : `${colors.error}0F`, flexShrink: 0 }}>
+                  <span style={{ color: isOk ? colors.subtle : colors.error, fontSize: 10, fontWeight: 700 }}>{r._row}</span>
                 </div>
-              );
-            })
+                <div style={{ flex: 1, padding: '8px 10px' }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 6, marginBottom: 3 }}>
+                    <span style={{ fontWeight: 700, fontSize: 13, color: (r.name || '').trim() ? colors.dark : colors.error, flex: 1 }}>
+                      {(r.name || '').trim() || '⚠ नाम आवश्यक'}
+                    </span>
+                    <span style={{ padding: '2px 6px', borderRadius: 4, fontSize: 9, fontWeight: 700, background: armed ? `${colors.armed}1E` : `${colors.unarmed}14`, color: armed ? colors.armed : colors.unarmed }}>
+                      {armed ? '🔫 सशस्त्र' : '🛡 निःशस्त्र'}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
+                    <MiniTag icon={Badge} text={(r.pno || '').trim() ? `PNO: ${r.pno}` : '⚠ PNO आवश्यक'} color={(r.pno || '').trim() ? undefined : colors.error} />
+                    {(r.mobile || '').trim() && <MiniTag icon={Phone} text={r.mobile} />}
+                    {(r.thana || '').trim() && <MiniTag icon={MapPin} text={r.thana} />}
+                    {(r.rank || '').trim() && <MiniTag icon={Star} text={r.rank} color={colors.info} />}
+                  </div>
+                </div>
+                <button onClick={() => removeRow(r)} style={{ width: 36, background: 'none', border: 'none', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                  <X size={14} color={colors.error} />
+                </button>
+              </div>
+            );
+          })
         }
       </div>
 
@@ -638,17 +681,17 @@ function detectCols(headers) {
   let iPno, iName, iMob, iThana, iDist, iRank, iArmed;
   headers.forEach((h, ci) => {
     const v = h.toLowerCase();
-    if (iPno   == null && (v.includes('pno') || v.includes('p.no'))) iPno = ci;
-    if (iName  == null && (v.includes('name') || v.includes('नाम'))) iName = ci;
-    if (iMob   == null && (v.includes('mobile') || v.includes('mob') || v.includes('phone'))) iMob = ci;
+    if (iPno == null && (v.includes('pno') || v.includes('p.no'))) iPno = ci;
+    if (iName == null && (v.includes('name') || v.includes('नाम'))) iName = ci;
+    if (iMob == null && (v.includes('mobile') || v.includes('mob') || v.includes('phone'))) iMob = ci;
     if (iThana == null && (v.includes('thana') || v.includes('थाना') || v === 'ps')) iThana = ci;
-    if (iDist  == null && (v.includes('district') || v.includes('dist') || v.includes('जिला'))) iDist = ci;
-    if (iRank  == null && (v.includes('rank') || v.includes('post') || v.includes('पद'))) iRank = ci;
+    if (iDist == null && (v.includes('district') || v.includes('dist') || v.includes('जिला'))) iDist = ci;
+    if (iRank == null && (v.includes('rank') || v.includes('post') || v.includes('पद'))) iRank = ci;
     if (iArmed == null && (v.includes('sastra') || v.includes('armed') || v.includes('weapon') || v.includes('सशस्त्र'))) iArmed = ci;
   });
   return {
-    iPno:  iPno  ?? 0, iName:  iName  ?? 1, iMob:    iMob   ?? 2,
-    iThana: iThana ?? 3, iDist:  iDist  ?? 4, iRank:  iRank  ?? 5, iArmed,
+    iPno: iPno ?? 0, iName: iName ?? 1, iMob: iMob ?? 2,
+    iThana: iThana ?? 3, iDist: iDist ?? 4, iRank: iRank ?? 5, iArmed,
   };
 }
 
@@ -700,7 +743,7 @@ async function parseExcel(bytes) {
 
 // ── Background SSE upload ─────────────────────────────────────────────────────
 async function startBackgroundUpload(rows, token) {
-  
+
   const baseUrl = (await import('../../api/client')).default.defaults.baseURL || '';
   setUploadState({ phase: 'uploading', total: rows.length, added: 0, parsePct: 0, hashPct: 0, insertPct: 0, statusMsg: 'सर्वर पर भेज रहे हैं...' });
   try {
@@ -758,10 +801,10 @@ function AssignmentChip({ staff: s }) {
   const detail = String(s.assignDetail || '');
   if (!label) return null;
   const cfg = {
-    booth:   { color: colors.success, bg: `${colors.success}0F`, label: 'बूथ' },
+    booth: { color: colors.success, bg: `${colors.success}0F`, label: 'बूथ' },
     kshetra: { color: '#6A1B9A', bg: '#f3e5f5', label: 'क्षेत्र' },
-    zone:    { color: '#1565C0', bg: '#e3f0fb', label: 'जोन' },
-    sector:  { color: '#2E7D32', bg: '#e6f4ea', label: 'सेक्टर' },
+    zone: { color: '#1565C0', bg: '#e3f0fb', label: 'जोन' },
+    sector: { color: '#2E7D32', bg: '#e6f4ea', label: 'सेक्टर' },
   }[type] || { color: colors.success, bg: `${colors.success}0F`, label: '' };
   return (
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 4, padding: '4px 8px', background: cfg.bg, border: `1px solid ${cfg.color}33`, borderRadius: 6, fontSize: 11, flexWrap: 'wrap' }}>
@@ -786,8 +829,11 @@ function StaffCard({ s, assigned, selected, onToggle, onEdit, onDelete, onAssign
     <div
       style={{
         marginBottom: 8, borderRadius: 12, overflow: 'hidden',
-        border: `${isSelected ? 2 : 1}px solid ${isSelected ? colors.primary : colors.border + '66'}`,
-        background: isSelected ? `${colors.primary}0A` : 'white',
+        border: `${isSelected ? 2 : 1}px solid ${isSelected ? colors.primary
+          : colors.border + '66'
+          }`,
+        background: isSelected ? `${colors.primary}0A`
+          : 'white',
         boxShadow: `0 2px 6px ${colors.primary}0A`,
         transition: 'all 0.15s',
       }}
@@ -799,11 +845,11 @@ function StaffCard({ s, assigned, selected, onToggle, onEdit, onDelete, onAssign
         <div style={{ cursor: 'pointer', flexShrink: 0 }} onClick={e => { e.stopPropagation(); onToggle(id); }}>
           {selectMode
             ? <div style={{ width: 44, height: 44, borderRadius: '50%', background: isSelected ? colors.primary : 'white', border: `2px solid ${isSelected ? colors.primary : colors.border}`, display: 'flex', alignItems: 'center', justifyContent: 'center', transition: 'all 0.2s' }}>
-                {isSelected && <CheckCircle size={22} color="white" />}
-              </div>
+              {isSelected && <CheckCircle size={22} color="white" />}
+            </div>
             : <div style={{ width: 44, height: 44, borderRadius: '50%', background: `${avatarColor}1E`, border: `1px solid ${avatarColor}59`, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-                <span style={{ color: avatarColor, fontWeight: 900, fontSize: initials.length <= 1 ? 18 : 13 }}>{initials}</span>
-              </div>
+              <span style={{ color: avatarColor, fontWeight: 900, fontSize: initials.length <= 1 ? 18 : 13 }}>{initials}</span>
+            </div>
           }
         </div>
 
@@ -881,7 +927,7 @@ function SelectionBar({ count, isAssignedTab, onSelectAll, onClear, onBulkDelete
       <div style={{ flex: 1 }} />
       {!isAssignedTab && (
         <button onClick={onBulkAssign} style={miniActionStyle(colors.border)}>
-          <HowToVote size={12} /> असाइन
+          <Vote size={12} /> असाइन
         </button>
       )}
       {isAssignedTab && (
@@ -928,41 +974,67 @@ function RankChip({ rank, selected, onClick }) {
   );
 }
 
+// Add this component above StaffPage
+function Pagination({ page, totalPages, onPage }) {
+  if (totalPages <= 1) return null;
+  const pages = [];
+  for (let i = 1; i <= totalPages; i++) {
+    if (i === 1 || i === totalPages || (i >= page - 2 && i <= page + 2)) {
+      pages.push(i);
+    } else if (pages[pages.length - 1] !== '...') {
+      pages.push('...');
+    }
+  }
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4, padding: '10px 12px', background: colors.surface, borderTop: `1px solid ${colors.border}33`, flexShrink: 0, flexWrap: 'wrap' }}>
+      <button
+        onClick={() => onPage(page - 1)} disabled={page === 1}
+        style={{ minWidth: 30, height: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: 'white', color: page === 1 ? colors.subtle : colors.dark, cursor: page === 1 ? 'default' : 'pointer', fontSize: 12, opacity: page === 1 ? 0.4 : 1 }}>
+        ‹
+      </button>
+      {pages.map((p, i) =>
+        p === '...'
+          ? <span key={`e${i}`} style={{ color: colors.subtle, fontSize: 12, padding: '0 2px' }}>…</span>
+          : <button key={p} onClick={() => onPage(p)}
+            style={{ minWidth: 30, height: 30, borderRadius: 8, border: `1px solid ${p === page ? colors.primary : colors.border}`, background: p === page ? colors.primary : 'white', color: p === page ? 'white' : colors.dark, cursor: 'pointer', fontSize: 12, fontWeight: p === page ? 800 : 400 }}>
+            {p}
+          </button>
+      )}
+      <button
+        onClick={() => onPage(page + 1)} disabled={page === totalPages}
+        style={{ minWidth: 30, height: 30, borderRadius: 8, border: `1px solid ${colors.border}`, background: 'white', color: page === totalPages ? colors.subtle : colors.dark, cursor: page === totalPages ? 'default' : 'pointer', fontSize: 12, opacity: page === totalPages ? 0.4 : 1 }}>
+        ›
+      </button>
+    </div>
+  );
+}
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN STAFF PAGE
 // ══════════════════════════════════════════════════════════════════════════════
 export default function StaffPage() {
   const { token } = useAuthStore();
 
-  console.log(token);
-  
+  const [activeTab, setActiveTab] = useState(0);
 
-  // Tabs
-  const [activeTab, setActiveTab] = useState(0); // 0=assigned, 1=reserve
-
-  // Data
   const [assigned, setAssigned] = useState([]);
   const [assignedTotal, setAssignedTotal] = useState(0);
   const [assignedPage, setAssignedPage] = useState(1);
   const [assignedLoading, setAssignedLoading] = useState(false);
-  const [assignedHasMore, setAssignedHasMore] = useState(true);
 
   const [reserve, setReserve] = useState([]);
   const [reserveTotal, setReserveTotal] = useState(0);
   const [reservePage, setReservePage] = useState(1);
   const [reserveLoading, setReserveLoading] = useState(false);
-  const [reserveHasMore, setReserveHasMore] = useState(true);
 
-  // Filters
   const [q, setQ] = useState('');
   const [rankFilter, setRankFilter] = useState('All');
   const [armedFilter, setArmedFilter] = useState('All');
+  const [cardFilter, setCardFilter] = useState('All');
 
-  // Selection
   const [selected, setSelected] = useState(new Set());
   const selectMode = selected.size > 0;
 
-  // UI
   const [modal, setModal] = useState(null);
   const [editTarget, setEditTarget] = useState(null);
   const [assignTarget, setAssignTarget] = useState(null);
@@ -977,82 +1049,62 @@ export default function StaffPage() {
 
   const up = useUploadProgress();
 
-  // Scroll refs for infinite scroll
-  const assignedScrollRef = useRef();
-  const reserveScrollRef = useRef();
-
-  // Debounced search
   const debouncedQ = useCallback(debounce((v) => { setQ(v); }, 350), []);
 
   const armedParam = armedFilter === 'Armed' ? 'yes' : armedFilter === 'Unarmed' ? 'no' : '';
-  const rankParam  = rankFilter === 'All' ? '' : rankFilter;
+  const rankParam = rankFilter === 'All' ? '' : rankFilter;
+  const cardParam = cardFilter === 'All' ? '' : cardFilter;
 
-  const loadAssigned = useCallback(async (reset = false) => {
+  // ── Load functions (pg = explicit page number) ────────────────────────────
+  const loadAssigned = useCallback(async (pg) => {
     if (assignedLoading) return;
-    const pg = reset ? 1 : assignedPage;
-    if (!reset && !assignedHasMore) return;
     setAssignedLoading(true);
     try {
       const res = await adminApi.getStaff({ assigned: 'yes', page: pg, limit: PAGE_SIZE, q, rank: rankParam, armed: armedParam });
-      const w = (res.data) || {};
-      
-      const items = Array.isArray(w.data) ? w.data : Array.isArray(res.data) ? res.data : [];
-      const total = w.total || res.data?.total || 0;
-      const pages = w.totalPages || Math.ceil(total / PAGE_SIZE) || 1;
-      setAssigned(prev => reset ? items : [...prev, ...items]);
+      const w = res.data || {};
+      const items = Array.isArray(w.data) ? w.data : [];
+      const total = w.total || 0;
+      setAssigned(items);
       setAssignedTotal(total);
-      setAssignedHasMore(pg < pages);
-      setAssignedPage(pg + 1);
+      setAssignedPage(pg);
     } catch (e) { toast.error(e.message || 'Load failed'); }
     setAssignedLoading(false);
-  }, [assignedLoading, assignedPage, assignedHasMore, q, rankParam, armedParam]);
+  }, [assignedLoading, q, rankParam, armedParam, cardParam]);
 
-  const loadReserve = useCallback(async (reset = false) => {
+  const loadReserve = useCallback(async (pg) => {
     if (reserveLoading) return;
-    const pg = reset ? 1 : reservePage;
-    if (!reset && !reserveHasMore) return;
     setReserveLoading(true);
     try {
       const res = await adminApi.getStaff({ assigned: 'no', page: pg, limit: PAGE_SIZE, q, rank: rankParam, armed: armedParam });
-      const w = (res.data) || {};
-      const items = Array.isArray(w.data) ? w.data : Array.isArray(res.data) ? res.data : [];
-      const total = w.total || res.data?.total || 0;
-      const pages = w.totalPages || Math.ceil(total / PAGE_SIZE) || 1;
-      setReserve(prev => reset ? items : [...prev, ...items]);
+      const w = res.data || {};
+      const items = Array.isArray(w.data) ? w.data : [];
+      const total = w.total || 0;
+      setReserve(items);
       setReserveTotal(total);
-      setReserveHasMore(pg < pages);
-      setReservePage(pg + 1);
+      setReservePage(pg);
     } catch (e) { toast.error(e.message || 'Load failed'); }
     setReserveLoading(false);
-  }, [reserveLoading, reservePage, reserveHasMore, q, rankParam, armedParam]);
+  }, [reserveLoading, q, rankParam, armedParam, cardParam]);
 
-  const refresh = useCallback(() => {
-    setSelected(new Set());
-    setAssigned([]); setAssignedPage(1); setAssignedHasMore(true);
-    setReserve([]);  setReservePage(1);  setReserveHasMore(true);
-  }, []);
-
-  // Trigger load after refresh
-  const refreshTrigger = useRef(0);
-  useEffect(() => { loadAssigned(true); loadReserve(true); }, [q, rankFilter, armedFilter]);
-
-  // Upload done → refresh
+  // ── Reload page 1 when filters change ────────────────────────────────────
   useEffect(() => {
-    if (up.phase === 'done') { refresh(); setTimeout(() => { loadAssigned(true); loadReserve(true); }, 100); }
+    setAssignedPage(1);
+    setReservePage(1);
+    loadAssigned(1);
+    loadReserve(1);
+  }, [q, rankFilter, armedFilter, cardFilter]);
+
+  // ── Upload done → reload ──────────────────────────────────────────────────
+  useEffect(() => {
+    if (up.phase === 'done') {
+      loadAssigned(1);
+      loadReserve(1);
+    }
   }, [up.phase]);
 
-  // Infinite scroll
-  const handleAssignedScroll = useCallback((e) => {
-    const el = e.target;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadAssigned();
-  }, [loadAssigned]);
+  // ── Helpers ───────────────────────────────────────────────────────────────
+  const reloadBoth = () => { loadAssigned(assignedPage); loadReserve(reservePage); };
 
-  const handleReserveScroll = useCallback((e) => {
-    const el = e.target;
-    if (el.scrollHeight - el.scrollTop - el.clientHeight < 300) loadReserve();
-  }, [loadReserve]);
-
-  // Selection helpers
   const toggleSelect = (id) => setSelected(prev => {
     const next = new Set(prev);
     next.has(id) ? next.delete(id) : next.add(id);
@@ -1064,18 +1116,18 @@ export default function StaffPage() {
   };
   const clearSelection = () => setSelected(new Set());
 
-  // CRUD
+  // ── CRUD ──────────────────────────────────────────────────────────────────
   const handleAdd = async (form) => {
     await adminApi.addStaff(form);
     toast.success(`${form.name} जोड़ा गया`);
-    refresh(); loadAssigned(true); loadReserve(true);
+    loadAssigned(1); loadReserve(1);
   };
 
   const handleEdit = async (form) => {
     await adminApi.updateStaff(editTarget.id, form);
     toast.success('स्टाफ अपडेट किया गया');
     setEditTarget(null);
-    loadAssigned(true); loadReserve(true);
+    reloadBoth();
   };
 
   const handleDelete = async () => {
@@ -1083,7 +1135,7 @@ export default function StaffPage() {
     try {
       await adminApi.deleteStaff(s.id);
       toast.success(`${s.name} हटाया गया`);
-      refresh(); loadAssigned(true); loadReserve(true);
+      loadAssigned(1); loadReserve(1);
     } catch (e) { toast.error(e.message); }
     setDeleteTarget(null);
   };
@@ -1094,14 +1146,12 @@ export default function StaffPage() {
       if (s.dutyId) await adminApi.removeAssignment(s.dutyId);
       else await adminApi.deleteStaff(`${s.id}/duty`);
       toast.success(`${s.name} रिज़र्व में भेजा गया`);
-      refresh(); loadAssigned(true); loadReserve(true);
+      loadAssigned(assignedPage); loadReserve(reservePage);
     } catch (e) { toast.error(e.message); }
   };
 
   const handleBulkDelete = async () => {
     try {
-      const res = await adminApi.getStaff({ staffIds: [...selected] }); // placeholder
-      // Use the bulk-delete endpoint
       const resp = await fetch(`${(await import('../../api/client')).default.defaults.baseURL}/admin/staff/bulk-delete`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) },
@@ -1109,7 +1159,7 @@ export default function StaffPage() {
       });
       const data = await resp.json();
       toast.success(`${data.data?.deleted ?? 0} स्टाफ हटाए गए`);
-      clearSelection(); refresh(); loadAssigned(true); loadReserve(true);
+      clearSelection(); loadAssigned(1); loadReserve(1);
     } catch (e) { toast.error(e.message); }
     setBulkDeleteConfirm(false);
   };
@@ -1127,7 +1177,7 @@ export default function StaffPage() {
       });
       const data = await resp.json();
       toast.success(`${data.data?.removed ?? 0} बूथ स्टाफ रिज़र्व में`);
-      clearSelection(); refresh(); loadAssigned(true); loadReserve(true);
+      clearSelection(); loadAssigned(1); loadReserve(1);
     } catch (e) { toast.error(e.message); }
     setBulkUnassignConfirm(false);
   };
@@ -1141,16 +1191,15 @@ export default function StaffPage() {
     });
     const data = await resp.json();
     toast.success(`${data.data?.assigned ?? 0} स्टाफ असाइन`);
-    clearSelection(); refresh(); loadAssigned(true); loadReserve(true);
+    clearSelection(); loadAssigned(1); loadReserve(1);
   };
 
   const handleAssign = async (s, center, busNo) => {
     await adminApi.assignDuty({ staffId: s.id, centerId: center.id, busNo });
     toast.success(`${s.name} असाइन किया गया`);
-    refresh(); loadAssigned(true); loadReserve(true);
+    loadAssigned(assignedPage); loadReserve(reservePage);
   };
 
-  // File handling
   const handleFileChange = async (e) => {
     const file = e.target.files[0];
     if (!file) return;
@@ -1159,12 +1208,8 @@ export default function StaffPage() {
     const bytes = await file.arrayBuffer().then(b => new Uint8Array(b));
     const ext = file.name.split('.').pop().toLowerCase();
     let rows = [];
-    if (ext === 'csv') {
-      rows = await parseCSV(bytes);
-    } else {
-      const result = await parseExcel(bytes);
-      rows = result.rows || [];
-    }
+    if (ext === 'csv') rows = await parseCSV(bytes);
+    else { const result = await parseExcel(bytes); rows = result.rows || []; }
     setFileLoading(false);
     if (!rows.length) { toast.error('कोई डेटा नहीं मिला'); return; }
     setPreviewRows(rows);
@@ -1176,61 +1221,48 @@ export default function StaffPage() {
   };
 
   const totalAll = assignedTotal + reserveTotal;
+  const assignedTotalPages = Math.ceil(assignedTotal / PAGE_SIZE) || 1;
+  const reserveTotalPages = Math.ceil(reserveTotal / PAGE_SIZE) || 1;
 
-  // Current list
-  const currentList = activeTab === 0 ? assigned : reserve;
-
+  // ── Render ────────────────────────────────────────────────────────────────
   return (
     <>
-      <style>{`
-        @keyframes spin { to { transform: rotate(360deg); } }
-        * { box-sizing: border-box; }
-      `}</style>
+      <style>{`@keyframes spin { to { transform: rotate(360deg); } } * { box-sizing: border-box; }`}</style>
 
       <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: colors.bg, fontFamily: 'system-ui, sans-serif' }}>
 
-        {/* ── Top toolbar ── */}
+        {/* Top toolbar */}
         <div style={{ background: colors.surface, padding: '10px 12px 8px', display: 'flex', gap: 8, alignItems: 'center', flexShrink: 0 }}>
           <div style={{ flex: 1, position: 'relative' }}>
             <Search size={16} color={colors.subtle} style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%)', pointerEvents: 'none' }} />
-            <input
-              placeholder="नाम, PNO, मोबाइल, थाना खोजें..."
-              onChange={e => debouncedQ(e.target.value)}
-              style={{ ...fieldStyle(true), width: '100%', paddingRight: 36 }}
-            />
+            <input placeholder="नाम, PNO, मोबाइल, थाना खोजें..." onChange={e => debouncedQ(e.target.value)}
+              style={{ ...fieldStyle(true), width: '100%', paddingRight: 36 }} />
           </div>
-
           <button onClick={() => setModal('add')} style={{ padding: '9px 11px', background: colors.primary, color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
             <Plus size={14} /> जोड़ें
           </button>
-
-          {/* Upload button */}
           {fileLoading || up.phase === 'parsing'
-            ? <div style={{ padding: '9px 11px', background: colors.dark, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-                <Spinner size={14} /> <span style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>लोड...</span>
-              </div>
+            ? <div style={{ padding: '9px 11px', background: colors.dark, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 6 }}><Spinner size={14} /><span style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>लोड...</span></div>
             : up.phase !== 'idle' && up.phase !== 'done' && up.phase !== 'error'
               ? <div style={{ padding: '9px 11px', background: colors.dark, borderRadius: 10, display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <div style={{ width: 14, height: 14, border: `2px solid ${colors.border}40`, borderTop: `2px solid ${colors.border}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
-                  <span style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>{Math.round(((up.parsePct * 0.15) + (up.hashPct * 0.30) + (up.insertPct * 0.55)) * 100)}%</span>
-                </div>
+                <div style={{ width: 14, height: 14, border: `2px solid ${colors.border}40`, borderTop: `2px solid ${colors.border}`, borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} />
+                <span style={{ color: 'white', fontSize: 12, fontWeight: 700 }}>{Math.round(((up.parsePct * 0.15) + (up.hashPct * 0.30) + (up.insertPct * 0.55)) * 100)}%</span>
+              </div>
               : <button onClick={() => setShowUploadHint(true)} style={{ padding: '9px 11px', background: colors.dark, color: 'white', border: 'none', borderRadius: 10, cursor: 'pointer', display: 'flex', alignItems: 'center', gap: 4, fontSize: 12, fontWeight: 700, flexShrink: 0 }}>
-                  <Upload size={14} /> Upload
-                </button>
+                <Upload size={14} /> Upload
+              </button>
           }
-
           <input ref={fileRef} type="file" accept=".csv,.xlsx,.xls" hidden onChange={handleFileChange} />
         </div>
 
-        {/* ── Rank filter chips ── */}
+        {/* Rank chips */}
         <div style={{ background: colors.bg, padding: '6px 12px 4px', overflowX: 'auto', display: 'flex', flexShrink: 0 }}>
           {ALL_RANKS.map(rank => (
-            <RankChip key={rank} rank={rank} selected={rankFilter === rank}
-              onClick={() => { setRankFilter(rank); }} />
+            <RankChip key={rank} rank={rank} selected={rankFilter === rank} onClick={() => setRankFilter(rank)} />
           ))}
         </div>
 
-        {/* ── Armed filter ── */}
+        {/* Armed filter */}
         <div style={{ background: colors.bg, padding: '2px 12px 6px', display: 'flex', alignItems: 'center', gap: 6, flexShrink: 0 }}>
           <Shield size={13} color={colors.subtle} />
           {['All', 'Armed', 'Unarmed'].map(opt => {
@@ -1238,187 +1270,115 @@ export default function StaffPage() {
             const c = opt === 'Armed' ? colors.armed : opt === 'Unarmed' ? colors.unarmed : colors.subtle;
             const label = opt === 'All' ? 'सभी' : opt === 'Armed' ? '🔫 सशस्त्र' : '🛡 निःशस्त्र';
             return (
-              <div key={opt} onClick={() => setArmedFilter(opt)} style={{
-                padding: '5px 10px', borderRadius: 16, cursor: 'pointer', marginRight: 0,
-                background: isSel ? `${c}26` : 'white',
-                border: `${isSel ? 1.5 : 1}px solid ${isSel ? c : colors.border + '66'}`,
-                color: isSel ? c : colors.subtle, fontSize: 11, fontWeight: isSel ? 800 : 500,
-                transition: 'all 0.15s',
-              }}>
+              <div key={opt} onClick={() => setArmedFilter(opt)} style={{ padding: '5px 10px', borderRadius: 16, cursor: 'pointer', background: isSel ? `${c}26` : 'white', border: `${isSel ? 1.5 : 1}px solid ${isSel ? c : colors.border + '66'}`, color: isSel ? c : colors.subtle, fontSize: 11, fontWeight: isSel ? 800 : 500, transition: 'all 0.15s' }}>
                 {label}
               </div>
             );
           })}
         </div>
 
-        {/* ── Summary row ── */}
+        {/* Summary */}
         <div style={{ background: colors.bg, padding: '2px 12px 6px', display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
           <SummaryChip label="कुल" count={totalAll} color={colors.primary} />
           <SummaryChip label="असाइन" count={assignedTotal} color={colors.success} />
           <SummaryChip label="रिज़र्व" count={reserveTotal} color={colors.accent} />
           <div style={{ flex: 1 }} />
-          {(q || rankFilter !== 'All' || armedFilter !== 'All') && (
+          {(q || rankFilter !== 'All' || armedFilter !== 'All' || cardFilter !== 'All') && (
             <span style={{ padding: '3px 8px', background: `${colors.info}14`, border: `1px solid ${colors.info}33`, borderRadius: 6, fontSize: 10, fontWeight: 700, color: colors.info }}>फ़िल्टर सक्रिय</span>
           )}
-          <button onClick={() => { setRankFilter('All'); setArmedFilter('All'); setQ(''); loadAssigned(true); loadReserve(true); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }} title="रिफ्रेश">
+          <button onClick={() => { setRankFilter('All'); setArmedFilter('All'); setCardFilter('All'); setQ(''); }} style={{ background: 'none', border: 'none', cursor: 'pointer', padding: 4 }} title="रिफ्रेश">
             <RefreshCw size={16} color={colors.subtle} />
           </button>
         </div>
 
-        {/* ── Tabs ── */}
+        {/* Tabs */}
         <div style={{ background: colors.bg, display: 'flex', borderBottom: `2px solid ${colors.border}33`, flexShrink: 0 }}>
           {[`असाइन (${assignedTotal})`, `रिज़र्व (${reserveTotal})`].map((label, idx) => (
-            <div key={idx} onClick={() => setActiveTab(idx)}
+            <div key={idx} onClick={() => { setActiveTab(idx); if (idx === 1 && cardFilter === 'Pending') setCardFilter('All'); }}
               style={{ flex: 1, padding: '10px 16px', textAlign: 'center', cursor: 'pointer', fontWeight: activeTab === idx ? 800 : 500, fontSize: 12, color: activeTab === idx ? colors.primary : colors.subtle, borderBottom: `3px solid ${activeTab === idx ? colors.primary : 'transparent'}`, transition: 'all 0.15s', marginBottom: -2 }}>
               {label}
             </div>
           ))}
         </div>
 
-        {/* ── Selection bar ── */}
+        {/* Selection bar */}
         {selectMode && (
           <div style={{ flexShrink: 0, paddingTop: 8 }}>
-            <SelectionBar
-              count={selected.size}
-              isAssignedTab={activeTab === 0}
-              onSelectAll={selectAll}
-              onClear={clearSelection}
+            <SelectionBar count={selected.size} isAssignedTab={activeTab === 0}
+              onSelectAll={selectAll} onClear={clearSelection}
               onBulkDelete={() => setBulkDeleteConfirm(true)}
               onBulkUnassign={() => setBulkUnassignConfirm(true)}
-              onBulkAssign={() => setShowBulkAssign(true)}
-            />
+              onBulkAssign={() => setShowBulkAssign(true)} />
           </div>
         )}
 
         {/* ── Staff list ── */}
-        <div
-          ref={activeTab === 0 ? assignedScrollRef : reserveScrollRef}
-          onScroll={activeTab === 0 ? handleAssignedScroll : handleReserveScroll}
-          style={{ flex: 1, overflowY: 'auto', padding: '10px 12px 120px' }}
-        >
+        <div style={{ flex: 1, overflowY: 'auto', padding: '10px 12px 16px' }}>
           {(() => {
             const list = activeTab === 0 ? assigned : reserve;
             const loading = activeTab === 0 ? assignedLoading : reserveLoading;
-            const hasMore = activeTab === 0 ? assignedHasMore : reserveHasMore;
             const emptyMsg = activeTab === 0
               ? (q ? `"${q}" के लिए कोई result नहीं` : 'कोई असाइन स्टाफ नहीं')
               : (q ? `"${q}" के लिए कोई result नहीं` : 'सभी स्टाफ असाइन हैं!');
 
-            if (list?.length === 0 && loading) {
+            if (list.length === 0 && loading)
               return <div style={{ display: 'flex', justifyContent: 'center', paddingTop: 40 }}><Spinner color={colors.primary} size={32} /></div>;
-            }
-            if (list.length === 0) {
+
+            if (list.length === 0)
               return (
                 <div style={{ textAlign: 'center', padding: 40 }}>
                   <FileText size={52} color={`${colors.subtle}66`} style={{ margin: '0 auto 14px' }} />
                   <p style={{ color: colors.subtle, fontSize: 13 }}>{emptyMsg}</p>
                 </div>
               );
-            }
-            return (
-              <>
-                {list.map(s => (
-                  <StaffCard key={s.id} s={s}
-                    assigned={activeTab === 0}
-                    selected={selected.has(s.id)}
-                    selectMode={selectMode}
-                    onToggle={toggleSelect}
-                    onEdit={(s) => { setEditTarget(s); setModal('edit'); }}
-                    onDelete={(s) => setDeleteTarget(s)}
-                    onAssign={(s) => setAssignTarget({ type: 'single', staff: s })}
-                    onRemoveDuty={handleRemoveDuty}
-                  />
-                ))}
-                {hasMore && (
-                  <div style={{ display: 'flex', justifyContent: 'center', padding: 16 }}>
-                    <Spinner color={colors.primary} size={20} />
-                  </div>
-                )}
-              </>
-            );
+
+            return list.map(s => (
+              <StaffCard key={s.id} s={s}
+                assigned={activeTab === 0}
+                selected={selected.has(s.id)}
+                selectMode={selectMode}
+                onToggle={toggleSelect}
+                onEdit={(s) => { setEditTarget(s); setModal('edit'); }}
+                onDelete={(s) => setDeleteTarget(s)}
+                onAssign={(s) => setAssignTarget({ type: 'single', staff: s })}
+                onRemoveDuty={handleRemoveDuty} />
+            ));
           })()}
         </div>
+
+        {/* ── Pagination ── */}
+        {(() => {
+          const totalPages = activeTab === 0 ? assignedTotalPages : reserveTotalPages;
+          const page = activeTab === 0 ? assignedPage : reservePage;
+          const onPage = (p) => activeTab === 0 ? loadAssigned(p) : loadReserve(p);
+          return <Pagination page={page} totalPages={totalPages} onPage={onPage} />;
+        })()}
+
       </div>
 
-      {/* ── Modals ── */}
+      {/* Modals */}
+      {modal === 'add' && <StaffFormDialog onSave={handleAdd} onClose={() => setModal(null)} />}
+      {modal === 'edit' && editTarget && <StaffFormDialog initial={editTarget} onSave={handleEdit} onClose={() => { setModal(null); setEditTarget(null); }} />}
 
-      {modal === 'add' && (
-        <StaffFormDialog onSave={handleAdd} onClose={() => setModal(null)} />
-      )}
-
-      {modal === 'edit' && editTarget && (
-        <StaffFormDialog initial={editTarget} onSave={handleEdit} onClose={() => { setModal(null); setEditTarget(null); }} />
-      )}
-
-      {/* Single assign */}
       {assignTarget?.type === 'single' && (
-        <AssignDialog
-          title="ड्यूटी असाइन करें"
-          staffCard={<StaffInfoCard s={assignTarget.staff} />}
+        <AssignDialog title="ड्यूटी असाइन करें" staffCard={<StaffInfoCard s={assignTarget.staff} />}
           onAssign={(center, busNo) => { setAssignTarget(null); handleAssign(assignTarget.staff, center, busNo); }}
-          onClose={() => setAssignTarget(null)}
-          assignLabel="ड्यूटी असाइन करें"
-        />
+          onClose={() => setAssignTarget(null)} assignLabel="ड्यूटी असाइन करें" />
       )}
 
-      {/* Bulk assign */}
       {showBulkAssign && (
-        <AssignDialog
-          title={`${selected.size} स्टाफ को असाइन करें`}
+        <AssignDialog title={`${selected.size} स्टाफ को असाइन करें`}
           onAssign={async (center, busNo) => { setShowBulkAssign(false); await handleBulkAssign(center, busNo); }}
-          onClose={() => setShowBulkAssign(false)}
-          assignLabel={`${selected.size} असाइन करें`}
-        />
+          onClose={() => setShowBulkAssign(false)} assignLabel={`${selected.size} असाइन करें`} />
       )}
 
-      {/* Upload hint */}
-      {showUploadHint && (
-        <UploadHintDialog
-          onConfirm={() => { setShowUploadHint(false); fileRef.current?.click(); }}
-          onClose={() => setShowUploadHint(false)}
-        />
-      )}
+      {showUploadHint && <UploadHintDialog onConfirm={() => { setShowUploadHint(false); fileRef.current?.click(); }} onClose={() => setShowUploadHint(false)} />}
+      {previewRows && <PreviewDialog rows={previewRows} onUpload={doUpload} onClose={() => setPreviewRows(null)} />}
 
-      {/* Preview */}
-      {previewRows && (
-        <PreviewDialog
-          rows={previewRows}
-          onUpload={doUpload}
-          onClose={() => setPreviewRows(null)}
-        />
-      )}
+      <ConfirmDialog open={!!deleteTarget} title="स्टाफ हटाएं" message={`"${deleteTarget?.name}" को स्थायी रूप से हटाएं?`} confirmText="हटाएं" onConfirm={handleDelete} onCancel={() => setDeleteTarget(null)} />
+      <ConfirmDialog open={bulkDeleteConfirm} title={`${selected.size} स्टाफ हटाएं`} message={`${selected.size} स्टाफ को स्थायी रूप से हटाएं?`} confirmText="हटाएं" onConfirm={handleBulkDelete} onCancel={() => setBulkDeleteConfirm(false)} />
+      <ConfirmDialog open={bulkUnassignConfirm} title="ड्यूटी हटाएं" message="चुने गए बूथ स्टाफ रिज़र्व में जाएंगे।" confirmText="हटाएं" onConfirm={handleBulkUnassign} onCancel={() => setBulkUnassignConfirm(false)} />
 
-      {/* Delete confirm */}
-      <ConfirmDialog
-        open={!!deleteTarget}
-        title="स्टाफ हटाएं"
-        message={`"${deleteTarget?.name}" को स्थायी रूप से हटाएं?`}
-        confirmText="हटाएं"
-        onConfirm={handleDelete}
-        onCancel={() => setDeleteTarget(null)}
-      />
-
-      {/* Bulk delete confirm */}
-      <ConfirmDialog
-        open={bulkDeleteConfirm}
-        title={`${selected.size} स्टाफ हटाएं`}
-        message={`${selected.size} स्टाफ को स्थायी रूप से हटाएं?`}
-        confirmText="हटाएं"
-        onConfirm={handleBulkDelete}
-        onCancel={() => setBulkDeleteConfirm(false)}
-      />
-
-      {/* Bulk unassign confirm */}
-      <ConfirmDialog
-        open={bulkUnassignConfirm}
-        title="ड्यूटी हटाएं"
-        message="चुने गए बूथ स्टाफ रिज़र्व में जाएंगे।"
-        confirmText="हटाएं"
-        onConfirm={handleBulkUnassign}
-        onCancel={() => setBulkUnassignConfirm(false)}
-      />
-
-      {/* Floating upload progress banner */}
       <UploadProgressBanner />
     </>
   );
