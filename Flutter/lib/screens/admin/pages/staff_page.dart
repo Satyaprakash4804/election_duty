@@ -630,9 +630,14 @@ class _StaffPageState extends State<StaffPage>
                   ss(() => saving = true);
                   try {
                     final token = await AuthService.getToken();
-                    final res = await ApiService.post('/admin/staff/bulk-assign',
-                        {'staffIds': selectedIds, 'centerId': selectedCenter!['id']},
-                        token: token);
+                    final res = await ApiService.post(
+                      '/admin/staff/bulk-assign',
+                      {
+                        'staffIds': selectedIds,
+                        'centerId': selectedCenter!['id'],
+                        'mode': 'manual',   // ✅ MUST BE INSIDE MAP
+                      },
+                    );
                     if (ctx.mounted) Navigator.pop(ctx);
                     _snack('${res['data']?['assigned'] ?? 0} स्टाफ असाइन');
                     _clearSelection();
@@ -750,12 +755,23 @@ class _StaffPageState extends State<StaffPage>
               : () async {
                   ss(() => saving = true);
                   try {
-                    await ApiService.post('/admin/duties',
-                        {'staffId': staff['id'], 'centerId': selectedCenter!['id']},
-                        token: await AuthService.getToken());
+                    await ApiService.post(
+                      '/admin/duties',
+                      {
+                        'staffId': staff['id'],
+                        'centerId': selectedCenter!['id'],
+                        'mode': 'manual', // ✅ MUST ADD THIS
+                      },
+                      token: await AuthService.getToken(),
+                    );
+
                     if (ctx.mounted) Navigator.pop(ctx);
+
                     _snack('${_v(staff['name'])} असाइन किया गया');
                     _refresh();
+
+                  } catch (e) {
+                    _snack(_msg(e), error: true);
                   } catch (e) {
                     ss(() => saving = false);
                     _snack(_msg(e), error: true);
