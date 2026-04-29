@@ -413,3 +413,85 @@ def get_form_data():
         conn.close()
 
     return ok(rows)
+
+@super_admin_bp.route("/unlock-requests", methods=["GET"])
+@super_admin_required
+def get_unlock_requests():
+
+    district = _district()
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT r.*, sz.name AS super_zone_name, u.name AS admin_name
+                FROM sz_unlock_requests r
+                JOIN super_zones sz ON sz.id = r.super_zone_id
+                JOIN users u ON u.id = r.requested_by
+                WHERE sz.district=%s
+                ORDER BY r.created_at DESC
+            """, (district,))
+
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+
+    return ok(rows)
+
+
+@super_admin_bp.route("/unlock-requests/<int:req_id>/action", methods=["POST"])
+@super_admin_required
+def handle_unlock_request(req_id):
+
+    body = request.get_json() or {}
+    action = body.get("action")
+
+    if action not in ["approve", "reject"]:
+        return err("Invalid action")
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT * FROM sz_unlock_requests
+                WHERE id=%s AND status='pending'
+            """, (req_id,))
+            req = cur.fetchone()
+
+            if not req:
+                return err("Request not found")
+
+            if action == "approve":
+
+                # 🔓 UNLOCK
+                cur.execute("""
+                    UPDATE sz_duty_locks
+                    SET is_locked=0, status='unlocked'
+                    WHERE super_zone_id=%s
+                """, (req["super_zone_id"],))
+
+                new_status = "approved"
+
+            else:
+                new_status = "rejected"
+
+                # 🔁 revert status
+                cur.execute("""
+                    UPDATE sz_duty_locks
+                    SET status='locked'
+                    WHERE super_zone_id=%s
+                """, (req["super_zone_id"],))
+
+            cur.execute("""
+                UPDATE sz_unlock_requests
+                SET status=%s, reviewed_by=%s
+                WHERE id=%s
+            """, (new_status, request.user["id"], req_id))
+
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, f"Request {new_status}")
+

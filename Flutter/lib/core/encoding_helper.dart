@@ -92,17 +92,35 @@ String krutidevToUnicode(String str) {
 }
 
 bool isKrutidev(String text) {
-  if (text.length < 2) return false;
+  if (text.length < 3) return false;
+
+  // अगर पहले से ही देवनागरी है → DON'T TOUCH
   final hasDevanagari = RegExp(r'[\u0900-\u097F]').hasMatch(text);
   if (hasDevanagari) return false;
-  final krutidevPattern = RegExp(r'[vkbZmÅ,tslgdjrniepQcHkyoVMBNFG{K]');
-  return krutidevPattern.hasMatch(text);
+
+  // Pure English word (letters + spaces) → DON'T TOUCH
+  final isPureEnglish = RegExp(r'^[A-Za-z\s]+$').hasMatch(text);
+  if (isPureEnglish) return false;
+
+  // Krutidev usually has special mixed characters
+  final krutiPattern = RegExp(r'[{}=<>~`^|\\]');
+  final hasSpecial = krutiPattern.hasMatch(text);
+
+  // Also check uncommon letter mix (not normal English words)
+  final weirdMix = RegExp(r'[vkZjhfdq]').hasMatch(text);
+
+  return hasSpecial || weirdMix;
 }
 
 String normalizeCell(dynamic val) {
   final str = (val ?? '').toString().trim();
   if (str.isEmpty) return str;
-  if (isKrutidev(str)) return krutidevToUnicode(str);
+
+  if (isKrutidev(str)) {
+    return krutidevToUnicode(str);
+  }
+
+  // DO NOT TOUCH English or Unicode Hindi
   return str;
 }
 

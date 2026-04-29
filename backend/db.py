@@ -345,6 +345,7 @@ def init_db():
                     gram_panchayat_id INT          NOT NULL,
                     thana             VARCHAR(150) DEFAULT '',
                     center_type       ENUM('A++','A','B','C') NOT NULL DEFAULT 'C',
+                    booth_count INT NOT NULL DEFAULT 1,
                     bus_no            VARCHAR(50)  DEFAULT '',
                     latitude          DECIMAL(10,7),
                     longitude         DECIMAL(10,7),
@@ -490,6 +491,43 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            cur.execute("""
+                        CREATE TABLE IF NOT EXISTS sz_duty_locks (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            super_zone_id INT UNIQUE,
+                            is_locked TINYINT(1) DEFAULT 0,
+                            status ENUM('locked','unlock_requested','unlocked') DEFAULT 'unlocked',
+                            unlock_reason TEXT,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                        """)
+            
+            cur.execute("""
+                        CREATE TABLE IF NOT EXISTS sz_assign_jobs (
+                            id INT AUTO_INCREMENT PRIMARY KEY,
+                            super_zone_id INT,
+                            status ENUM('pending','running','done','error') DEFAULT 'pending',
+                            total_centers INT DEFAULT 0,
+                            done_centers INT DEFAULT 0,
+                            error_msg TEXT,
+                            created_by INT,
+                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                        )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+                        """)
+            
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sz_unlock_requests (
+                    id INT AUTO_INCREMENT PRIMARY KEY,
+                    super_zone_id INT,
+                    requested_by INT,
+                    reason TEXT,
+                    status ENUM('pending','approved','rejected') DEFAULT 'pending',
+                    reviewed_by INT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+            
+           
             # ─────────────────────────────────────────────────────────────────
             #  AUTO-ADD MISSING COLUMNS (safe for existing databases)
             # ─────────────────────────────────────────────────────────────────
@@ -513,7 +551,7 @@ def init_db():
             ensure_column(cur, db, "matdan_sthal", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "thana VARCHAR(150) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "center_type ENUM('A++','A','B','C') NOT NULL DEFAULT 'C'")
-           
+            ensure_column(cur, db, "matdan_sthal", "booth_count INT NOT NULL DEFAULT 1")
             ensure_column(cur, db, "duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "duty_assignments", "card_downloaded TINYINT(1) NOT NULL DEFAULT 0")
 

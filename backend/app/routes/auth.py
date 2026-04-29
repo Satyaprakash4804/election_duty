@@ -92,3 +92,34 @@ def logout():
     resp = make_response(ok(None, "Logged out"))
     resp.set_cookie("token", "", expires=0)
     return resp
+
+
+@auth_bp.route("/auth/me", methods=["GET"])
+def me():
+    try:
+        token = None
+
+        # 🔹 Header token
+        auth_header = request.headers.get("Authorization", "")
+        if auth_header.startswith("Bearer "):
+            token = auth_header.split(" ")[1]
+
+        # 🔹 Cookie fallback
+        if not token:
+            token = request.cookies.get("token")
+
+        if not token:
+            return err("Token missing", 401)
+
+        decoded = jwt.decode(token, Config.JWT_SECRET, algorithms=["HS256"])
+
+        return ok({
+            "id": decoded.get("id"),
+            "name": decoded.get("name"),
+            "role": decoded.get("role"),
+            "district": decoded.get("district"),
+        })
+
+    except Exception as e:
+        print("❌ AUTH ME ERROR:", e)
+        return err("Invalid token", 401)
