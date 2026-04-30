@@ -680,6 +680,8 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
           bottom: TabBar(
             controller: _tabCtrl,
             indicatorColor: Colors.white,
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white70,
             indicatorWeight: 3,
             labelStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.w800),
             unselectedLabelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),

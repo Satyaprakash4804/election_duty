@@ -1429,13 +1429,13 @@ def get_staff():
     armed       = request.args.get("armed", "").strip().lower()
     page, limit, offset = _page_params()
 
-    # ALL staff is visible to ALL admins across all districts
     conn = get_db()
     try:
         with conn.cursor() as cur:
             params = []
             where_parts = ["u.role='staff'"]
 
+            # 🔍 SEARCH
             if search:
                 where_parts.append(
                     "(u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s "
@@ -1444,22 +1444,27 @@ def get_staff():
                 like = f"%{search}%"
                 params.extend([like, like, like, like, like])
 
+            # 🎖️ RANK FILTER
             if rank_filter:
                 where_parts.append("u.user_rank = %s")
                 params.append(rank_filter)
 
+            # 🔥 FIXED: INCLUDE DISTRICT DUTY
             OFFICER_EXISTS = """(
                 EXISTS (SELECT 1 FROM duty_assignments da WHERE da.staff_id=u.id)
                 OR EXISTS (SELECT 1 FROM kshetra_officers ko WHERE ko.user_id=u.id)
                 OR EXISTS (SELECT 1 FROM zonal_officers zo WHERE zo.user_id=u.id)
                 OR EXISTS (SELECT 1 FROM sector_officers so WHERE so.user_id=u.id)
+                OR EXISTS (SELECT 1 FROM district_duty_assignments dda WHERE dda.staff_id=u.id)
             )"""
 
+            # 🎯 ASSIGNED FILTER
             if assigned == "yes":
                 where_parts.append(OFFICER_EXISTS)
             elif assigned == "no":
                 where_parts.append(f"NOT {OFFICER_EXISTS}")
 
+            # 🔫 ARMED FILTER
             if armed == "yes":
                 where_parts.append("u.is_armed = 1")
             elif armed == "no":
@@ -1467,27 +1472,42 @@ def get_staff():
 
             where_sql = " AND ".join(where_parts)
 
+            # 📊 COUNT
             cur.execute(f"""
                 SELECT COUNT(*) AS cnt FROM users u WHERE {where_sql}
             """, params)
             total = cur.fetchone()["cnt"]
 
+            # 📥 FETCH DATA
             cur.execute(f"""
                 SELECT
                     u.id, u.name, u.pno, u.mobile, u.thana,
                     u.district, u.user_rank, u.is_armed,
+
+                    -- Booth
                     (SELECT ms.name FROM duty_assignments da
                      JOIN matdan_sthal ms ON ms.id=da.sthal_id
                      WHERE da.staff_id=u.id LIMIT 1) AS center_name,
+
+                    -- Kshetra
                     (SELECT sz.name FROM kshetra_officers ko
                      JOIN super_zones sz ON sz.id=ko.super_zone_id
                      WHERE ko.user_id=u.id LIMIT 1) AS sz_name,
+
+                    -- Zone
                     (SELECT z.name FROM zonal_officers zo
                      JOIN zones z ON z.id=zo.zone_id
                      WHERE zo.user_id=u.id LIMIT 1) AS zone_name,
+
+                    -- Sector
                     (SELECT s.name FROM sector_officers so
                      JOIN sectors s ON s.id=so.sector_id
-                     WHERE so.user_id=u.id LIMIT 1) AS sector_name
+                     WHERE so.user_id=u.id LIMIT 1) AS sector_name,
+
+                    -- ✅ NEW: District Duty
+                    (SELECT dda.duty_type FROM district_duty_assignments dda
+                     WHERE dda.staff_id=u.id LIMIT 1) AS district_duty
+
                 FROM users u
                 WHERE {where_sql}
                 ORDER BY u.name
@@ -1499,20 +1519,31 @@ def get_staff():
     finally:
         conn.close()
 
+    # 🎯 FORMAT RESPONSE
     data = []
     for r in rows:
-        if r["center_name"]:
+
+        # 🔥 PRIORITY: District first
+        if r["district_duty"]:
+            assign_type  = "district"
+            assign_label = r["district_duty"]
+
+        elif r["center_name"]:
             assign_type  = "booth"
             assign_label = r["center_name"]
+
         elif r["sz_name"]:
             assign_type  = "kshetra"
             assign_label = r["sz_name"]
+
         elif r["zone_name"]:
             assign_type  = "zone"
             assign_label = r["zone_name"]
+
         elif r["sector_name"]:
             assign_type  = "sector"
             assign_label = r["sector_name"]
+
         else:
             assign_type  = ""
             assign_label = ""
@@ -1533,6 +1564,7 @@ def get_staff():
 
     return _paginated(data, total, page, limit)
 
+    
 
 @admin_bp.route("/staff/search", methods=["GET"])
 @admin_required
@@ -3664,6 +3696,14 @@ def start_district_assign():
     )
 
     return ok(result, "District auto assign completed")
+# ✅ ADD THIS AT TOP (MANDATORY)
+FALLBACK = {
+    "SI": ["Head Constable", "Constable", "Aux"],
+    "Head Constable": ["Constable", "Aux"],
+    "Constable": ["Aux"],
+    "Aux": []
+}
+
 
 def auto_assign_district(admin_id, created_by):
 
@@ -3672,6 +3712,10 @@ def auto_assign_district(admin_id, created_by):
     try:
         with conn.cursor() as cur:
 
+            # 🟢 GLOBAL TRACKING (VERY IMPORTANT)
+            globally_used_ids = set()
+            shortages = []
+
             # 🟢 1. Create job
             cur.execute("""
                 INSERT INTO district_duty_jobs (admin_id, status, created_by)
@@ -3679,7 +3723,7 @@ def auto_assign_district(admin_id, created_by):
             """, (admin_id, created_by))
             job_id = cur.lastrowid
 
-            # 🟢 2. Get all rules
+            # 🟢 2. Get rules
             cur.execute("""
                 SELECT * FROM district_rules
                 WHERE admin_id=%s
@@ -3699,7 +3743,7 @@ def auto_assign_district(admin_id, created_by):
             skipped_total = 0
             done_types = 0
 
-            # 🟢 3. LOOP ALL DUTY TYPES
+            # 🟢 3. LOOP RULES
             for rule in rules:
 
                 duty_type = rule["duty_type"]
@@ -3708,7 +3752,7 @@ def auto_assign_district(admin_id, created_by):
                 if sankhya <= 0:
                     continue
 
-                # 🟢 4. Get next batch number
+                # 🟢 4. Batch number
                 cur.execute("""
                     SELECT COALESCE(MAX(batch_no),0)+1 AS b
                     FROM district_duty_assignments
@@ -3716,44 +3760,94 @@ def auto_assign_district(admin_id, created_by):
                 """, (admin_id, duty_type))
                 batch_no = cur.fetchone()["b"]
 
-                # 🟢 5. STAFF PICK FUNCTION
-                def pick(rank, armed, count):
+                # 🟢 5. PICK FUNCTION
+                def pick(rank, armed, count, exclude_ids):
 
                     if count <= 0:
                         return []
 
-                    cur.execute("""
+                    query = """
                         SELECT id FROM users
                         WHERE role='staff'
                         AND user_rank=%s
                         AND is_armed=%s
                         AND is_active=1
-                        AND id NOT IN (
-                            SELECT staff_id FROM district_duty_assignments
-                        )
-                        LIMIT %s
-                    """, (rank, armed, count))
+                    """
 
+                    params = [rank, armed]
+
+                    # 🔥 exclude local + global
+                    all_excludes = set(exclude_ids) | globally_used_ids
+
+                    if all_excludes:
+                        placeholders = ",".join(["%s"] * len(all_excludes))
+                        query += f" AND id NOT IN ({placeholders})"
+                        params.extend(list(all_excludes))
+
+                    query += " ORDER BY RAND() LIMIT %s"
+                    params.append(count)
+
+                    cur.execute(query, tuple(params))
                     return cur.fetchall()
 
-                # 🟢 6. LOOP sankhya (THIS WAS MISSING ❌)
-                for i in range(sankhya):
+                # 🟢 6. LOOP sankhya
+                for _ in range(sankhya):
 
+                    used_ids = set()
                     staff_list = []
 
-                    staff_list += pick("SI", 1, rule["si_armed_count"])
-                    staff_list += pick("SI", 0, rule["si_unarmed_count"])
+                    def smart_collect(rank, armed, count, used_ids):
 
-                    staff_list += pick("Head Constable", 1, rule["hc_armed_count"])
-                    staff_list += pick("Head Constable", 0, rule["hc_unarmed_count"])
+                        selected = []
 
-                    staff_list += pick("Constable", 1, rule["const_armed_count"])
-                    staff_list += pick("Constable", 0, rule["const_unarmed_count"])
+                        # 1️⃣ Exact rank
+                        rows = pick(rank, armed, count, list(used_ids))
+                        for r in rows:
+                            used_ids.add(r["id"])
+                            globally_used_ids.add(r["id"])   # ✅ global lock
+                        selected += rows
 
-                    staff_list += pick("Aux", 1, rule["aux_armed_count"])
-                    staff_list += pick("Aux", 0, rule["aux_unarmed_count"])
+                        remaining = count - len(rows)
 
-                    # ❌ If no staff found → skip
+                        # 2️⃣ Fallback
+                        if remaining > 0:
+                            for fb_rank in FALLBACK.get(rank, []):
+                                rows = pick(fb_rank, armed, remaining, list(used_ids))
+                                for r in rows:
+                                    used_ids.add(r["id"])
+                                    globally_used_ids.add(r["id"])
+                                selected += rows
+
+                                remaining -= len(rows)
+
+                                if remaining <= 0:
+                                    break
+
+                        # 3️⃣ Track shortage
+                        if remaining > 0:
+                            shortages.append({
+                                "duty_type": duty_type,
+                                "rank": rank,
+                                "armed": armed,
+                                "missing": remaining
+                            })
+
+                        return selected
+
+                    # 🔹 Collect staff
+                    staff_list += smart_collect("SI", 1, rule["si_armed_count"], used_ids)
+                    staff_list += smart_collect("SI", 0, rule["si_unarmed_count"], used_ids)
+
+                    staff_list += smart_collect("Head Constable", 1, rule["hc_armed_count"], used_ids)
+                    staff_list += smart_collect("Head Constable", 0, rule["hc_unarmed_count"], used_ids)
+
+                    staff_list += smart_collect("Constable", 1, rule["const_armed_count"], used_ids)
+                    staff_list += smart_collect("Constable", 0, rule["const_unarmed_count"], used_ids)
+
+                    staff_list += smart_collect("Aux", 1, rule["aux_armed_count"], used_ids)
+                    staff_list += smart_collect("Aux", 0, rule["aux_unarmed_count"], used_ids)
+
+                    # ✅ SAFE MODE
                     if not staff_list:
                         skipped_total += 1
                         continue
@@ -3785,7 +3879,7 @@ def auto_assign_district(admin_id, created_by):
                     WHERE id=%s
                 """, (done_types, assigned_total, skipped_total, job_id))
 
-            # 🟢 Finish job
+            # 🟢 Finish
             cur.execute("""
                 UPDATE district_duty_jobs
                 SET status='done'
@@ -3797,7 +3891,8 @@ def auto_assign_district(admin_id, created_by):
         return {
             "jobId": job_id,
             "assigned": assigned_total,
-            "skipped": skipped_total
+            "skipped": skipped_total,
+            "shortages": shortages   # ✅ IMPORTANT OUTPUT
         }
 
     except Exception as e:
