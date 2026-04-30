@@ -136,12 +136,21 @@ class _BoothPageState extends State<BoothPage> {
   }
 
   void _showAssignDialog(Map center) {
+    final isLocked = (center['is_locked'] ?? 0) == 1;
+
+    if (isLocked) {
+      _snack('यह Super Zone locked है — बदलाव संभव नहीं', error: true);
+      return;
+    }
+
     showDialog(
       context: context,
-      barrierDismissible: false,
+      barrierDismissible: true,
       builder: (_) => _AssignDialog(
         center: center,
-        onAssigned: () => _loadCenters(reset: true),
+        onAssigned: () {
+          _loadCenters(reset: true);
+        },
       ),
     );
   }
@@ -466,6 +475,8 @@ class _DutiesDialogState extends State<_DutiesDialog> {
     final filtered = _filteredDuties;
     final screenH  = MediaQuery.of(context).size.height;
 
+    final bool isLocked = (widget.center['is_locked'] ?? 0) == 1;
+
     return Dialog(
       backgroundColor: Colors.transparent,
       child: ConstrainedBox(
@@ -566,6 +577,7 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                             }
                             return _DutyCard(
                               duty: filtered[i],
+                              isLocked: isLocked,
                               onRemove: () => _removeDuty(filtered[i]),
                             );
                           },
@@ -589,6 +601,7 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                   child: const Text('बंद करें'),
                 )),
                 const SizedBox(width: 12),
+                
                 Expanded(child: ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
                       backgroundColor: kPrimary,
@@ -596,7 +609,8 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                       padding: const EdgeInsets.symmetric(vertical: 12),
                       shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(10))),
-                  onPressed: () => widget.onAssign(context),
+                  
+                  onPressed: isLocked ? null : () => widget.onAssign(context),
                   icon: const Icon(Icons.person_add_outlined, size: 16),
                   label: const Text('स्टाफ जोड़ें'),
                 )),
@@ -614,72 +628,43 @@ class _DutiesDialogState extends State<_DutiesDialog> {
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutyCard extends StatelessWidget {
   final Map duty;
+  final bool isLocked;
   final VoidCallback onRemove;
-  const _DutyCard({required this.duty, required this.onRemove});
+
+  const _DutyCard({
+    required this.duty,
+    required this.onRemove,
+    required this.isLocked,
+  });
 
   @override
   Widget build(BuildContext context) {
     final d       = duty;
     final name    = '${d['name'] ?? ''}';
-    final rank    = '${d['rank'] ?? d['user_rank'] ?? ''}';
-    final thana   = '${d['staffThana'] ?? d['thana'] ?? ''}';
-    final isArmed = d['isArmed'] == true || d['is_armed'] == true || d['is_armed'] == 1;
+    final isArmed = d['isArmed'] == true || d['is_armed'] == 1;
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
         color: Colors.white,
+        border: Border.all(color: kBorder),
         borderRadius: BorderRadius.circular(10),
-        border: Border.all(
-            color: isArmed
-                ? kArmed.withOpacity(0.25)
-                : kBorder.withOpacity(0.4)),
       ),
       child: Row(children: [
 
-        // Avatar
-        Container(
-          width: 38, height: 38,
-          decoration: BoxDecoration(
-              color: isArmed ? kArmed.withOpacity(0.1) : kSurface,
-              shape: BoxShape.circle,
-              border: Border.all(
-                  color: isArmed ? kArmed.withOpacity(0.4) : kBorder)),
-          child: Center(child: Text(
-              name.isNotEmpty ? name[0].toUpperCase() : '?',
-              style: TextStyle(
-                  color: isArmed ? kArmed : kPrimary,
-                  fontSize: 15, fontWeight: FontWeight.w800))),
-        ),
-        const SizedBox(width: 10),
-
-        // Details
-        Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(name.isNotEmpty ? name : '—',
-                style: const TextStyle(
-                    color: kDark, fontWeight: FontWeight.w700, fontSize: 13))),
-            // शस्त्र status chip
-            _ArmedChip(isArmed: isArmed),
-          ]),
-          const SizedBox(height: 2),
-          Text('PNO: ${d['pno'] ?? ''}  •  ${d['mobile'] ?? ''}',
-              style: const TextStyle(color: kSubtle, fontSize: 11)),
-          if (rank.isNotEmpty || thana.isNotEmpty)
-            Text(
-              [if (rank.isNotEmpty) rank, if (thana.isNotEmpty) thana].join('  •  '),
+        Expanded(
+          child: Text(name,
               style: const TextStyle(
-                  color: kAccent, fontSize: 10, fontWeight: FontWeight.w600),
-            ),
-        ])),
+                fontWeight: FontWeight.bold,
+              )),
+        ),
 
-        // Remove button
+        _ArmedChip(isArmed: isArmed),
+
         IconButton(
-          icon: const Icon(Icons.remove_circle_outline, color: kError, size: 20),
-          onPressed: onRemove,
-          tooltip: 'ड्यूटी हटाएं',
+          icon: const Icon(Icons.delete, color: kError),
+          onPressed: isLocked ? null : onRemove,
         ),
       ]),
     );

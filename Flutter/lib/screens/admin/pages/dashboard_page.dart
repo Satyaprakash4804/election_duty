@@ -271,23 +271,38 @@ class _DashboardPageState extends State<DashboardPage>
 
   Widget _buildStatsGrid() {
     if (_stats == null) return const SizedBox.shrink();
-    final sw   = MediaQuery.of(context).size.width;
-    final cols = sw > 600 ? 4 : 2;
-    final items = [
-      _SI('Super Zones',  '${_stats!['superZones']     ?? 0}', Icons.layers_outlined,       kPrimary),
-      _SI('Total Booths', '${_stats!['totalBooths']    ?? 0}', Icons.location_on_outlined,   kSuccess),
-      _SI('Total Staff',  '${_stats!['totalStaff']     ?? 0}', Icons.badge_outlined,         kAccent),
-      _SI('Assigned',     '${_stats!['assignedDuties'] ?? 0}', Icons.how_to_vote_outlined,   kInfo),
-    ];
+
+    final sw = MediaQuery.of(context).size.width;
+
+    final crossAxisCount = sw > 900
+        ? 4
+        : sw > 600
+            ? 3
+            : 2;
+
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
+      itemCount: 4,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: cols, crossAxisSpacing: 10,
-        mainAxisSpacing: 10, childAspectRatio: sw > 600 ? 1.7 : 1.45,
+        crossAxisCount: crossAxisCount,
+        crossAxisSpacing: 10,
+        mainAxisSpacing: 10,
+        mainAxisExtent: 100, // ✅ FIXED HEIGHT (NO OVERFLOW)
       ),
-      itemCount: items.length,
-      itemBuilder: (_, i) => _StatCard(item: items[i]),
+      itemBuilder: (_, i) {
+        final items = [
+          _SI('Super Zones', '${_stats!['superZones'] ?? 0}',
+              Icons.layers_outlined, kPrimary),
+          _SI('Total Booths', '${_stats!['totalBooths'] ?? 0}',
+              Icons.location_on_outlined, kSuccess),
+          _SI('Total Staff', '${_stats!['totalStaff'] ?? 0}',
+              Icons.badge_outlined, kAccent),
+          _SI('Assigned', '${_stats!['assignedDuties'] ?? 0}',
+              Icons.how_to_vote_outlined, kInfo),
+        ];
+        return _StatCard(item: items[i]);
+      },
     );
   }
 
@@ -684,39 +699,60 @@ class _SI {
 class _StatCard extends StatelessWidget {
   final _SI item;
   const _StatCard({required this.item});
+
   @override
-  Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(14),
-      border: Border.all(color: item.color.withOpacity(0.18)),
-      boxShadow: [BoxShadow(
-          color: item.color.withOpacity(0.07),
-          blurRadius: 10, offset: const Offset(0, 4))],
-    ),
-    padding: const EdgeInsets.fromLTRB(13, 13, 13, 11),
-    child: Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-      children: [
-        Container(
-          padding: const EdgeInsets.all(7),
-          decoration: BoxDecoration(
-              color: item.color.withOpacity(0.1),
-              borderRadius: BorderRadius.circular(9)),
-          child: Icon(item.icon, color: item.color, size: 17),
-        ),
-        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(item.value, style: TextStyle(
-              fontSize: 24, fontWeight: FontWeight.w900,
-              color: item.color, height: 1)),
-          const SizedBox(height: 3),
-          Text(item.label, style: const TextStyle(
-              fontSize: 11, color: kSubtle, fontWeight: FontWeight.w500)),
-        ]),
-      ],
-    ),
-  );
+  Widget build(BuildContext context) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: item.color.withOpacity(0.18)),
+        boxShadow: [
+          BoxShadow(
+            color: item.color.withOpacity(0.07),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          )
+        ],
+      ),
+      padding: const EdgeInsets.all(10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(item.icon, color: item.color, size: 16),
+
+          const SizedBox(height: 6),
+
+          Expanded( // ✅ KEY FIX
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Text(
+                  item.value,
+                  style: TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: item.color,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  item.label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: kSubtle,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _Shimmer extends StatefulWidget {

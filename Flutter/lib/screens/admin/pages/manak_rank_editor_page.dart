@@ -15,35 +15,33 @@ const kPacColor = Color(0xFF00695C);
 
 // 5 fixed scale ranks
 class _RankDef {
-  final String key;          // 'si', 'hc', 'const', 'aux', 'pac'
+  final String key;
   final String label;
   final String hindi;
   final IconData icon;
-  final bool hasArmedSplit;  // SI/HC/Const → true (split into armed+unarmed)
-  final bool isDecimal;      // PAC → true (allows 0.5)
+  final bool hasArmedSplit;
+  final bool isDecimal;
   const _RankDef(this.key, this.label, this.hindi, this.icon,
       {this.hasArmedSplit = true, this.isDecimal = false});
 }
 
 const List<_RankDef> _kRanks = [
-  _RankDef('si',    'SI',        'उप निरीक्षक',     Icons.shield_outlined),
-  _RankDef('hc',    'HC',        'मुख्य आरक्षी',     Icons.military_tech_outlined),
-  _RankDef('const', 'Constable', 'आरक्षी',           Icons.person_outline),
-  _RankDef('aux',   'Aux Force', 'सहायक बल',         Icons.groups_outlined,
-           hasArmedSplit: false),
-  _RankDef('pac',   'PAC',       'पीएसी (सेक्शन)',  Icons.security_outlined,
+  _RankDef('si',    'SI',        'उप निरीक्षक',    Icons.shield_outlined),
+  _RankDef('hc',    'HC',        'मुख्य आरक्षी',    Icons.military_tech_outlined),
+  _RankDef('const', 'Constable', 'आरक्षी',          Icons.person_outline),
+  // ✅ Aux now has armed split
+  _RankDef('aux',   'Aux Force', 'सहायक बल',        Icons.groups_outlined),
+  _RankDef('pac',   'PAC',       'पीएसी (सेक्शन)', Icons.security_outlined,
            hasArmedSplit: false, isDecimal: true),
 ];
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  RANK EDITOR PAGE  —  per-rank armed + unarmed counts
 // ══════════════════════════════════════════════════════════════════════════════
 class ManakRankEditorPage extends StatefulWidget {
   final String title;
   final String subtitle;
   final Color  color;
   final Map<String, dynamic> initial;
-  final bool   showSankhya;       // for district-rules
+  final bool   showSankhya;
 
   const ManakRankEditorPage({
     super.key,
@@ -59,8 +57,6 @@ class ManakRankEditorPage extends StatefulWidget {
 }
 
 class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
-  // Controllers — keyed by ('si_armed', 'si_unarmed', 'hc_armed', ...).
-  // Aux & PAC are single-keyed: 'aux', 'pac'.
   late final Map<String, TextEditingController> _ctrls;
   late final TextEditingController _sankhyaCtrl;
   bool _changed = false;
@@ -76,7 +72,9 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
       'hc_unarmed':    TextEditingController(text: _initVal(ini['hcUnarmedCount'])),
       'const_armed':   TextEditingController(text: _initVal(ini['constArmedCount'])),
       'const_unarmed': TextEditingController(text: _initVal(ini['constUnarmedCount'])),
-      'aux':           TextEditingController(text: _initVal(ini['auxForceCount'])),
+      // ✅ Aux now has two fields
+      'aux_armed':     TextEditingController(text: _initVal(ini['auxArmedCount'])),
+      'aux_unarmed':   TextEditingController(text: _initVal(ini['auxUnarmedCount'])),
       'pac':           TextEditingController(text: _initVal(ini['pacCount'], decimal: true)),
     };
     _sankhyaCtrl = TextEditingController(text: _initVal(ini['sankhya']));
@@ -112,11 +110,18 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
   }
 
   int get _armedTotal =>
-      _val('si_armed').toInt() + _val('hc_armed').toInt() + _val('const_armed').toInt();
+      _val('si_armed').toInt() +
+      _val('hc_armed').toInt() +
+      _val('const_armed').toInt() +
+      _val('aux_armed').toInt();   // ✅ included
+
   int get _unarmedTotal =>
-      _val('si_unarmed').toInt() + _val('hc_unarmed').toInt() + _val('const_unarmed').toInt();
-  int get _auxTotal => _val('aux').toInt();
-  int get _totalStaff => _armedTotal + _unarmedTotal + _auxTotal;
+      _val('si_unarmed').toInt() +
+      _val('hc_unarmed').toInt() +
+      _val('const_unarmed').toInt() +
+      _val('aux_unarmed').toInt(); // ✅ included
+
+  int get _totalStaff => _armedTotal + _unarmedTotal;
 
   void _change(String key, num delta, {bool decimal = false}) {
     final cur  = _val(key);
@@ -142,7 +147,9 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
       'hcUnarmedCount':    _val('hc_unarmed').toInt(),
       'constArmedCount':   _val('const_armed').toInt(),
       'constUnarmedCount': _val('const_unarmed').toInt(),
-      'auxForceCount':     _val('aux').toInt(),
+      // ✅ Both aux fields sent to backend
+      'auxArmedCount':     _val('aux_armed').toInt(),
+      'auxUnarmedCount':   _val('aux_unarmed').toInt(),
       'pacCount':          _val('pac'),
     };
     if (widget.showSankhya) {
@@ -247,6 +254,10 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
 
   // ── Summary header ─────────────────────────────────────────────────────
   Widget _summaryHeader() {
+    final auxArmed   = _val('aux_armed').toInt();
+    final auxUnarmed = _val('aux_unarmed').toInt();
+    final auxTotal   = auxArmed + auxUnarmed;
+
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -271,9 +282,9 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
                   children: [
                     _miniStat(Icons.gavel, 'सशस्त्र', _armedTotal, kArmed),
                     _miniStat(Icons.shield, 'निःशस्त्र', _unarmedTotal, kUnarmed),
-                    if (_auxTotal > 0)
+                    if (auxTotal > 0)
                       _miniStat(Icons.groups_outlined, 'सहायक',
-                          _auxTotal, const Color(0xFFE65100)),
+                          auxTotal, const Color(0xFFE65100)),
                     if (_val('pac') > 0)
                       _miniStat(Icons.security, 'PAC', _val('pac'), kPacColor),
                   ],
@@ -347,17 +358,15 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
   }
 
   // ══════════════════════════════════════════════════════════════════════
-  //  Per-rank card — handles both split (armed+unarmed) and single types
-  // ══════════════════════════════════════════════════════════════════════
   Widget _buildRankCard(_RankDef rank) {
-    if (rank.hasArmedSplit) {
-      return _splitRankCard(rank);
-    } else {
-      return _singleRankCard(rank);
+    // PAC is single (decimal); everything else gets armed+unarmed split
+    if (!rank.hasArmedSplit) {
+      return _pacCard(rank);
     }
+    return _splitRankCard(rank);
   }
 
-  // SI / HC / Constable — two count fields side-by-side
+  // ── SI / HC / Constable / Aux Force — armed+unarmed side-by-side ──────
   Widget _splitRankCard(_RankDef rank) {
     final armedKey   = '${rank.key}_armed';
     final unarmedKey = '${rank.key}_unarmed';
@@ -366,14 +375,19 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
     final total      = armed + unarmed;
     final active     = total > 0;
 
+    // Aux uses a distinct accent colour
+    final cardColor = rank.key == 'aux'
+        ? const Color(0xFFE65100)
+        : widget.color;
+
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: active ? widget.color.withOpacity(0.04) : Colors.white,
+        color: active ? cardColor.withOpacity(0.04) : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
             color: active
-                ? widget.color.withOpacity(0.4)
+                ? cardColor.withOpacity(0.4)
                 : kBorder.withOpacity(0.4),
             width: active ? 1.4 : 1),
       ),
@@ -387,9 +401,9 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
               Container(
                 width: 36, height: 36,
                 decoration: BoxDecoration(
-                    color: widget.color.withOpacity(0.1),
+                    color: cardColor.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(8)),
-                child: Icon(rank.icon, color: widget.color, size: 18),
+                child: Icon(rank.icon, color: cardColor, size: 18),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -409,17 +423,17 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
                   padding:
                       const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
-                    color: widget.color.withOpacity(0.12),
+                    color: cardColor.withOpacity(0.12),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text('कुल: $total',
-                      style: TextStyle(color: widget.color,
+                      style: TextStyle(color: cardColor,
                           fontSize: 11, fontWeight: FontWeight.w800)),
                 ),
             ],
           ),
           const SizedBox(height: 12),
-          // Two columns side by side
+          // Two columns side-by-side
           Row(
             children: [
               Expanded(
@@ -450,19 +464,20 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
     );
   }
 
-  // Aux Force / PAC — single count field, full width
-  Widget _singleRankCard(_RankDef rank) {
+  // ── PAC — single decimal field ─────────────────────────────────────────
+  Widget _pacCard(_RankDef rank) {
     final value  = _val(rank.key);
     final active = value > 0;
-    final color  = rank.key == 'pac' ? kPacColor : const Color(0xFFE65100);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
-        color: active ? color.withOpacity(0.04) : Colors.white,
+        color: active ? kPacColor.withOpacity(0.04) : Colors.white,
         borderRadius: BorderRadius.circular(12),
         border: Border.all(
-            color: active ? color.withOpacity(0.4) : kBorder.withOpacity(0.4),
+            color: active
+                ? kPacColor.withOpacity(0.4)
+                : kBorder.withOpacity(0.4),
             width: active ? 1.4 : 1),
       ),
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -471,9 +486,9 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
           Container(
             width: 36, height: 36,
             decoration: BoxDecoration(
-                color: color.withOpacity(0.1),
+                color: kPacColor.withOpacity(0.1),
                 borderRadius: BorderRadius.circular(8)),
-            child: Icon(rank.icon, color: color, size: 18),
+            child: Icon(rank.icon, color: kPacColor, size: 18),
           ),
           const SizedBox(width: 10),
           Expanded(
@@ -489,8 +504,7 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
             ),
           ),
           _stepBtn(Icons.remove, value > 0,
-              () => _change(rank.key, rank.isDecimal ? -0.5 : -1,
-                  decimal: rank.isDecimal),
+              () => _change(rank.key, -0.5, decimal: true),
               color: kError),
           const SizedBox(width: 6),
           SizedBox(
@@ -500,44 +514,40 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(8),
                 border: Border.all(
-                    color: active ? color : kBorder.withOpacity(0.6),
+                    color: active ? kPacColor : kBorder.withOpacity(0.6),
                     width: active ? 1.4 : 1),
               ),
               child: TextField(
                 controller: _ctrls[rank.key]!,
-                keyboardType: rank.isDecimal
-                    ? const TextInputType.numberWithOptions(decimal: true)
-                    : TextInputType.number,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
                 textAlign: TextAlign.center,
-                inputFormatters: rank.isDecimal
-                    ? [FilteringTextInputFormatter.allow(RegExp(r'[0-9.]'))]
-                    : [
-                        FilteringTextInputFormatter.digitsOnly,
-                        LengthLimitingTextInputFormatter(3),
-                      ],
+                inputFormatters: [
+                  FilteringTextInputFormatter.allow(RegExp(r'[0-9.]')),
+                ],
                 style: TextStyle(
-                    color: active ? color : kDark,
+                    color: active ? kPacColor : kDark,
                     fontSize: 17, fontWeight: FontWeight.w900),
                 decoration: const InputDecoration(
                   border: InputBorder.none, isDense: true,
                   contentPadding: EdgeInsets.symmetric(vertical: 7),
                   hintText: '0',
-                  hintStyle: TextStyle(color: kSubtle, fontWeight: FontWeight.w400),
+                  hintStyle:
+                      TextStyle(color: kSubtle, fontWeight: FontWeight.w400),
                 ),
               ),
             ),
           ),
           const SizedBox(width: 6),
           _stepBtn(Icons.add, true,
-              () => _change(rank.key, rank.isDecimal ? 0.5 : 1,
-                  decimal: rank.isDecimal),
-              color: color),
+              () => _change(rank.key, 0.5, decimal: true),
+              color: kPacColor),
         ],
       ),
     );
   }
 
-  // ── Reusable count field with stepper ─────────────────────────────────
+  // ── Reusable count field with stepper ──────────────────────────────────
   Widget _countField({
     required String field,
     required String label,
@@ -562,7 +572,6 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          // Label row
           Row(
             children: [
               Icon(icon, size: 12, color: color),
@@ -582,7 +591,6 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
             ],
           ),
           const SizedBox(height: 6),
-          // Stepper row
           Row(
             children: [
               _stepBtn(Icons.remove, value > 0,
@@ -618,7 +626,8 @@ class _ManakRankEditorPageState extends State<ManakRankEditorPage> {
                       border: InputBorder.none, isDense: true,
                       contentPadding: EdgeInsets.symmetric(vertical: 7),
                       hintText: '0',
-                      hintStyle: TextStyle(color: kSubtle, fontWeight: FontWeight.w400),
+                      hintStyle: TextStyle(
+                          color: kSubtle, fontWeight: FontWeight.w400),
                     ),
                   ),
                 ),
