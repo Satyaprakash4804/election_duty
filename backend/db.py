@@ -435,7 +435,8 @@ def init_db():
                     const_armed_count     INT NOT NULL DEFAULT 0,
                     const_unarmed_count   INT NOT NULL DEFAULT 0,
             
-                    aux_force_count       INT          NOT NULL DEFAULT 0,
+                    aux_armed_count     INT NOT NULL DEFAULT 0,
+                    aux_unarmed_count   INT NOT NULL DEFAULT 0,
                     pac_count             DECIMAL(4,1) NOT NULL DEFAULT 0,
             
                     created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -463,7 +464,8 @@ def init_db():
                     const_armed_count     INT NOT NULL DEFAULT 0,
                     const_unarmed_count   INT NOT NULL DEFAULT 0,
             
-                    aux_force_count       INT          NOT NULL DEFAULT 0,
+                    aux_armed_count     INT NOT NULL DEFAULT 0,
+                    aux_unarmed_count   INT NOT NULL DEFAULT 0,
                     pac_count             DECIMAL(4,1) NOT NULL DEFAULT 0,
                     sort_order            INT          NOT NULL DEFAULT 0,
             
@@ -526,8 +528,48 @@ def init_db():
                     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
-            
-           
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS district_duty_assignments (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id      INT          NOT NULL,
+                    duty_type     VARCHAR(80)  NOT NULL,
+                    batch_no      INT          NOT NULL DEFAULT 1,
+                    staff_id      INT          NOT NULL,
+                    assigned_by   INT          DEFAULT NULL,
+                    bus_no        VARCHAR(50)  DEFAULT '',
+                    note          TEXT,
+                    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    UNIQUE KEY uq_staff_duty (staff_id, duty_type),
+                    INDEX idx_duty_type  (duty_type),
+                    INDEX idx_admin_id   (admin_id),
+                    INDEX idx_batch      (admin_id, duty_type, batch_no),
+                    FOREIGN KEY (staff_id)    REFERENCES users(id)  ON DELETE CASCADE,
+                    FOREIGN KEY (assigned_by) REFERENCES users(id)  ON DELETE SET NULL,
+                    FOREIGN KEY (admin_id)    REFERENCES users(id)  ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS district_duty_jobs (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id      INT          NOT NULL,
+                    status        ENUM('pending','running','done','error') DEFAULT 'pending',
+                    total_types   INT          NOT NULL DEFAULT 0,
+                    done_types    INT          NOT NULL DEFAULT 0,
+                    assigned      INT          NOT NULL DEFAULT 0,
+                    skipped       INT          NOT NULL DEFAULT 0,
+                    error_msg     TEXT,
+                    created_by    INT          DEFAULT NULL,
+                    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_admin (admin_id),
+                    FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+            """)
+
+
             # ─────────────────────────────────────────────────────────────────
             #  AUTO-ADD MISSING COLUMNS (safe for existing databases)
             # ─────────────────────────────────────────────────────────────────
@@ -563,7 +605,16 @@ def init_db():
             ensure_column(cur, db, "election_configs", "instructions TEXT")
             ensure_column(cur, db, "election_configs", "is_archived TINYINT(1) NOT NULL DEFAULT 0")
             ensure_column(cur, db, "election_configs", "archived_at DATETIME DEFAULT NULL")
+            
 
+            ensure_column(cur, db, "district_duty_jobs", "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
+            ensure_column(cur, db, "district_duty_jobs", "total_types INT NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "district_duty_jobs", "done_types INT NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "district_duty_jobs", "assigned INT NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "district_duty_jobs", "skipped INT NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "district_duty_jobs", "error_msg TEXT")
+            ensure_column(cur, db, "district_duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_assignments", "note TEXT")
             # ─────────────────────────────────────────────────────────────────
             #  SEED
             # ─────────────────────────────────────────────────────────────────
@@ -629,6 +680,7 @@ def run_migrations():
         ("token_revocations", "idx_revoke_before",   "INDEX (revoke_before)"),
         ("booth_rules",     "idx_admin_sens",  "INDEX (admin_id, sensitivity)"),
         ("district_rules",  "idx_admin",       "INDEX (admin_id)"),
+        ("district_duty_assignments", "idx_batch",      "INDEX (admin_id, duty_type, batch_no)"),
     ]
 
     conn = get_db()

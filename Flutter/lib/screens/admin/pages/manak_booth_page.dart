@@ -68,27 +68,32 @@ class _ManakBoothPageState extends State<ManakBoothPage> {
     }
   }
 
+  
   bool _hasAny(Map<String, dynamic>? r) {
     if (r == null) return false;
     return ((r['siArmedCount']      ?? 0) as num) > 0 ||
-           ((r['siUnarmedCount']    ?? 0) as num) > 0 ||
-           ((r['hcArmedCount']      ?? 0) as num) > 0 ||
-           ((r['hcUnarmedCount']    ?? 0) as num) > 0 ||
-           ((r['constArmedCount']   ?? 0) as num) > 0 ||
-           ((r['constUnarmedCount'] ?? 0) as num) > 0 ||
-           ((r['auxForceCount']     ?? 0) as num) > 0 ||
-           ((r['pacCount']          ?? 0) as num) > 0;
+          ((r['siUnarmedCount']    ?? 0) as num) > 0 ||
+          ((r['hcArmedCount']      ?? 0) as num) > 0 ||
+          ((r['hcUnarmedCount']    ?? 0) as num) > 0 ||
+          ((r['constArmedCount']   ?? 0) as num) > 0 ||
+          ((r['constUnarmedCount'] ?? 0) as num) > 0 ||
+          // ✅ replaced auxForceCount with two fields
+          ((r['auxArmedCount']     ?? 0) as num) > 0 ||
+          ((r['auxUnarmedCount']   ?? 0) as num) > 0 ||
+          ((r['pacCount']          ?? 0) as num) > 0;
   }
 
   int _totalStaff(Map<String, dynamic>? r) {
     if (r == null) return 0;
     return ((r['siArmedCount']      ?? 0) as num).toInt() +
-           ((r['siUnarmedCount']    ?? 0) as num).toInt() +
-           ((r['hcArmedCount']      ?? 0) as num).toInt() +
-           ((r['hcUnarmedCount']    ?? 0) as num).toInt() +
-           ((r['constArmedCount']   ?? 0) as num).toInt() +
-           ((r['constUnarmedCount'] ?? 0) as num).toInt() +
-           ((r['auxForceCount']     ?? 0) as num).toInt();
+          ((r['siUnarmedCount']    ?? 0) as num).toInt() +
+          ((r['hcArmedCount']      ?? 0) as num).toInt() +
+          ((r['hcUnarmedCount']    ?? 0) as num).toInt() +
+          ((r['constArmedCount']   ?? 0) as num).toInt() +
+          ((r['constUnarmedCount'] ?? 0) as num).toInt() +
+          // ✅ replaced auxForceCount with two fields
+          ((r['auxArmedCount']     ?? 0) as num).toInt() +
+          ((r['auxUnarmedCount']   ?? 0) as num).toInt();
   }
 
   void _openRankEditor(int boothCount, String label) async {
@@ -393,24 +398,26 @@ class _ChipRow extends StatelessWidget {
     final hcU  = (rule['hcUnarmedCount']    ?? 0) as num;
     final cA   = (rule['constArmedCount']   ?? 0) as num;
     final cU   = (rule['constUnarmedCount'] ?? 0) as num;
-    final aux  = (rule['auxForceCount']     ?? 0) as num;
+    // ✅ Aux now reads two separate fields
+    final auxA = (rule['auxArmedCount']     ?? 0) as num;
+    final auxU = (rule['auxUnarmedCount']   ?? 0) as num;
     final pac  = (rule['pacCount']          ?? 0) as num;
 
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: Row(children: [
-        if (siA + siU > 0) _splitChip('SI',    siA, siU),
-        if (hcA + hcU > 0) _splitChip('HC',    hcA, hcU),
-        if (cA  + cU  > 0) _splitChip('Const', cA,  cU),
-        if (aux       > 0) _singleChip('Aux',  '$aux',  const Color(0xFFE65100)),
-        if (pac       > 0) _singleChip('PAC',
+        if (siA + siU   > 0) _splitChip('SI',    siA,  siU),
+        if (hcA + hcU   > 0) _splitChip('HC',    hcA,  hcU),
+        if (cA  + cU    > 0) _splitChip('Const', cA,   cU),
+        // ✅ Aux shown as split chip with orange accent
+        if (auxA + auxU > 0) _splitChipAux('Aux', auxA, auxU),
+        if (pac         > 0) _singleChip('PAC',
             pac == pac.toInt() ? '${pac.toInt()}' : '$pac',
             const Color(0xFF00695C)),
       ]),
     );
   }
 
-  // Chip showing armed/unarmed split: "SI: 2🗡 / 1🛡"
   Widget _splitChip(String label, num armed, num unarmed) {
     return Container(
       margin: const EdgeInsets.only(right: 6),
@@ -432,7 +439,43 @@ class _ChipRow extends StatelessWidget {
         ],
         if (armed > 0 && unarmed > 0)
           Text(' / ',
-              style: TextStyle(color: color.withOpacity(0.5), fontSize: 11)),
+              style:
+                  TextStyle(color: color.withOpacity(0.5), fontSize: 11)),
+        if (unarmed > 0) ...[
+          const Icon(Icons.shield_outlined, size: 9, color: Color(0xFF1A5276)),
+          Text('$unarmed',
+              style: const TextStyle(color: Color(0xFF1A5276),
+                  fontSize: 11, fontWeight: FontWeight.w900)),
+        ],
+      ]),
+    );
+  }
+
+  // ✅ Aux uses orange accent independent of sensitivity colour
+  Widget _splitChipAux(String label, num armed, num unarmed) {
+    const auxColor = Color(0xFFE65100);
+    return Container(
+      margin: const EdgeInsets.only(right: 6),
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: auxColor.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(6),
+        border: Border.all(color: auxColor.withOpacity(0.3)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Text('$label: ',
+            style: TextStyle(color: auxColor.withOpacity(0.85),
+                fontSize: 10.5, fontWeight: FontWeight.w700)),
+        if (armed > 0) ...[
+          const Icon(Icons.gavel, size: 9, color: Color(0xFF6A1B9A)),
+          Text('$armed',
+              style: const TextStyle(color: Color(0xFF6A1B9A),
+                  fontSize: 11, fontWeight: FontWeight.w900)),
+        ],
+        if (armed > 0 && unarmed > 0)
+          Text(' / ',
+              style: TextStyle(
+                  color: auxColor.withOpacity(0.5), fontSize: 11)),
         if (unarmed > 0) ...[
           const Icon(Icons.shield_outlined, size: 9, color: Color(0xFF1A5276)),
           Text('$unarmed',
@@ -457,7 +500,8 @@ class _ChipRow extends StatelessWidget {
             style: TextStyle(color: c.withOpacity(0.85),
                 fontSize: 10.5, fontWeight: FontWeight.w700)),
         Text(value,
-            style: TextStyle(color: c, fontSize: 11, fontWeight: FontWeight.w900)),
+            style: TextStyle(
+                color: c, fontSize: 11, fontWeight: FontWeight.w900)),
       ]),
     );
   }

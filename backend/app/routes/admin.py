@@ -10,6 +10,8 @@ from app.routes import ok, err, write_log, admin_required
 import hashlib
 admin_bp = Blueprint("admin", __name__, url_prefix="/api/admin")
 from flask_jwt_extended import jwt_required
+import threading
+import time
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 DEFAULT_PAGE_SIZE = 50
@@ -26,16 +28,22 @@ RANK_HIERARCHY = [
 def normalize_rule(r):
     return {
         "booth_count": r.get("boothCount"),
+
         "si_armed_count": r.get("siArmedCount", 0),
         "si_unarmed_count": r.get("siUnarmedCount", 0),
+
         "hc_armed_count": r.get("hcArmedCount", 0),
         "hc_unarmed_count": r.get("hcUnarmedCount", 0),
+
         "const_armed_count": r.get("constArmedCount", 0),
         "const_unarmed_count": r.get("constUnarmedCount", 0),
-        "aux_force_count": r.get("auxForceCount", 0),
+
+        # ✅ NEW
+        "aux_armed_count": r.get("auxArmedCount", 0),
+        "aux_unarmed_count": r.get("auxUnarmedCount", 0),
+
         "pac_count": r.get("pacCount", 0),
     }
-
 
 import threading
 
@@ -1983,22 +1991,6 @@ def bulk_unassign_duty():
     return ok({"removed": removed}, f"{removed} duties removed")
 
 
-@admin_bp.route("/staff/<int:staff_id>/duty", methods=["DELETE"])
-@admin_required
-def remove_duty_by_staff(staff_id):
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("DELETE FROM duty_assignments WHERE staff_id=%s", (staff_id,))
-            affected = cur.rowcount
-        conn.commit()
-    finally:
-        conn.close()
-    if affected == 0:
-        return err("No duty found for this staff", 404)
-    return ok(None, "Duty removed")
-
-
 # ══════════════════════════════════════════════════════════════════════════════
 #  DUTY ASSIGNMENTS
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2100,69 +2092,188 @@ def get_duties():
 @admin_bp.route("/duties", methods=["POST"])
 @admin_required
 def assign_duty():
-
     body = request.get_json() or {}
+    print("REQUEST BODY:", body)  # 🔍 debug
 
-    # ✅ ADD THIS LINE
-    if body.get("mode") != "manual":
-        return err("Use super zone assignment", 400)
+    # ✅ Flexible key handling (Flutter safe)
+    staff_id = body.get("staffId") or body.get("staff_id")
+    sthal_id = body.get("centerId") or body.get("center_id") or body.get("sthal_id")
+    mode     = body.get("mode")  # optional
 
-    staff_id = body.get("staffId")
-    sthal_id = body.get("centerId")
-
+    # ❌ Validation
     if not staff_id or not sthal_id:
-        return err("staffId and centerId required")
+        return err(f"Missing data: staffId={staff_id}, centerId={sthal_id}")
 
     conn = get_db()
+
     try:
         with conn.cursor() as cur:
 
-            # OPTIONAL: CHECK LOCK
+            # 🔍 CHECK CENTER EXISTS
+            cur.execute("SELECT id FROM matdan_sthal WHERE id=%s", (sthal_id,))
+            if not cur.fetchone():
+                return err(f"Invalid centerId: {sthal_id}")
+
+            # 🔒 LOCK CHECK (SAFE LEFT JOIN)
             cur.execute("""
-                SELECT z.super_zone_id
-                FROM matdan_sthal ms
-                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors s ON s.id = gp.sector_id
-                JOIN zones z ON z.id = s.zone_id
-                WHERE ms.id = %s
+                SELECT 
+                    c.id AS center,
+                    IFNULL(l.is_locked, 0) AS is_locked
+                FROM matdan_sthal c
+                LEFT JOIN gram_panchayats gp ON c.gram_panchayat_id = gp.id
+                LEFT JOIN sectors s ON gp.sector_id = s.id
+                LEFT JOIN zones z ON s.zone_id = z.id
+                LEFT JOIN sz_duty_locks l ON l.super_zone_id = z.super_zone_id
+                WHERE c.id = %s
             """, (sthal_id,))
 
             row = cur.fetchone()
-            if row:
-                cur.execute("""
-                    SELECT is_locked FROM sz_duty_locks
-                    WHERE super_zone_id=%s
-                """, (row["super_zone_id"],))
+            print("DEBUG CENTER:", row)
 
-                lock = cur.fetchone()
-                if lock and lock["is_locked"]:
-                    return err("Zone is locked. Cannot assign manually.")
+            if row and row["is_locked"] == 1:
+                return err("❌ This Super Zone is LOCKED. Cannot assign duty.")
 
-            # INSERT
+            # 🔍 CHECK STAFF EXISTS
+            cur.execute("SELECT id FROM users WHERE id=%s", (staff_id,))
+            if not cur.fetchone():
+                return err(f"Invalid staffId: {staff_id}")
+
+            # ⚠️ OPTIONAL: prevent duplicate assignment
             cur.execute("""
-                INSERT INTO duty_assignments (staff_id, sthal_id)
-                VALUES (%s,%s)
+                SELECT id FROM duty_assignments
+                WHERE staff_id=%s AND sthal_id=%s
             """, (staff_id, sthal_id))
+            if cur.fetchone():
+                return err("⚠️ Staff already assigned to this center")
+
+            # ✅ INSERT DUTY
+            cur.execute("""
+                INSERT INTO duty_assignments (staff_id, sthal_id, mode, assigned_by)
+                VALUES (%s, %s, %s, %s)
+            """, (staff_id, sthal_id, mode, request.user["id"]))
 
         conn.commit()
+        return ok({"message": "✅ Duty assigned successfully"})
+
+    except Exception as e:
+        conn.rollback()
+        print("ERROR:", str(e))
+        return err(f"Server error: {str(e)}")
+
     finally:
         conn.close()
-
-    return ok(None, "Duty assigned")
-
-
 
 @admin_bp.route("/duties/<int:duty_id>", methods=["DELETE"])
 @admin_required
-def remove_duty(duty_id):
+def delete_duty(duty_id):
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
+
+            # 🔍 FIND CENTER
+            cur.execute("""
+                SELECT sthal_id FROM duty_assignments
+                WHERE id = %s
+            """, (duty_id,))
+            row = cur.fetchone()
+
+            if not row:
+                return err("Duty not found")
+
+            sthal_id = row["sthal_id"]
+
+            # 🔒 CHECK LOCK
+            cur.execute("""
+                SELECT IFNULL(l.is_locked, 0) AS is_locked
+                FROM matdan_sthal c
+                JOIN gram_panchayats gp ON c.gram_panchayat_id = gp.id
+                JOIN sectors s ON gp.sector_id = s.id
+                JOIN zones z ON s.zone_id = z.id
+                LEFT JOIN sz_duty_locks l ON l.super_zone_id = z.super_zone_id
+                WHERE c.id = %s
+            """, (sthal_id,))
+
+            lock = cur.fetchone()
+
+            if lock and lock["is_locked"] == 1:
+                return err("Locked — cannot remove")
+
+            # ✅ DELETE
             cur.execute("DELETE FROM duty_assignments WHERE id=%s", (duty_id,))
+
         conn.commit()
+        return ok(None, "Deleted successfully")
+
+    except Exception as e:
+        conn.rollback()
+        return err(str(e))
     finally:
         conn.close()
-    return ok(None, "Duty removed")
+
+
+
+@admin_bp.route("/staff/<int:staff_id>/duty", methods=["DELETE"])
+@admin_required
+def remove_staff_duty(staff_id):
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
+            # 🔹 STEP 1: Get assigned center
+            cur.execute("""
+                SELECT sthal_id 
+                FROM duty_assignments
+                WHERE staff_id = %s
+                LIMIT 1
+            """, (staff_id,))
+            duty = cur.fetchone()
+
+            print("DUTY FETCH:", duty)
+
+            if not duty:
+                return err("No duty assigned")
+
+            sthal_id = duty["sthal_id"]
+
+            # 🔹 STEP 2: Check lock via super zone
+            cur.execute("""
+                SELECT 
+                    z.super_zone_id,
+                    IFNULL(l.is_locked, 0) AS is_locked
+                FROM matdan_sthal c
+                JOIN gram_panchayats gp ON c.gram_panchayat_id = gp.id
+                JOIN sectors s ON gp.sector_id = s.id
+                JOIN zones z ON s.zone_id = z.id
+                LEFT JOIN sz_duty_locks l ON l.super_zone_id = z.super_zone_id
+                WHERE c.id = %s
+            """, (sthal_id,))
+
+            lock = cur.fetchone()
+
+            print("LOCK CHECK RESULT:", lock)
+
+            # 🔴 CRITICAL CHECK
+            if lock and lock["is_locked"] == 1:
+                return err("❌ Locked Super Zone. Cannot remove duty.")
+
+            # 🔹 STEP 3: Delete
+            cur.execute("""
+                DELETE FROM duty_assignments
+                WHERE staff_id = %s
+            """, (staff_id,))
+
+        conn.commit()
+        return ok({"message": "Duty removed"})
+
+    except Exception as e:
+        conn.rollback()
+        print("ERROR:", str(e))
+        return err(str(e))
+
+    finally:
+        conn.close()
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -2589,16 +2700,22 @@ VALID_SENS = ("A++", "A", "B", "C")
 def _serialize_booth_rule(r):
     return {
         "boothCount":        r["booth_count"],
+
         "siArmedCount":      r["si_armed_count"],
         "siUnarmedCount":    r["si_unarmed_count"],
+
         "hcArmedCount":      r["hc_armed_count"],
         "hcUnarmedCount":    r["hc_unarmed_count"],
+
         "constArmedCount":   r["const_armed_count"],
         "constUnarmedCount": r["const_unarmed_count"],
-        "auxForceCount":     r["aux_force_count"],
+
+        # ✅ NEW
+        "auxArmedCount":     r["aux_armed_count"],
+        "auxUnarmedCount":   r["aux_unarmed_count"],
+
         "pacCount":          float(r["pac_count"] or 0),
     }
- 
  
 @admin_bp.route("/booth-rules", methods=["GET"])
 @admin_required
@@ -2703,7 +2820,8 @@ def save_booth_rules():
                     r["hc_unarmed_count"] +
                     r["const_armed_count"] +
                     r["const_unarmed_count"] +
-                    r["aux_force_count"]
+                    r["aux_armed_count"] +
+                    r["aux_unarmed_count"]
                 )
 
                 if total == 0:
@@ -2716,21 +2834,30 @@ def save_booth_rules():
                 cur.execute("""
                     INSERT INTO booth_rules
                     (admin_id, sensitivity, booth_count,
-                     si_armed_count, si_unarmed_count,
-                     hc_armed_count, hc_unarmed_count,
-                     const_armed_count, const_unarmed_count,
-                     aux_force_count, pac_count)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+
+                    si_armed_count, si_unarmed_count,
+                    hc_armed_count, hc_unarmed_count,
+                    const_armed_count, const_unarmed_count,
+
+                    aux_armed_count, aux_unarmed_count,
+                    pac_count)
+
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
                     _admin_id(), sens, bc,
+
                     r["si_armed_count"],
                     r["si_unarmed_count"],
                     r["hc_armed_count"],
                     r["hc_unarmed_count"],
                     r["const_armed_count"],
                     r["const_unarmed_count"],
-                    r["aux_force_count"],
-                    math.ceil(float(r["pac_count"] or 0))   # ✅ FIX PAC
+
+                    # ✅ NEW
+                    r["aux_armed_count"],
+                    r["aux_unarmed_count"],
+
+                    math.ceil(float(r["pac_count"] or 0))
                 ))
 
         conn.commit()
@@ -2750,29 +2877,30 @@ def save_booth_rules():
 
 
 
- 
-# ══════════════════════════════════════════════════════════════════════════
-#  मानक v2 — DISTRICT-LEVEL RULES (जनपदीय कानून व्यवस्था)
-# ══════════════════════════════════════════════════════════════════════════
- 
+# ══════════════════════════════════════════════════════════════════════════════
+#  DEFAULT DUTY TYPES — 14 fixed entries (always shown)
+# ══════════════════════════════════════════════════════════════════════════════
 DEFAULT_DISTRICT_DUTIES = [
-    ("cluster_mobile",        "क्लस्टर मोबाईल",                  10),
-    ("thana_mobile",          "थाना मोबाईल",                     20),
-    ("thana_reserve",         "थाना रिजर्व",                     30),
-    ("thana_extra_mobile",    "थाना अतिरिक्त मोबाईल",            40),
-    ("sector_pol_mag_mobile", "सैक्टर पुलिस / मजिस्ट्रेट मोबाईल",  50),
-    ("zonal_pol_mag_mobile",  "जोनल पुलिस / मजिस्ट्रेट मोबाईल",    60),
-    ("sdm_co_mobile",         "एसडीएम / सीओ मोबाईल",             70),
-    ("chowki_mobile",         "चौकी मोबाईल",                     80),
-    ("barrier_picket",        "बैरियर / पिकैट",                  90),
-    ("evm_security",          "ईवीएम सुरक्षा",                  100),
-    ("adm_sp_mobile",         "एडीएम / एसपी मोबाईल",            110),
-    ("dm_sp_mobile",          "डीएम / एसपी मोबाईल",             120),
-    ("observer_security",     "पर्यवेक्षक सुरक्षा",               130),
-    ("hq_reserve",            "मुख्यालय रिजर्व",                 140),
+    ("cluster_mobile",        "क्लस्टर मोबाईल",                   10),
+    ("thana_mobile",          "थाना मोबाईल",                      20),
+    ("thana_reserve",         "थाना रिजर्व",                      30),
+    ("thana_extra_mobile",    "थाना अतिरिक्त मोबाईल",             40),
+    ("sector_pol_mag_mobile", "सैक्टर पुलिस / मजिस्ट्रेट मोबाईल", 50),
+    ("zonal_pol_mag_mobile",  "जोनल पुलिस / मजिस्ट्रेट मोबाईल",   60),
+    ("sdm_co_mobile",         "एसडीएम / सीओ मोबाईल",              70),
+    ("chowki_mobile",         "चौकी मोबाईल",                      80),
+    ("barrier_picket",        "बैरियर / पिकैट",                   90),
+    ("evm_security",          "ईवीएम सुरक्षा",                   100),
+    ("adm_sp_mobile",         "एडीएम / एसपी मोबाईल",             110),
+    ("dm_sp_mobile",          "डीएम / एसपी मोबाईल",              120),
+    ("observer_security",     "पर्यवेक्षक सुरक्षा",              130),
+    ("hq_reserve",            "मुख्यालय रिजर्व",                  140),
 ]
- 
- 
+
+# Set of default duty_type keys (for is_default detection)
+_DEFAULT_DUTY_KEYS = {dt for dt, _, _ in DEFAULT_DISTRICT_DUTIES}
+
+
 def _serialize_district_rule(r):
     return {
         "dutyType":          r["duty_type"],
@@ -2784,18 +2912,25 @@ def _serialize_district_rule(r):
         "hcUnarmedCount":    r["hc_unarmed_count"],
         "constArmedCount":   r["const_armed_count"],
         "constUnarmedCount": r["const_unarmed_count"],
-        "auxForceCount":     r["aux_force_count"],
+        "auxArmedCount":     r["aux_armed_count"],
+        "auxUnarmedCount":   r["aux_unarmed_count"],
         "pacCount":          float(r["pac_count"] or 0),
         "sortOrder":         r["sort_order"],
+        "isDefault":         r["duty_type"] in _DEFAULT_DUTY_KEYS,
     }
- 
- 
+
+
 @admin_bp.route("/district-rules", methods=["GET"])
 @admin_required
 def get_district_rules():
+    """
+    Returns ALL duty types merged:
+    - 14 hardcoded defaults (with saved values if they exist, else zeros)
+    - Any extra custom rows from district_rules that are NOT in the default list
+    """
     d_ids = _district_admin_ids()
     d_ph, d_params = _district_placeholder(d_ids)
- 
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -2807,64 +2942,90 @@ def get_district_rules():
             rows = cur.fetchall()
     finally:
         conn.close()
- 
-    if rows:
-        return ok([_serialize_district_rule(r) for r in rows])
- 
-    return ok([{
-        "dutyType":          dt,
-        "dutyLabelHi":       label,
-        "sankhya":           0,
-        "siArmedCount":      0, "siUnarmedCount":    0,
-        "hcArmedCount":      0, "hcUnarmedCount":    0,
-        "constArmedCount":   0, "constUnarmedCount": 0,
-        "auxForceCount":     0, "pacCount":          0.0,
-        "sortOrder":         order,
-    } for dt, label, order in DEFAULT_DISTRICT_DUTIES])
- 
- 
+
+    # Map saved rows by duty_type
+    saved_map = {r["duty_type"]: r for r in rows}
+
+    result = []
+
+    # 1. Always emit all 14 defaults (with saved data or zeros)
+    for dt, label, order in DEFAULT_DISTRICT_DUTIES:
+        if dt in saved_map:
+            result.append(_serialize_district_rule(saved_map[dt]))
+        else:
+            result.append({
+                "dutyType":          dt,
+                "dutyLabelHi":       label,
+                "sankhya":           0,
+                "siArmedCount":      0, "siUnarmedCount":    0,
+                "hcArmedCount":      0, "hcUnarmedCount":    0,
+                "constArmedCount":   0, "constUnarmedCount": 0,
+                "auxArmedCount":     0, "auxUnarmedCount":   0,
+                "pacCount":          0.0,
+                "sortOrder":         order,
+                "isDefault":         True,
+            })
+
+    # 2. Append custom rows (any saved row whose duty_type is NOT a default)
+    for r in rows:
+        if r["duty_type"] not in _DEFAULT_DUTY_KEYS:
+            result.append(_serialize_district_rule(r))
+
+    return ok(result)
+
+
 @admin_bp.route("/district-rules", methods=["POST"])
 @admin_required
 def save_district_rules():
     body  = request.get_json() or {}
     rules = body.get("rules", [])
+
     if not isinstance(rules, list):
         return err("rules must be a list")
- 
+
     d_ids = _district_admin_ids()
     d_ph, d_params = _district_placeholder(d_ids)
- 
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"DELETE FROM district_rules WHERE admin_id IN ({d_ph})", d_params)
- 
+            # Delete ALL rules for this district (defaults + custom)
+            cur.execute(
+                f"DELETE FROM district_rules WHERE admin_id IN ({d_ph})",
+                d_params
+            )
+
             for r in rules:
                 duty_type = (r.get("dutyType") or "").strip()
                 if not duty_type:
                     continue
+
                 cur.execute("""
                     INSERT INTO district_rules
                     (admin_id, duty_type, duty_label_hi, sankhya,
                      si_armed_count, si_unarmed_count,
                      hc_armed_count, hc_unarmed_count,
                      const_armed_count, const_unarmed_count,
-                     aux_force_count, pac_count, sort_order)
-                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
+                     aux_armed_count, aux_unarmed_count,
+                     pac_count, sort_order)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (
-                    _admin_id(), duty_type,
+                    _admin_id(),
+                    duty_type,
                     (r.get("dutyLabelHi") or "").strip(),
-                    int(r.get("sankhya")             or 0),
-                    int(r.get("siArmedCount")        or 0),
-                    int(r.get("siUnarmedCount")      or 0),
-                    int(r.get("hcArmedCount")        or 0),
-                    int(r.get("hcUnarmedCount")      or 0),
-                    int(r.get("constArmedCount")     or 0),
-                    int(r.get("constUnarmedCount")   or 0),
-                    int(r.get("auxForceCount")       or 0),
-                    float(r.get("pacCount")          or 0),
-                    int(r.get("sortOrder")           or 0),
+                    int(r.get("sankhya") or 0),
+                    int(r.get("siArmedCount")      or 0),
+                    int(r.get("siUnarmedCount")    or 0),
+                    int(r.get("hcArmedCount")      or 0),
+                    int(r.get("hcUnarmedCount")    or 0),
+                    int(r.get("constArmedCount")   or 0),
+                    int(r.get("constUnarmedCount") or 0),
+                    int(r.get("auxArmedCount",     0)),
+                    int(r.get("auxUnarmedCount",   0)),
+                    float(r.get("pacCount") or 0),
+                    int(r.get("sortOrder") or 0),
                 ))
+
         conn.commit()
     except Exception as e:
         try: conn.rollback()
@@ -2873,70 +3034,1438 @@ def save_district_rules():
         return err(f"Save failed: {e}", 500)
     finally:
         conn.close()
- 
-    write_log("INFO", f"District rules saved: {len(rules)} rows by admin {_admin_id()}", "Rules")
+
     return ok(None, "जनपदीय मानक saved")
+
+# ── GET: summary of all duty types with assignment counts ────────────────────
+@admin_bp.route("/district-duty/summary", methods=["GET"])
+@admin_required
+def get_district_duty_summary():
+    """
+    Returns each duty type with:
+    - total assigned count
+    - number of batches
+    - sankhya (required from district_rules)
+    """
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
  
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+ 
+            # Get rules for reference (sankhya)
+            cur.execute(f"""
+                SELECT duty_type, duty_label_hi, sankhya, sort_order
+                FROM district_rules
+                WHERE admin_id IN ({d_ph})
+                ORDER BY sort_order
+            """, d_params)
+            rules = {r["duty_type"]: r for r in cur.fetchall()}
+ 
+            # Get assignment counts grouped by duty_type
+            cur.execute(f"""
+                SELECT
+                    dda.duty_type,
+                    COUNT(DISTINCT dda.staff_id)   AS total_assigned,
+                    COUNT(DISTINCT dda.batch_no)   AS batch_count,
+                    MAX(dda.batch_no)              AS max_batch
+                FROM district_duty_assignments dda
+                WHERE dda.admin_id IN ({d_ph})
+                GROUP BY dda.duty_type
+            """, d_params)
+            counts = {r["duty_type"]: r for r in cur.fetchall()}
+ 
+    finally:
+        conn.close()
+ 
+    # Merge
+    result = {}
+    for dt, rule in rules.items():
+        cnt = counts.get(dt, {})
+        result[dt] = {
+            "dutyType":      dt,
+            "dutyLabelHi":   rule["duty_label_hi"] or "",
+            "sankhya":       rule["sankhya"] or 0,
+            "totalAssigned": int(cnt.get("total_assigned") or 0),
+            "batchCount":    int(cnt.get("batch_count") or 0),
+            "maxBatch":      int(cnt.get("max_batch") or 0),
+        }
+ 
+    return ok(result)
+ 
+ 
+# ── GET: batches for a specific duty type ────────────────────────────────────
+@admin_bp.route("/district-duty/<duty_type>/batches", methods=["GET"])
+@admin_required
+def get_duty_batches(duty_type):
+    """
+    Returns list of batches for a duty type, each with:
+    - batch_no
+    - staff count
+    - staff list (paginated or full depending on size)
+    """
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+ 
+            # Get batch summary
+            cur.execute(f"""
+                SELECT
+                    dda.batch_no,
+                    COUNT(DISTINCT dda.staff_id) AS staff_count
+                FROM district_duty_assignments dda
+                WHERE dda.admin_id IN ({d_ph}) AND dda.duty_type = %s
+                GROUP BY dda.batch_no
+                ORDER BY dda.batch_no
+            """, d_params + [duty_type])
+            batches_raw = cur.fetchall()
+ 
+            if not batches_raw:
+                return ok([])
+ 
+            batch_numbers = [b["batch_no"] for b in batches_raw]
+ 
+            # Get all staff for these batches
+            b_ph = ",".join(["%s"] * len(batch_numbers))
+            cur.execute(f"""
+                SELECT
+                    dda.id AS assignment_id,
+                    dda.batch_no,
+                    dda.bus_no,
+                    dda.note,
+                    dda.created_at,
+                    u.id, u.name, u.pno, u.mobile, u.user_rank,
+                    u.thana, u.district, u.is_armed
+                FROM district_duty_assignments dda
+                JOIN users u ON u.id = dda.staff_id
+                WHERE dda.admin_id IN ({d_ph})
+                  AND dda.duty_type = %s
+                  AND dda.batch_no IN ({b_ph})
+                ORDER BY dda.batch_no, u.name
+            """, d_params + [duty_type] + batch_numbers)
+            rows = cur.fetchall()
+ 
+            # Group by batch
+            staff_by_batch = {}
+            for row in rows:
+                bn = row["batch_no"]
+                staff_by_batch.setdefault(bn, []).append({
+                    "assignmentId": row["assignment_id"],
+                    "id":           row["id"],
+                    "name":         row["name"]      or "",
+                    "pno":          row["pno"]       or "",
+                    "mobile":       row["mobile"]    or "",
+                    "rank":         row["user_rank"] or "",
+                    "thana":        row["thana"]     or "",
+                    "district":     row["district"]  or "",
+                    "isArmed":      bool(row["is_armed"]),
+                    "busNo":        row["bus_no"]    or "",
+                    "note":         row["note"]      or "",
+                })
+ 
+    finally:
+        conn.close()
+ 
+    result = [{
+        "batchNo":    b["batch_no"],
+        "staffCount": b["staff_count"],
+        "staff":      staff_by_batch.get(b["batch_no"], []),
+    } for b in batches_raw]
+ 
+    return ok(result)
+ 
+ 
+# ── GET: single batch detail ─────────────────────────────────────────────────
+@admin_bp.route("/district-duty/<duty_type>/batch/<int:batch_no>", methods=["GET"])
+@admin_required
+def get_duty_batch_detail(duty_type, batch_no):
+    """Returns all staff in a specific batch of a duty type."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT
+                    dda.id AS assignment_id,
+                    dda.bus_no, dda.note, dda.created_at,
+                    u.id, u.name, u.pno, u.mobile,
+                    u.user_rank, u.thana, u.district, u.is_armed
+                FROM district_duty_assignments dda
+                JOIN users u ON u.id = dda.staff_id
+                WHERE dda.admin_id IN ({d_ph})
+                  AND dda.duty_type = %s
+                  AND dda.batch_no = %s
+                ORDER BY u.name
+            """, d_params + [duty_type, batch_no])
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+ 
+    return ok([{
+        "assignmentId": r["assignment_id"],
+        "id":           r["id"],
+        "name":         r["name"]      or "",
+        "pno":          r["pno"]       or "",
+        "mobile":       r["mobile"]    or "",
+        "rank":         r["user_rank"] or "",
+        "thana":        r["thana"]     or "",
+        "district":     r["district"]  or "",
+        "isArmed":      bool(r["is_armed"]),
+        "busNo":        r["bus_no"]    or "",
+        "note":         r["note"]      or "",
+    } for r in rows])
+ 
+ 
+# ── POST: assign staff to a duty type (creates new batch) ───────────────────
+@admin_bp.route("/district-duty/<duty_type>/assign", methods=["POST"])
+@admin_required
+def assign_district_duty_v2(duty_type):
+    """
+    Assigns staff to a district duty type.
+    Creates a new batch automatically (max_batch + 1).
+    Body: { staffIds: [int], busNo?: str, note?: str }
+    """
+    body      = request.get_json() or {}
+    staff_ids = body.get("staffIds", [])
+    bus_no    = (body.get("busNo") or "").strip()
+    note      = (body.get("note") or "").strip()
+ 
+    if not staff_ids:
+        return err("staffIds required")
+ 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+ 
+            # Get next batch number
+            cur.execute(f"""
+                SELECT COALESCE(MAX(batch_no), 0) AS mx
+                FROM district_duty_assignments
+                WHERE admin_id IN ({d_ph}) AND duty_type = %s
+            """, d_params + [duty_type])
+            row = cur.fetchone()
+            batch_no = (row["mx"] or 0) + 1
+ 
+            assigned = 0
+            skipped  = 0
+            already  = []
+ 
+            for sid in staff_ids:
+                try:
+                    cur.execute("""
+                        INSERT INTO district_duty_assignments
+                            (admin_id, duty_type, batch_no, staff_id,
+                             assigned_by, bus_no, note)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                    """, (_admin_id(), duty_type, batch_no, sid,
+                          _admin_id(), bus_no, note))
+                    assigned += 1
+                except Exception:
+                    # Likely duplicate (staff already in this duty type)
+                    cur.execute("SELECT name FROM users WHERE id=%s", (sid,))
+                    u = cur.fetchone()
+                    already.append(u["name"] if u else f"id:{sid}")
+                    skipped += 1
+ 
+        conn.commit()
+ 
+    except Exception as e:
+        try: conn.rollback()
+        except: pass
+        return err(f"Assign failed: {e}", 500)
+    finally:
+        conn.close()
+ 
+    write_log("INFO",
+              f"District duty '{duty_type}' batch {batch_no}: {assigned} assigned "
+              f"by admin {_admin_id()}",
+              "DistrictDuty")
+ 
+    return ok({
+        "batchNo":  batch_no,
+        "assigned": assigned,
+        "skipped":  skipped,
+        "alreadyAssigned": already,
+    }, f"Batch {batch_no} created with {assigned} staff", 201)
+ 
+ 
+# ── DELETE: remove a single assignment ──────────────────────────────────────
+@admin_bp.route("/district-duty/assignment/<int:assignment_id>", methods=["DELETE"])
+@admin_required
+def delete_district_assignment(assignment_id):
+    """Removes a single staff from a district duty assignment."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                DELETE FROM district_duty_assignments
+                WHERE id = %s AND admin_id IN ({d_ph})
+            """, [assignment_id] + d_params)
+            if cur.rowcount == 0:
+                return err("Assignment not found or access denied", 404)
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    return ok(None, "Removed")
+ 
+ 
+# ── DELETE: remove entire batch ──────────────────────────────────────────────
+@admin_bp.route("/district-duty/<duty_type>/batch/<int:batch_no>", methods=["DELETE"])
+@admin_required
+def delete_duty_batch(duty_type, batch_no):
+    """Removes all staff from a specific batch."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                DELETE FROM district_duty_assignments
+                WHERE admin_id IN ({d_ph}) AND duty_type = %s AND batch_no = %s
+            """, d_params + [duty_type, batch_no])
+            removed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    return ok({"removed": removed}, f"Batch {batch_no} deleted")
+ 
+ 
+# ── DELETE: remove ALL assignments for a duty type ───────────────────────────
+@admin_bp.route("/district-duty/<duty_type>/clear", methods=["DELETE"])
+@admin_required
+def clear_duty_type(duty_type):
+    """Removes ALL assignments for a duty type (all batches)."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                DELETE FROM district_duty_assignments
+                WHERE admin_id IN ({d_ph}) AND duty_type = %s
+            """, d_params + [duty_type])
+            removed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    return ok({"removed": removed}, "All assignments cleared")
+ 
+ 
+# ── PATCH: update bus_no / note for a batch ──────────────────────────────────
+@admin_bp.route("/district-duty/<duty_type>/batch/<int:batch_no>", methods=["PATCH"])
+@admin_required
+def update_batch_info(duty_type, batch_no):
+    """Updates bus_no and/or note for all records in a batch."""
+    body   = request.get_json() or {}
+    bus_no = (body.get("busNo") or "").strip()
+    note   = (body.get("note")  or "").strip()
+ 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE district_duty_assignments
+                SET bus_no = %s, note = %s
+                WHERE admin_id IN ({d_ph}) AND duty_type = %s AND batch_no = %s
+            """, [bus_no, note] + d_params + [duty_type, batch_no])
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    return ok(None, "Batch updated")
+ 
+ 
+# ── GET: unassigned staff for a district duty (for picker) ───────────────────
+@admin_bp.route("/district-duty/<duty_type>/available-staff", methods=["GET"])
+@admin_required
+def get_available_for_duty(duty_type):
+    """
+    Returns staff NOT already assigned to this duty_type.
+    Supports pagination + search + rank filter.
+    """
+    search      = request.args.get("q", "").strip()
+    rank_filter = request.args.get("rank", "").strip()
+    page, limit, offset = _page_params()
+ 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+ 
+            params = []
+            where_parts = [
+                "u.role = 'staff'",
+                "u.is_active = 1",
+                f"""u.id NOT IN (
+                    SELECT staff_id FROM district_duty_assignments
+                    WHERE admin_id IN ({d_ph}) AND duty_type = %s
+                )""",
+            ]
+            params += d_params + [duty_type]
+ 
+            if search:
+                where_parts.append(
+                    "(u.name LIKE %s OR u.pno LIKE %s OR u.mobile LIKE %s)"
+                )
+                like = f"%{search}%"
+                params += [like, like, like]
+ 
+            if rank_filter:
+                where_parts.append("u.user_rank = %s")
+                params.append(rank_filter)
+ 
+            where_sql = " AND ".join(where_parts)
+ 
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM users u WHERE {where_sql}", params)
+            total = cur.fetchone()["cnt"]
+ 
+            cur.execute(f"""
+                SELECT u.id, u.name, u.pno, u.mobile,
+                       u.user_rank, u.thana, u.district, u.is_armed
+                FROM users u
+                WHERE {where_sql}
+                ORDER BY u.name
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
+            rows = cur.fetchall()
+ 
+    finally:
+        conn.close()
+ 
+    return _paginated([{
+        "id":       r["id"],
+        "name":     r["name"]      or "",
+        "pno":      r["pno"]       or "",
+        "mobile":   r["mobile"]    or "",
+        "rank":     r["user_rank"] or "",
+        "thana":    r["thana"]     or "",
+        "district": r["district"]  or "",
+        "isArmed":  bool(r["is_armed"]),
+    } for r in rows], total, page, limit)
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+#  CUSTOM DUTY TYPE MANAGEMENT — stored as district_rules rows
+#  (no new table — custom types live alongside default ones in district_rules)
+# ══════════════════════════════════════════════════════════════════════════════
 
+@admin_bp.route("/district-rules/custom", methods=["POST"])
+@admin_required
+def add_custom_duty_type():
+    """
+    Creates a placeholder row in district_rules for a new custom duty type.
+    All counts are 0 — admin sets them later via the rank editor.
+    """
+    body     = request.get_json() or {}
+    label_hi = (body.get("labelHi") or "").strip()
 
+    if not label_hi:
+        return err("labelHi required")
 
+    import re, time
+    # Build a safe slug: custom_<sanitised>_<timestamp>
+    safe = re.sub(r'[^a-z0-9]', '_', label_hi.lower())[:30]
+    duty_type = f"custom_{safe}_{int(time.time()) % 100000}"
 
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
 
-def _assign_one_center(conn, center, admin_id):
-
-    with conn.cursor() as cur:
-
-        # ✅ 1. FETCH RULE (WITH CUSTOM RULE SUPPORT)
-        cur.execute("""
-            SELECT br.* FROM booth_rules br
-            WHERE br.id = COALESCE(
-                (SELECT custom_rule_id FROM matdan_sthal WHERE id=%s),
-                br.id
-            )
-            AND br.sensitivity=%s 
-            AND br.booth_count=%s
-            LIMIT 1
-        """, (center["id"], center["center_type"], center["booth_count"]))
-
-        rule = cur.fetchone()
-        if not rule:
-            return
-
-        # ✅ helper
-        def pick_staff(rank, is_armed, count):
-            if count <= 0:
-                return []
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # sort_order = highest existing + 10
+            cur.execute(f"""
+                SELECT COALESCE(MAX(sort_order), 140) AS mx
+                FROM district_rules WHERE admin_id IN ({d_ph})
+            """, d_params)
+            sort_order = (cur.fetchone()["mx"] or 140) + 10
 
             cur.execute("""
-                SELECT id FROM users
-                WHERE role='staff'
-                AND user_rank=%s
-                AND is_armed=%s
-                AND is_active=1
-                AND id NOT IN (SELECT staff_id FROM duty_assignments)
-                LIMIT %s
-            """, (rank, is_armed, count))
+                INSERT INTO district_rules
+                (admin_id, duty_type, duty_label_hi, sankhya,
+                 si_armed_count, si_unarmed_count,
+                 hc_armed_count, hc_unarmed_count,
+                 const_armed_count, const_unarmed_count,
+                 aux_armed_count, aux_unarmed_count,
+                 pac_count, sort_order)
+                VALUES (%s,%s,%s,0,0,0,0,0,0,0,0,0,0,%s)
+            """, (_admin_id(), duty_type, label_hi, sort_order))
 
-            return cur.fetchall()
+        conn.commit()
+    finally:
+        conn.close()
 
-        assignments = []
+    return ok({
+        "dutyType":   duty_type,
+        "dutyLabelHi": label_hi,
+        "sortOrder":  sort_order,
+        "isDefault":  False,
+        "sankhya": 0,
+        "siArmedCount": 0, "siUnarmedCount": 0,
+        "hcArmedCount": 0, "hcUnarmedCount": 0,
+        "constArmedCount": 0, "constUnarmedCount": 0,
+        "auxArmedCount": 0, "auxUnarmedCount": 0,
+        "pacCount": 0.0,
+    }, "Custom duty type added", 201)
 
-        # ✅ FIXED RANK NAMES
-        assignments += pick_staff("SI", 1, rule["si_armed_count"])
-        assignments += pick_staff("SI", 0, rule["si_unarmed_count"])
-        assignments += pick_staff("Head Constable", 1, rule["hc_armed_count"])
-        assignments += pick_staff("Head Constable", 0, rule["hc_unarmed_count"])
-        assignments += pick_staff("Constable", 1, rule["const_armed_count"])
-        assignments += pick_staff("Constable", 0, rule["const_unarmed_count"])
 
-        for s in assignments:
+@admin_bp.route("/district-rules/custom/<duty_type>", methods=["PUT"])
+@admin_required
+def rename_custom_duty_type(duty_type):
+    """Renames the label of a custom duty type."""
+    if duty_type in _DEFAULT_DUTY_KEYS:
+        return err("Cannot rename a default duty type", 400)
+
+    body     = request.get_json() or {}
+    label_hi = (body.get("labelHi") or "").strip()
+    if not label_hi:
+        return err("labelHi required")
+
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                UPDATE district_rules
+                SET duty_label_hi=%s
+                WHERE duty_type=%s AND admin_id IN ({d_ph})
+            """, [label_hi, duty_type] + d_params)
+            if cur.rowcount == 0:
+                return err("Duty type not found", 404)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, "Renamed")
+
+
+@admin_bp.route("/district-rules/custom/<duty_type>", methods=["DELETE"])
+@admin_required
+def delete_custom_duty_type(duty_type):
+    """Deletes a custom duty type row from district_rules."""
+    if duty_type in _DEFAULT_DUTY_KEYS:
+        return err("Cannot delete a default duty type", 400)
+
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                DELETE FROM district_rules
+                WHERE duty_type=%s AND admin_id IN ({d_ph})
+            """, [duty_type] + d_params)
+            if cur.rowcount == 0:
+                return err("Duty type not found", 404)
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, "Deleted")
+
+
+@admin_bp.route("/district-duty/<duty_type>", methods=["GET"])
+@admin_required
+def get_duty_type_data(duty_type):
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
             cur.execute("""
-                INSERT INTO duty_assignments (staff_id, sthal_id, assigned_by)
-                VALUES (%s,%s,%s)
-            """, (s["id"], center["id"], admin_id))
+                SELECT batch_no, COUNT(*) as total
+                FROM district_duty_assignments
+                WHERE duty_type=%s
+                GROUP BY batch_no
+            """, (duty_type,))
+
+            batches = cur.fetchall()
+
+    finally:
+        conn.close()
+
+    return ok(batches)
+
+@admin_bp.route("/district-duty/<duty_type>/<int:batch>", methods=["GET"])
+@admin_required
+def get_batch_staff(duty_type, batch):
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT u.id, u.name, u.user_rank, u.mobile, u.is_armed
+                FROM district_duty_assignments da
+                JOIN users u ON u.id = da.staff_id
+                WHERE da.duty_type=%s AND da.batch_no=%s
+            """, (duty_type, batch))
+
+            rows = cur.fetchall()
+
+    finally:
+        conn.close()
+
+    return ok(rows)
+
+
+@admin_bp.route("/district-duty/refresh/<duty_type>", methods=["POST"])
+@admin_required
+def refresh_duty_type(duty_type):
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM district_duty_assignments
+                WHERE duty_type=%s
+            """, (duty_type,))
+        conn.commit()
+    finally:
+        conn.close()
+
+    return ok(None, "Cleared")
+
+
+
+@admin_bp.route("/district-duty/auto-assign/start", methods=["POST"])
+@admin_required
+def start_district_assign():
+
+    admin_id = request.user["id"]
+
+    result = auto_assign_district(
+        admin_id,
+        request.user["id"]
+    )
+
+    return ok(result, "District auto assign completed")
+
+def auto_assign_district(admin_id, created_by):
+
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+
+            # 🟢 1. Create job
+            cur.execute("""
+                INSERT INTO district_duty_jobs (admin_id, status, created_by)
+                VALUES (%s, 'running', %s)
+            """, (admin_id, created_by))
+            job_id = cur.lastrowid
+
+            # 🟢 2. Get all rules
+            cur.execute("""
+                SELECT * FROM district_rules
+                WHERE admin_id=%s
+                ORDER BY sort_order ASC
+            """, (admin_id,))
+            rules = cur.fetchall()
+
+            total_types = len(rules)
+
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET total_types=%s
+                WHERE id=%s
+            """, (total_types, job_id))
+
+            assigned_total = 0
+            skipped_total = 0
+            done_types = 0
+
+            # 🟢 3. LOOP ALL DUTY TYPES
+            for rule in rules:
+
+                duty_type = rule["duty_type"]
+                sankhya = rule["sankhya"]
+
+                if sankhya <= 0:
+                    continue
+
+                # 🟢 4. Get next batch number
+                cur.execute("""
+                    SELECT COALESCE(MAX(batch_no),0)+1 AS b
+                    FROM district_duty_assignments
+                    WHERE admin_id=%s AND duty_type=%s
+                """, (admin_id, duty_type))
+                batch_no = cur.fetchone()["b"]
+
+                # 🟢 5. STAFF PICK FUNCTION
+                def pick(rank, armed, count):
+
+                    if count <= 0:
+                        return []
+
+                    cur.execute("""
+                        SELECT id FROM users
+                        WHERE role='staff'
+                        AND user_rank=%s
+                        AND is_armed=%s
+                        AND is_active=1
+                        AND id NOT IN (
+                            SELECT staff_id FROM district_duty_assignments
+                        )
+                        LIMIT %s
+                    """, (rank, armed, count))
+
+                    return cur.fetchall()
+
+                # 🟢 6. LOOP sankhya (THIS WAS MISSING ❌)
+                for i in range(sankhya):
+
+                    staff_list = []
+
+                    staff_list += pick("SI", 1, rule["si_armed_count"])
+                    staff_list += pick("SI", 0, rule["si_unarmed_count"])
+
+                    staff_list += pick("Head Constable", 1, rule["hc_armed_count"])
+                    staff_list += pick("Head Constable", 0, rule["hc_unarmed_count"])
+
+                    staff_list += pick("Constable", 1, rule["const_armed_count"])
+                    staff_list += pick("Constable", 0, rule["const_unarmed_count"])
+
+                    staff_list += pick("Aux", 1, rule["aux_armed_count"])
+                    staff_list += pick("Aux", 0, rule["aux_unarmed_count"])
+
+                    # ❌ If no staff found → skip
+                    if not staff_list:
+                        skipped_total += 1
+                        continue
+
+                    # 🟢 INSERT
+                    for s in staff_list:
+                        try:
+                            cur.execute("""
+                                INSERT INTO district_duty_assignments
+                                (admin_id, duty_type, batch_no, staff_id, assigned_by)
+                                VALUES (%s,%s,%s,%s,%s)
+                            """, (admin_id, duty_type, batch_no, s["id"], created_by))
+
+                            assigned_total += 1
+
+                        except Exception:
+                            skipped_total += 1
+
+                    batch_no += 1
+
+                done_types += 1
+
+                # 🟢 Update progress
+                cur.execute("""
+                    UPDATE district_duty_jobs
+                    SET done_types=%s,
+                        assigned=%s,
+                        skipped=%s
+                    WHERE id=%s
+                """, (done_types, assigned_total, skipped_total, job_id))
+
+            # 🟢 Finish job
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='done'
+                WHERE id=%s
+            """, (job_id,))
 
         conn.commit()
 
+        return {
+            "jobId": job_id,
+            "assigned": assigned_total,
+            "skipped": skipped_total
+        }
+
+    except Exception as e:
+        conn.rollback()
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='error', error_msg=%s
+                WHERE id=%s
+            """, (str(e), job_id))
+
+        return {"error": str(e)}
+
+    finally:
+        conn.close()
+
+
+@admin_bp.route("/district-duty/auto-assign/start", methods=["POST"])
+@admin_required
+def start_district_auto_assign():
+
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+
+            # 1️⃣ create job
+            cur.execute("""
+                INSERT INTO district_duty_jobs
+                (admin_id, status, total_types, done_types, assigned, skipped, created_by)
+                VALUES (%s, 'running', 0, 0, 0, 0, %s)
+            """, (_admin_id(), _admin_id()))
+
+            job_id = cur.lastrowid
+
+            # 2️⃣ get all duty types
+            cur.execute("""
+                SELECT duty_type FROM district_rules
+                WHERE admin_id=%s
+            """, (_admin_id(),))
+
+            duty_types = [r["duty_type"] for r in cur.fetchall()]
+
+            # update total
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET total_types=%s
+                WHERE id=%s
+            """, (len(duty_types), job_id))
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+    # 🔥 RUN IN BACKGROUND
+    threading.Thread(
+        target=_run_district_assign_job,
+        args=(job_id, duty_types, _admin_id())
+    ).start()
+
+    return ok({"jobId": job_id})
+
+def _run_district_assign_job(job_id, duty_types, admin_id):
+
+    conn = get_db()
+
+    assigned_total = 0
+    skipped_total = 0
+
+    try:
+        for i, duty_type in enumerate(duty_types):
+
+            try:
+                # 👉 CALL YOUR EXISTING FUNCTION
+                res = _auto_assign_single_duty(conn, duty_type, admin_id)
+
+                assigned_total += res.get("assigned", 0)
+                skipped_total += res.get("skipped", 0)
+
+            except Exception as e:
+                print("❌ Error in duty:", duty_type, e)
+
+            # update progress
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE district_duty_jobs
+                    SET done_types=%s,
+                        assigned=%s,
+                        skipped=%s
+                    WHERE id=%s
+                """, (i+1, assigned_total, skipped_total, job_id))
+            conn.commit()
+
+        # ✅ DONE
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='done'
+                WHERE id=%s
+            """, (job_id,))
+        conn.commit()
+
+    except Exception as e:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='error', error_msg=%s
+                WHERE id=%s
+            """, (str(e), job_id))
+        conn.commit()
+
+    finally:
+        conn.close()
+
+@admin_bp.route("/district-duty/auto-assign/status/<int:job_id>", methods=["GET"])
+@admin_required
+def get_district_job_status(job_id):
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT * FROM district_duty_jobs
+                WHERE id=%s
+            """, (job_id,))
+            job = cur.fetchone()
+
+    finally:
+        conn.close()
+
+    if not job:
+        return err("Job not found")
+
+    return ok(job)
+
+def _auto_assign_single_duty(conn, duty_type, admin_id):
+    assigned = 0
+    skipped = 0
+
+    try:
+        with conn.cursor() as cur:
+
+            # 1️⃣ Get rule
+            cur.execute("""
+                SELECT male_count, female_count
+                FROM district_rules
+                WHERE duty_type=%s AND admin_id=%s
+            """, (duty_type, admin_id))
+            rule = cur.fetchone()
+
+            if not rule:
+                return {"assigned": 0, "skipped": 0}
+
+            male_needed = rule["male_count"]
+            female_needed = rule["female_count"]
+
+            # 2️⃣ Get available staff
+            cur.execute("""
+                SELECT id, gender
+                FROM staff
+                WHERE admin_id=%s
+                AND id NOT IN (
+                    SELECT staff_id FROM district_duty_assignments
+                )
+                ORDER BY RAND()
+            """, (admin_id,))
+            staff_list = cur.fetchall()
+
+            # 3️⃣ Split by gender
+            males = [s for s in staff_list if s["gender"] == "male"]
+            females = [s for s in staff_list if s["gender"] == "female"]
+
+            selected = []
+
+            # 4️⃣ Pick males
+            if len(males) >= male_needed:
+                selected += males[:male_needed]
+            else:
+                selected += males
+                skipped += (male_needed - len(males))
+
+            # 5️⃣ Pick females
+            if len(females) >= female_needed:
+                selected += females[:female_needed]
+            else:
+                selected += females
+                skipped += (female_needed - len(females))
+
+            # 6️⃣ Insert assignments
+            for s in selected:
+                cur.execute("""
+                    INSERT INTO district_duty_assignments
+                    (admin_id, staff_id, duty_type)
+                    VALUES (%s, %s, %s)
+                """, (admin_id, s["id"], duty_type))
+
+            assigned = len(selected)
+
+        conn.commit()
+
+    except Exception as e:
+        print("❌ ERROR:", e)
+        conn.rollback()
+
+    return {
+        "assigned": assigned,
+        "skipped": skipped
+    }
+
+
+def _auto_assign_district_duties_internal(job_id: int, admin_id: int):
+    """
+    Auto-assigns staff to all district duty types based on district_rules.
+    Rank priority: SI Armed → SI Unarmed → HC Armed → HC Unarmed →
+                   Const Armed → Const Unarmed → Aux Armed → Aux Unarmed
+    Staff already in booth duty_assignments are excluded.
+    """
+    conn = get_db()
+    try:
+        # Mark running
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE district_duty_jobs SET status='running', updated_at=NOW() WHERE id=%s",
+                (job_id,)
+            )
+        conn.commit()
+ 
+        # Get district admin IDs
+        with conn.cursor() as cur:
+            cur.execute("SELECT district FROM users WHERE id=%s", (admin_id,))
+            row = cur.fetchone()
+            district = (row["district"] or "").strip() if row else ""
+ 
+        if district:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT id FROM users WHERE role IN ('admin','super_admin') AND district=%s",
+                    (district,)
+                )
+                rows = cur.fetchall()
+                d_ids = [r["id"] for r in rows]
+                if admin_id not in d_ids:
+                    d_ids.append(admin_id)
+        else:
+            d_ids = [admin_id]
+ 
+        d_ph = ",".join(["%s"] * len(d_ids))
+ 
+        # Load ALL district rules for this district
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT * FROM district_rules
+                WHERE admin_id IN ({d_ph})
+                ORDER BY sort_order, duty_type
+            """, d_ids)
+            rules = cur.fetchall()
+ 
+        total_assigned = 0
+        total_skipped  = 0
+        done_types     = 0
+ 
+        # Update total_types
+        with conn.cursor() as cur:
+            cur.execute(
+                "UPDATE district_duty_jobs SET total_types=%s WHERE id=%s",
+                (len(rules), job_id)
+            )
+        conn.commit()
+ 
+        # Rank assignment order: (rank_name, is_armed, rule_column)
+        RANK_ASSIGN_ORDER = [
+            ("SI",             1, "si_armed_count"),
+            ("SI",             0, "si_unarmed_count"),
+            ("Head Constable", 1, "hc_armed_count"),
+            ("Head Constable", 0, "hc_unarmed_count"),
+            ("Constable",      1, "const_armed_count"),
+            ("Constable",      0, "const_unarmed_count"),
+            ("Constable",      1, "aux_armed_count"),
+            ("Constable",      0, "aux_unarmed_count"),
+        ]
+ 
+        for rule in rules:
+            duty_type = rule["duty_type"]
+            sankhya   = int(rule["sankhya"] or 0)
+ 
+            if sankhya <= 0:
+                done_types += 1
+                _update_job_progress(conn, job_id, done_types, total_assigned, total_skipped)
+                continue
+ 
+            # How many already assigned to this duty_type?
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COUNT(DISTINCT staff_id) AS cnt
+                    FROM district_duty_assignments
+                    WHERE admin_id IN ({d_ph}) AND duty_type=%s
+                """, d_ids + [duty_type])
+                already_total = cur.fetchone()["cnt"] or 0
+ 
+            shortage = sankhya - already_total
+            if shortage <= 0:
+                done_types += 1
+                _update_job_progress(conn, job_id, done_types, total_assigned, total_skipped)
+                continue
+ 
+            # Get next batch number
+            with conn.cursor() as cur:
+                cur.execute(f"""
+                    SELECT COALESCE(MAX(batch_no), 0) AS mx
+                    FROM district_duty_assignments
+                    WHERE admin_id IN ({d_ph}) AND duty_type=%s
+                """, d_ids + [duty_type])
+                batch_no = (cur.fetchone()["mx"] or 0) + 1
+ 
+            batch_assigned = 0
+ 
+            for rank, is_armed, count_col in RANK_ASSIGN_ORDER:
+                needed = int(rule.get(count_col) or 0)
+                if needed <= 0 or batch_assigned >= shortage:
+                    continue
+ 
+                # How many of this rank+armed already in this duty?
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT COUNT(*) AS cnt
+                        FROM district_duty_assignments dda
+                        JOIN users u ON u.id = dda.staff_id
+                        WHERE dda.admin_id IN ({d_ph})
+                          AND dda.duty_type = %s
+                          AND u.user_rank   = %s
+                          AND u.is_armed    = %s
+                    """, d_ids + [duty_type, rank, is_armed])
+                    rank_already = cur.fetchone()["cnt"] or 0
+ 
+                rank_shortage = needed - rank_already
+                if rank_shortage <= 0:
+                    continue
+ 
+                to_pick = min(rank_shortage, shortage - batch_assigned)
+                if to_pick <= 0:
+                    continue
+ 
+                # Pick unassigned staff — exclude those in ANY district duty
+                # AND those already in booth duty_assignments
+                with conn.cursor() as cur:
+                    cur.execute(f"""
+                        SELECT u.id FROM users u
+                        WHERE u.role      = 'staff'
+                          AND u.user_rank = %s
+                          AND u.is_armed  = %s
+                          AND u.is_active = 1
+                          AND u.id NOT IN (
+                              SELECT staff_id FROM district_duty_assignments
+                              WHERE admin_id IN ({d_ph})
+                          )
+                          AND u.id NOT IN (
+                              SELECT staff_id FROM duty_assignments
+                          )
+                        ORDER BY u.id
+                        LIMIT %s
+                    """, [rank, is_armed] + d_ids + [to_pick])
+                    candidates = cur.fetchall()
+ 
+                for s in candidates:
+                    if batch_assigned >= shortage:
+                        break
+                    try:
+                        with conn.cursor() as cur:
+                            cur.execute("""
+                                INSERT INTO district_duty_assignments
+                                    (admin_id, duty_type, batch_no, staff_id, assigned_by)
+                                VALUES (%s, %s, %s, %s, %s)
+                            """, (admin_id, duty_type, batch_no, s["id"], admin_id))
+                        conn.commit()
+                        batch_assigned += 1
+                        total_assigned += 1
+                    except Exception:
+                        total_skipped += 1
+ 
+            done_types += 1
+            _update_job_progress(conn, job_id, done_types, total_assigned, total_skipped)
+ 
+        # Mark done
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='done', done_types=%s, assigned=%s, skipped=%s, updated_at=NOW()
+                WHERE id=%s
+            """, (done_types, total_assigned, total_skipped, job_id))
+        conn.commit()
+ 
+        write_log("INFO",
+            f"District auto-assign done: {total_assigned} assigned, "
+            f"{total_skipped} skipped (admin {admin_id})",
+            "DistrictAutoAssign")
+ 
+    except Exception as e:
+        write_log("ERROR", f"District auto-assign error: {e}", "DistrictAutoAssign")
+        try:
+            with conn.cursor() as cur:
+                cur.execute("""
+                    UPDATE district_duty_jobs
+                    SET status='error', error_msg=%s, updated_at=NOW()
+                    WHERE id=%s
+                """, (str(e), job_id))
+            conn.commit()
+        except Exception:
+            pass
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
+ 
+ 
+def _update_job_progress(conn, job_id, done_types, assigned, skipped):
+    """Helper: update job progress row."""
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET done_types=%s, assigned=%s, skipped=%s, updated_at=NOW()
+                WHERE id=%s
+            """, (done_types, assigned, skipped, job_id))
+        conn.commit()
+    except Exception:
+        pass
+ 
+ 
+def run_district_duty_job(job_id: int, admin_id: int):
+    """Thread target."""
+    print(f"🚀 DISTRICT AUTO ASSIGN START — job={job_id} admin={admin_id}")
+    _auto_assign_district_duties_internal(job_id, admin_id)
+    print(f"✅ DISTRICT AUTO ASSIGN DONE  — job={job_id}")
+ 
+ 
+def run_district_duty_job(job_id: int, admin_id: int):
+    """Thread target for district duty auto-assign."""
+    print(f"🚀 DISTRICT AUTO ASSIGN STARTED — job_id={job_id} admin_id={admin_id}")
+    _auto_assign_district_duties_internal(job_id, admin_id)
+    print(f"✅ DISTRICT AUTO ASSIGN FINISHED — job_id={job_id}")
+ 
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+#  ROUTES  — paste these into admin_bp  in admin.py
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+ 
+  
+ 
+ 
+
+@admin_bp.route("/district-duty/auto-assign/status/<int:job_id>", methods=["GET"])
+@admin_required
+def district_auto_assign_status(job_id: int):
+    """Poll status of a district duty auto-assign job."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT id, status, total_types, done_types,
+                       assigned, skipped, error_msg, created_at, updated_at
+                FROM district_duty_jobs
+                WHERE id=%s AND admin_id IN ({d_ph})
+            """, [job_id] + d_params)
+            job = cur.fetchone()
+    finally:
+        conn.close()
+ 
+    if not job:
+        return err("Job not found", 404)
+ 
+    total = job["total_types"] or 0
+    done  = job["done_types"]  or 0
+    pct   = int((done / total) * 100) if total > 0 else 0
+    if job["status"] == "done":
+        pct = 100
+ 
+    return ok({
+        "jobId":      job["id"],
+        "status":     job["status"],
+        "totalTypes": total,
+        "doneTypes":  done,
+        "assigned":   job["assigned"] or 0,
+        "skipped":    job["skipped"]  or 0,
+        "pct":        pct,
+        "errorMsg":   job["error_msg"] or "",
+        "createdAt":  str(job["created_at"]),
+        "updatedAt":  str(job["updated_at"]),
+    })
+ 
+ 
+ 
+
+@admin_bp.route("/district-duty/auto-assign/latest", methods=["GET"])
+@admin_required
+def district_auto_assign_latest():
+    """Returns the most recent auto-assign job for this admin's district."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                SELECT id, status, total_types, done_types,
+                       assigned, skipped, error_msg, created_at, updated_at
+                FROM district_duty_jobs
+                WHERE admin_id IN ({d_ph})
+                ORDER BY id DESC LIMIT 1
+            """, d_params)
+            job = cur.fetchone()
+    finally:
+        conn.close()
+ 
+    if not job:
+        return ok(None)
+ 
+    total = job["total_types"] or 0
+    done  = job["done_types"]  or 0
+    pct   = int((done / total) * 100) if total > 0 else 0
+    if job["status"] == "done":
+        pct = 100
+ 
+    return ok({
+        "jobId":      job["id"],
+        "status":     job["status"],
+        "totalTypes": total,
+        "doneTypes":  done,
+        "assigned":   job["assigned"] or 0,
+        "skipped":    job["skipped"]  or 0,
+        "pct":        pct,
+        "errorMsg":   job["error_msg"] or "",
+        "createdAt":  str(job["created_at"]),
+        "updatedAt":  str(job["updated_at"]),
+    })
+ 
+ 
+@admin_bp.route("/district-duty/auto-assign/clear-all", methods=["DELETE"])
+@admin_required
+def clear_all_district_assignments():
+    """Removes ALL district duty assignments for this district."""
+    d_ids = _district_admin_ids()
+    d_ph, d_params = _district_placeholder(d_ids)
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(f"""
+                DELETE FROM district_duty_assignments
+                WHERE admin_id IN ({d_ph})
+            """, d_params)
+            removed = cur.rowcount
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    write_log("INFO",
+        f"All district duty assignments cleared ({removed} rows) by admin {_admin_id()}",
+        "DistrictAutoAssign")
+ 
+    return ok({"removed": removed}, "All district assignments cleared")
+ 
+ 
+
+def _assign_one_center(conn, center, admin_id):
+    assigned_count = 0
+
+    try:
+        with conn.cursor() as cur:
+
+            # 1️⃣ Get rule
+            cur.execute("""
+                SELECT * FROM booth_rules
+                WHERE sensitivity=%s AND booth_count=%s
+                LIMIT 1
+            """, (center["center_type"], min(center["booth_count"], 15)))
+
+            rule = cur.fetchone()
+
+            if not rule:
+                print(f"⚠ No rule for center {center['id']}")
+                return 0
+
+            # 2️⃣ STAFF PICK FUNCTION (NO DISTRICT FILTER 🚀)
+            def pick_staff(rank, is_armed, count):
+                if count <= 0:
+                    return []
+
+                # 🔥 MAIN CHANGE → REMOVED district filter
+                cur.execute("""
+                    SELECT id FROM users
+                    WHERE role='staff'
+                    AND user_rank=%s
+                    AND is_armed=%s
+                    AND is_active=1
+                    AND id NOT IN (
+                        SELECT staff_id FROM duty_assignments
+                    )
+                    LIMIT %s
+                """, (rank, is_armed, count))
+
+                rows = cur.fetchall()
+
+                # 🔁 FALLBACK (lower rank)
+                if len(rows) < count:
+                    lower = _get_lower_rank(rank)
+                    if lower:
+                        cur.execute("""
+                            SELECT id FROM users
+                            WHERE role='staff'
+                            AND user_rank=%s
+                            AND is_armed=%s
+                            AND is_active=1
+                            AND id NOT IN (
+                                SELECT staff_id FROM duty_assignments
+                            )
+                            LIMIT %s
+                        """, (lower, is_armed, count - len(rows)))
+
+                        rows += cur.fetchall()
+
+                return rows
+
+            assignments = []
+
+            # 3️⃣ APPLY RULES
+
+            # SI
+            assignments += pick_staff("SI", 1, rule["si_armed_count"])
+            assignments += pick_staff("SI", 0, rule["si_unarmed_count"])
+
+            # HC
+            assignments += pick_staff("Head Constable", 1, rule["hc_armed_count"])
+            assignments += pick_staff("Head Constable", 0, rule["hc_unarmed_count"])
+
+            # CONST
+            assignments += pick_staff("Constable", 1, rule["const_armed_count"])
+            assignments += pick_staff("Constable", 0, rule["const_unarmed_count"])
+
+            # AUX FORCE (NEW)
+            assignments += pick_staff("Aux", 1, rule.get("aux_armed_count", 0))
+            assignments += pick_staff("Aux", 0, rule.get("aux_unarmed_count", 0))
+
+            # 4️⃣ INSERT INTO DB
+            for s in assignments:
+                cur.execute("""
+                    INSERT INTO duty_assignments
+                    (staff_id, sthal_id, assigned_by)
+                    VALUES (%s, %s, %s)
+                """, (s["id"], center["id"], admin_id))
+
+                assigned_count += 1
+
+        conn.commit()
+
+        print(f"✅ Center {center['id']} assigned {assigned_count} staff")
+
+    except Exception as e:
+        conn.rollback()
+        print("❌ Assign error:", e)
+
+    return assigned_count
 
 @admin_bp.route("/swap", methods=["POST"])
 @admin_required
@@ -3236,6 +4765,9 @@ def auto_assign(super_zone_id):
                 assign("Head Constable", 0, rule["hc_unarmed_count"])
                 assign("Constable", 1, rule["const_armed_count"])
                 assign("Constable", 0, rule["const_unarmed_count"])
+                # ✅ ADD THIS
+                assign("Constable", 1, rule["aux_armed_count"])
+                assign("Constable", 0, rule["aux_unarmed_count"])
 
         conn.commit()
 
@@ -3400,8 +4932,13 @@ def auto_assign_internal(super_zone_id, admin_id):
                 assign("Head Constable", 0, rule["hc_unarmed_count"])
                 assign("Constable", 1, rule["const_armed_count"])
                 assign("Constable", 0, rule["const_unarmed_count"])
+                assign("Constable", 1, rule["aux_armed_count"])
+                assign("Constable", 0, rule["aux_unarmed_count"])
 
         conn.commit()
 
     finally:
         conn.close()
+
+
+        
