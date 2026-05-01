@@ -152,16 +152,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── app_config ── (kept for global/non-district settings like maintenanceMode)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS app_config (
-                    `key`      VARCHAR(100) PRIMARY KEY,
-                    value      TEXT,
-                    updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                               ON UPDATE CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-            """)
-
+            
             # ══════════════════════════════════════════════════════════════════
             #  🆕 election_configs — district-wise, versioned election details
             # ══════════════════════════════════════════════════════════════════

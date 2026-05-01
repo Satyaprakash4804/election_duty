@@ -2033,11 +2033,10 @@ def get_duties():
     center_id_filter = request.args.get("center_id", type=int)
     search           = request.args.get("q", "").strip()
     page, limit, offset = _page_params()
-
-    # DISTRICT SHARING: show duties for all admins in same district
+ 
     d_ids = _district_admin_ids()
     d_ph, d_params = _district_placeholder(d_ids)
-
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
@@ -2051,39 +2050,70 @@ def get_duties():
                 like = f"%{search}%"
                 params.extend([like, like, like])
             where_sql = " AND ".join(where_parts)
-
-            cur.execute(f"""SELECT COUNT(*) AS cnt
-                FROM duty_assignments da JOIN users u ON u.id=da.staff_id
-                JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones sz ON sz.id=z.super_zone_id WHERE {where_sql}""", params)
-            total = cur.fetchone()["cnt"]
-
-            cur.execute(f"""SELECT da.id, da.bus_no, da.card_downloaded,
-                       u.id AS staff_id, u.name, u.pno, u.mobile, u.thana, u.user_rank, u.district,
-                       ms.id AS center_id, ms.name AS center_name, ms.center_type,
-                       gp.name AS gp_name,
-                       s.id AS sector_id, s.name AS sector_name,
-                       z.id AS zone_id, z.name AS zone_name,
-                       sz.id AS super_zone_id, sz.name AS super_zone_name, sz.block AS block_name
+ 
+            cur.execute(f"""
+                SELECT COUNT(*) AS cnt
                 FROM duty_assignments da
-                JOIN users u ON u.id=da.staff_id JOIN matdan_sthal ms ON ms.id=da.sthal_id
-                JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones sz ON sz.id=z.super_zone_id
-                WHERE {where_sql} ORDER BY ms.name, u.name LIMIT %s OFFSET %s""",
-                params + [limit, offset])
+                JOIN users u ON u.id = da.staff_id
+                JOIN matdan_sthal ms ON ms.id = da.sthal_id
+                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s ON s.id = gp.sector_id
+                JOIN zones z ON z.id = s.zone_id
+                JOIN super_zones sz ON sz.id = z.super_zone_id
+                WHERE {where_sql}
+            """, params)
+            total = cur.fetchone()["cnt"]
+ 
+            cur.execute(f"""
+                SELECT
+                    da.id,
+                    da.bus_no,
+                    da.card_downloaded,
+ 
+                    u.id        AS staff_id,
+                    u.name,
+                    u.pno,
+                    u.mobile,
+                    u.thana,
+                    u.user_rank,
+                    u.district,
+                    u.is_armed,
+ 
+                    ms.id           AS center_id,
+                    ms.name         AS center_name,
+                    ms.center_type,
+                    ms.booth_count,
+ 
+                    gp.name         AS gp_name,
+                    s.id            AS sector_id,
+                    s.name          AS sector_name,
+                    z.id            AS zone_id,
+                    z.name          AS zone_name,
+                    sz.id           AS super_zone_id,
+                    sz.name         AS super_zone_name,
+                    sz.block        AS block_name
+ 
+                FROM duty_assignments da
+                JOIN users u          ON u.id  = da.staff_id
+                JOIN matdan_sthal ms  ON ms.id = da.sthal_id
+                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s        ON s.id  = gp.sector_id
+                JOIN zones z          ON z.id  = s.zone_id
+                JOIN super_zones sz   ON sz.id = z.super_zone_id
+                WHERE {where_sql}
+                ORDER BY ms.name, u.name
+                LIMIT %s OFFSET %s
+            """, params + [limit, offset])
             rows = cur.fetchall()
-
+ 
             if not rows:
                 return _paginated([], total, page, limit)
-
+ 
             sz_ids     = list({r["super_zone_id"] for r in rows})
             z_ids      = list({r["zone_id"]       for r in rows})
             s_ids      = list({r["sector_id"]     for r in rows})
             center_ids = list({r["center_id"]     for r in rows})
-
+ 
             def _fetch_map(sql, id_list):
                 if not id_list: return {}
                 ph = ",".join(["%s"] * len(id_list))
@@ -2093,33 +2123,55 @@ def get_duties():
                     key = list(row.values())[0]
                     result.setdefault(key, []).append(dict(row))
                 return result
-
-            super_off_map  = _fetch_map("SELECT super_zone_id AS _fk, name, pno, mobile, user_rank FROM kshetra_officers WHERE super_zone_id IN ({ph})", sz_ids)
-            zonal_off_map  = _fetch_map("SELECT zone_id AS _fk, name, pno, mobile, user_rank FROM zonal_officers WHERE zone_id IN ({ph})", z_ids)
-            sector_off_map = _fetch_map("SELECT sector_id AS _fk, name, pno, mobile, user_rank FROM sector_officers WHERE sector_id IN ({ph})", s_ids)
-            sahyogi_map    = _fetch_map("SELECT da2.sthal_id AS _fk, u2.name, u2.pno, u2.mobile, u2.thana, u2.user_rank, u2.district FROM duty_assignments da2 JOIN users u2 ON u2.id=da2.staff_id WHERE da2.sthal_id IN ({ph})", center_ids)
-
+ 
+            super_off_map  = _fetch_map(
+                "SELECT super_zone_id AS _fk, name, pno, mobile, user_rank "
+                "FROM kshetra_officers WHERE super_zone_id IN ({ph})", sz_ids)
+            zonal_off_map  = _fetch_map(
+                "SELECT zone_id AS _fk, name, pno, mobile, user_rank "
+                "FROM zonal_officers WHERE zone_id IN ({ph})", z_ids)
+            sector_off_map = _fetch_map(
+                "SELECT sector_id AS _fk, name, pno, mobile, user_rank "
+                "FROM sector_officers WHERE sector_id IN ({ph})", s_ids)
+            sahyogi_map    = _fetch_map(
+                "SELECT da2.sthal_id AS _fk, u2.name, u2.pno, u2.mobile, "
+                "u2.thana, u2.user_rank, u2.district, u2.is_armed "
+                "FROM duty_assignments da2 JOIN users u2 ON u2.id=da2.staff_id "
+                "WHERE da2.sthal_id IN ({ph})", center_ids)
+ 
             def _strip(lst):
                 return [{k: v for k, v in d.items() if k != "_fk"} for d in lst]
-
+ 
             result = [{
-                "id": r["id"], "centerId": r["center_id"],
-                "name": r["name"] or "", "pno": r["pno"] or "", "mobile": r["mobile"] or "",
-                "staffThana": r["thana"] or "", "rank": r["user_rank"] or "", "district": r["district"] or "",
-                "centerName": r["center_name"] or "", "gpName": r["gp_name"] or "",
-                "sectorName": r["sector_name"] or "", "zoneName": r["zone_name"] or "",
-                "superZoneName": r["super_zone_name"] or "", "blockName": r["block_name"] or "",
-                "busNo": r["bus_no"] or "",
+                "id":             r["id"],
+                "centerId":       r["center_id"],
+                "name":           r["name"]        or "",
+                "pno":            r["pno"]          or "",
+                "mobile":         r["mobile"]       or "",
+                "staffThana":     r["thana"]        or "",
+                "rank":           r["user_rank"]    or "",
+                "district":       r["district"]     or "",
+                # ✅ FIX: isArmed now included and cast to bool
+                "isArmed":        bool(r["is_armed"]),
+                "centerName":     r["center_name"]  or "",
+                "gpName":         r["gp_name"]      or "",
+                "sectorName":     r["sector_name"]  or "",
+                "zoneName":       r["zone_name"]    or "",
+                "superZoneName":  r["super_zone_name"] or "",
+                "blockName":      r["block_name"]   or "",
+                "busNo":          r["bus_no"]        or "",
                 "cardDownloaded": bool(r.get("card_downloaded", False)),
                 "superOfficers":  _strip(super_off_map.get(r["super_zone_id"], [])),
                 "zonalOfficers":  _strip(zonal_off_map.get(r["zone_id"],       [])),
                 "sectorOfficers": _strip(sector_off_map.get(r["sector_id"],    [])),
                 "sahyogi":        _strip(sahyogi_map.get(r["center_id"],        [])),
             } for r in rows]
+ 
     finally:
         conn.close()
+ 
     return _paginated(result, total, page, limit)
-
+ 
 
 @admin_bp.route("/duties", methods=["POST"])
 @admin_required
@@ -2317,57 +2369,159 @@ def remove_staff_duty(staff_id):
 def all_centers():
     search = request.args.get("q", "").strip()
     page, limit, offset = _page_params()
-
-    # DISTRICT SHARING: show centers for all admins in same district
+ 
     d_ids = _district_admin_ids()
     d_ph, d_params = _district_placeholder(d_ids)
-
+ 
     conn = get_db()
     try:
         with conn.cursor() as cur:
+ 
+            # ── count ────────────────────────────────────────────────────────
             count_params = list(d_params)
-            where_extra = ""
+            where_extra  = ""
             if search:
                 where_extra = "AND (ms.name LIKE %s OR ms.thana LIKE %s OR gp.name LIKE %s)"
                 like = f"%{search}%"
                 count_params.extend([like, like, like])
-
-            cur.execute(f"""SELECT COUNT(DISTINCT ms.id) AS cnt
-                FROM matdan_sthal ms JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones sz ON sz.id=z.super_zone_id
-                WHERE sz.admin_id IN ({d_ph}) {where_extra}""", count_params)
+ 
+            cur.execute(f"""
+                SELECT COUNT(DISTINCT ms.id) AS cnt
+                FROM matdan_sthal ms
+                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s   ON s.id  = gp.sector_id
+                JOIN zones z     ON z.id  = s.zone_id
+                JOIN super_zones sz ON sz.id = z.super_zone_id
+                WHERE sz.admin_id IN ({d_ph}) {where_extra}
+            """, count_params)
             total = cur.fetchone()["cnt"]
-
+ 
+            # ── data ─────────────────────────────────────────────────────────
             data_params = list(d_params)
             if search:
                 data_params.extend([like, like, like])
-
-            cur.execute(f"""SELECT ms.id, ms.name, ms.address, ms.thana, ms.center_type, ms.bus_no,
-                       ms.latitude, ms.longitude,
-                       gp.name AS gp_name, s.name AS sector_name, z.name AS zone_name,
-                       sz.name AS super_zone_name, sz.block AS block_name,
-                       COUNT(da.id) AS duty_count
-                FROM matdan_sthal ms JOIN gram_panchayats gp ON gp.id=ms.gram_panchayat_id
-                JOIN sectors s ON s.id=gp.sector_id JOIN zones z ON z.id=s.zone_id
-                JOIN super_zones sz ON sz.id=z.super_zone_id
-                LEFT JOIN duty_assignments da ON da.sthal_id=ms.id
+ 
+            cur.execute(f"""
+                SELECT
+                    ms.id,
+                    ms.name,
+                    ms.address,
+                    ms.thana,
+                    ms.center_type,
+                    ms.booth_count,
+                    ms.bus_no,
+                    ms.latitude,
+                    ms.longitude,
+                    gp.name   AS gp_name,
+                    s.name    AS sector_name,
+                    z.name    AS zone_name,
+                    sz.name   AS super_zone_name,
+                    sz.block  AS block_name,
+                    COALESCE(l.is_locked, 0) AS is_locked,
+                    COUNT(da.id) AS duty_count
+                FROM matdan_sthal ms
+                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
+                JOIN sectors s    ON s.id  = gp.sector_id
+                JOIN zones z      ON z.id  = s.zone_id
+                JOIN super_zones sz ON sz.id = z.super_zone_id
+                LEFT JOIN sz_duty_locks l   ON l.super_zone_id = z.super_zone_id
+                LEFT JOIN duty_assignments da ON da.sthal_id   = ms.id
                 WHERE sz.admin_id IN ({d_ph}) {where_extra}
-                GROUP BY ms.id ORDER BY ms.name LIMIT %s OFFSET %s""",
-                data_params + [limit, offset])
+                GROUP BY ms.id
+                ORDER BY ms.name
+                LIMIT %s OFFSET %s
+            """, data_params + [limit, offset])
             rows = cur.fetchall()
+ 
+            if not rows:
+                return _paginated([], total, page, limit)
+ 
+            # ── fetch booth rules for each center ─────────────────────────────
+            # group centers by (center_type, booth_count) to batch rule lookup
+            type_booth_pairs = list({
+                (r["center_type"], min(int(r["booth_count"] or 1), 15))
+                for r in rows
+            })
+ 
+            # Build map: (sensitivity, booth_count) → rule
+            rule_map = {}
+            if type_booth_pairs:
+                # fetch all relevant rules in one query
+                # We need: admin_id IN district + sensitivity + booth_count
+                pair_conditions = " OR ".join(
+                    ["(br.sensitivity=%s AND br.booth_count=%s)"] * len(type_booth_pairs)
+                )
+                pair_params = []
+                for sens, bc in type_booth_pairs:
+                    pair_params.extend([sens, bc])
+ 
+                cur.execute(f"""
+                    SELECT
+                        br.sensitivity,
+                        br.booth_count,
+                        br.si_armed_count,
+                        br.si_unarmed_count,
+                        br.hc_armed_count,
+                        br.hc_unarmed_count,
+                        br.const_armed_count,
+                        br.const_unarmed_count,
+                        br.aux_armed_count,
+                        br.aux_unarmed_count,
+                        br.pac_count
+                    FROM booth_rules br
+                    WHERE br.admin_id IN ({d_ph})
+                      AND ({pair_conditions})
+                    ORDER BY br.booth_count
+                """, d_params + pair_params)
+ 
+                for br in cur.fetchall():
+                    key = (br["sensitivity"], br["booth_count"])
+                    # last one wins — district-shared admins may have duplicates
+                    rule_map[key] = {
+                        "siArmedCount":      br["si_armed_count"],
+                        "siUnarmedCount":    br["si_unarmed_count"],
+                        "hcArmedCount":      br["hc_armed_count"],
+                        "hcUnarmedCount":    br["hc_unarmed_count"],
+                        "constArmedCount":   br["const_armed_count"],
+                        "constUnarmedCount": br["const_unarmed_count"],
+                        "auxArmedCount":     br["aux_armed_count"],
+                        "auxUnarmedCount":   br["aux_unarmed_count"],
+                        "pacCount":          float(br["pac_count"] or 0),
+                    }
+ 
     finally:
         conn.close()
-    data = [{"id": r["id"], "name": r["name"] or "", "address": r["address"] or "",
-             "thana": r["thana"] or "", "centerType": r["center_type"] or "C",
-             "busNo": r["bus_no"] or "",
-             "latitude": float(r["latitude"]) if r["latitude"] else None,
-             "longitude": float(r["longitude"]) if r["longitude"] else None,
-             "gpName": r["gp_name"] or "", "sectorName": r["sector_name"] or "",
-             "zoneName": r["zone_name"] or "", "superZoneName": r["super_zone_name"] or "",
-             "blockName": r["block_name"] or "", "dutyCount": r["duty_count"]} for r in rows]
+ 
+    data = []
+    for r in rows:
+        bc         = min(int(r["booth_count"] or 1), 15)
+        ctype      = r["center_type"] or "C"
+        booth_rule = rule_map.get((ctype, bc))
+ 
+        data.append({
+            "id":             r["id"],
+            "name":           r["name"]         or "",
+            "address":        r["address"]       or "",
+            "thana":          r["thana"]         or "",
+            "centerType":     ctype,
+            # ✅ FIX: booth_count now included
+            "boothCount":     int(r["booth_count"] or 1),
+            "busNo":          r["bus_no"]         or "",
+            "latitude":       float(r["latitude"])  if r["latitude"]  else None,
+            "longitude":      float(r["longitude"]) if r["longitude"] else None,
+            "gpName":         r["gp_name"]       or "",
+            "sectorName":     r["sector_name"]   or "",
+            "zoneName":       r["zone_name"]      or "",
+            "superZoneName":  r["super_zone_name"] or "",
+            "blockName":      r["block_name"]    or "",
+            "dutyCount":      int(r["duty_count"] or 0),
+            "isLocked":       bool(r["is_locked"]),
+            # ✅ FIX: booth rule summary attached per center
+            "boothRule":      booth_rule,
+        })
+ 
     return _paginated(data, total, page, limit)
-
+ 
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  OVERVIEW — district-wide aggregation
@@ -3847,7 +4001,7 @@ def auto_assign_district(admin_id, created_by):
                     staff_list += smart_collect("Aux", 1, rule["aux_armed_count"], used_ids)
                     staff_list += smart_collect("Aux", 0, rule["aux_unarmed_count"], used_ids)
 
-                    # ✅ SAFE MODE
+                    # ✅ SAFE 
                     if not staff_list:
                         skipped_total += 1
                         continue
