@@ -6,6 +6,7 @@ import 'hierarchy_report_page.dart';
 import 'goswara_page.dart';
 import 'manak_booth_page.dart';
 import 'manak_district_page.dart';
+import 'manak_booth_report_page.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const kBg      = Color(0xFFFDF6E3);
@@ -383,11 +384,22 @@ class _BoothManakSection extends StatelessWidget {
   final void Function(String, Color, String) onTapSens;
 
   const _BoothManakSection({
-    required this.boothRules, required this.loading, required this.onTapSens,
+    required this.boothRules,
+    required this.loading,
+    required this.onTapSens,
   });
 
   @override
   Widget build(BuildContext context) {
+    final sw = MediaQuery.of(context).size.width;
+
+    // ✅ RESPONSIVE GRID
+    final crossAxisCount = sw > 900
+        ? 4
+        : sw > 600
+            ? 3
+            : 2;
+
     final allSet = _kSensitivities.every((s) =>
         (boothRules[s['key']] ?? []).any((r) => _hasAny(r)));
 
@@ -396,92 +408,162 @@ class _BoothManakSection extends StatelessWidget {
         color: Colors.white,
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: kBorder.withOpacity(0.4)),
-        boxShadow: [BoxShadow(
+        boxShadow: [
+          BoxShadow(
             color: kPrimary.withOpacity(0.06),
-            blurRadius: 12, offset: const Offset(0, 4))],
+            blurRadius: 12,
+            offset: const Offset(0, 4),
+          )
+        ],
       ),
-      child: Column(children: [
-        // Header
-        Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: kSurface.withOpacity(0.6),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(16)),
-            border: Border(bottom: BorderSide(color: kBorder.withOpacity(0.3))),
-          ),
-          child: Row(children: [
-            Container(
-              padding: const EdgeInsets.all(8),
-              decoration: BoxDecoration(
-                  color: kPrimary.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(9)),
-              child: const Icon(Icons.how_to_vote_outlined,
-                  color: kPrimary, size: 18),
+      child: Column(
+        children: [
+          // ───────────────── HEADER ─────────────────
+          Container(
+            padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+            decoration: BoxDecoration(
+              color: kSurface.withOpacity(0.6),
+              borderRadius:
+                  const BorderRadius.vertical(top: Radius.circular(16)),
+              border:
+                  Border(bottom: BorderSide(color: kBorder.withOpacity(0.3))),
             ),
-            const SizedBox(width: 10),
-            const Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text('बूथ मानक', style: TextStyle(
-                  color: kDark, fontSize: 14, fontWeight: FontWeight.w800)),
-              Text('संवेदनशीलता × बूथ संख्या के अनुसार पुलिस बल',
-                  style: TextStyle(color: kSubtle, fontSize: 10)),
-            ])),
-            _StatusBadge(allSet: allSet),
-          ]),
-        ),
-        // 4 tiles
-        loading
-            ? const Padding(
-                padding: EdgeInsets.all(24),
-                child: Center(child: SizedBox(width: 24, height: 24,
-                    child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))))
-            : Padding(
-                padding: const EdgeInsets.fromLTRB(12, 12, 12, 12),
-                child: GridView.count(
-                  shrinkWrap: true,
-                  physics: const NeverScrollableScrollPhysics(),
-                  crossAxisCount: 2, crossAxisSpacing: 10,
-                  mainAxisSpacing: 10, childAspectRatio: 1.5,
-                  children: _kSensitivities.map((s) {
-                    final key       = s['key']   as String;
-                    final color     = s['color'] as Color;
-                    final hindi     = s['hi']    as String;
-                    final rows      = boothRules[key] ?? [];
-                    final filledRows = rows.where(_hasAny).toList();
-                    final isSet     = filledRows.isNotEmpty;
-                    final totalStaff = filledRows.fold<int>(
-                      0, (sum, r) => sum + _rowTotalStaff(r));
-                    return _SensTile(
-                      label:   key, hindi: hindi, color: color,
-                      isSet:   isSet, totalStaff: totalStaff,
-                      filledRowCount: filledRows.length,
-                      onTap:   () => onTapSens(key, color, hindi),
-                    );
-                  }).toList(),
+            child: Row(
+              children: [
+                Container(
+                  padding: const EdgeInsets.all(8),
+                  decoration: BoxDecoration(
+                    color: kPrimary.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(9),
+                  ),
+                  child: const Icon(Icons.how_to_vote_outlined,
+                      color: kPrimary, size: 18),
                 ),
-              ),
-      ]),
+                const SizedBox(width: 10),
+                const Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text('बूथ मानक',
+                          style: TextStyle(
+                              color: kDark,
+                              fontSize: 14,
+                              fontWeight: FontWeight.w800)),
+                      Text(
+                        'संवेदनशीलता × बूथ संख्या के अनुसार पुलिस बल',
+                        style: TextStyle(color: kSubtle, fontSize: 10),
+                      ),
+                    ],
+                  ),
+                ),
+                _StatusBadge(allSet: allSet),
+              ],
+            ),
+          ),
+
+          // ───────────────── CONTENT ─────────────────
+          loading
+              ? const Padding(
+                  padding: EdgeInsets.all(24),
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: kPrimary,
+                  ),
+                )
+              : Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    children: [
+                      /// ✅ GRID (RESPONSIVE)
+                      GridView.count(
+                        shrinkWrap: true,
+                        physics: const NeverScrollableScrollPhysics(),
+                        crossAxisCount: crossAxisCount,
+                        crossAxisSpacing: 10,
+                        mainAxisSpacing: 10,
+                        childAspectRatio: 1.4,
+                        children: _kSensitivities.map((s) {
+                          final key = s['key'] as String;
+                          final color = s['color'] as Color;
+                          final hindi = s['hi'] as String;
+                          final rows = boothRules[key] ?? [];
+
+                          final filledRows = rows.where(_hasAny).toList();
+                          final isSet = filledRows.isNotEmpty;
+
+                          final totalStaff = filledRows.fold<int>(
+                              0, (sum, r) => sum + _rowTotalStaff(r));
+
+                          return _SensTile(
+                            label: key,
+                            hindi: hindi,
+                            color: color,
+                            isSet: isSet,
+                            totalStaff: totalStaff,
+                            filledRowCount: filledRows.length,
+                            onTap: () => onTapSens(key, color, hindi),
+                          );
+                        }).toList(),
+                      ),
+
+                      const SizedBox(height: 14),
+
+                      /// ✅ NEW BUTTON (REPORT)
+                      SizedBox(
+                        width: double.infinity,
+                        child: ElevatedButton.icon(
+                          icon: const Icon(Icons.picture_as_pdf_outlined),
+                          label: const Text(
+                            'मानक रिपोर्ट देखें / प्रिंट करें',
+                            style: TextStyle(fontWeight: FontWeight.w700),
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: const Color(0xFF6A1B9A),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                          ),
+                          onPressed: () {
+                            Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) =>
+                                    const ManakBoothReportPage(),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+        ],
+      ),
     );
   }
 
+  // ───────────────── HELPERS ─────────────────
+
   bool _hasAny(Map<String, dynamic> r) =>
-      ((r['siArmedCount']      ?? 0) as num) > 0 ||
-      ((r['siUnarmedCount']    ?? 0) as num) > 0 ||
-      ((r['hcArmedCount']      ?? 0) as num) > 0 ||
-      ((r['hcUnarmedCount']    ?? 0) as num) > 0 ||
-      ((r['constArmedCount']   ?? 0) as num) > 0 ||
+      ((r['siArmedCount'] ?? 0) as num) > 0 ||
+      ((r['siUnarmedCount'] ?? 0) as num) > 0 ||
+      ((r['hcArmedCount'] ?? 0) as num) > 0 ||
+      ((r['hcUnarmedCount'] ?? 0) as num) > 0 ||
+      ((r['constArmedCount'] ?? 0) as num) > 0 ||
       ((r['constUnarmedCount'] ?? 0) as num) > 0 ||
-      ((r['auxForceCount']     ?? 0) as num) > 0 ||
-      ((r['pacCount']          ?? 0) as num) > 0;
+      ((r['auxForceCount'] ?? 0) as num) > 0 ||
+      ((r['pacCount'] ?? 0) as num) > 0;
 
   int _rowTotalStaff(Map<String, dynamic> r) =>
-      ((r['siArmedCount']      ?? 0) as num).toInt() +
-      ((r['siUnarmedCount']    ?? 0) as num).toInt() +
-      ((r['hcArmedCount']      ?? 0) as num).toInt() +
-      ((r['hcUnarmedCount']    ?? 0) as num).toInt() +
-      ((r['constArmedCount']   ?? 0) as num).toInt() +
+      ((r['siArmedCount'] ?? 0) as num).toInt() +
+      ((r['siUnarmedCount'] ?? 0) as num).toInt() +
+      ((r['hcArmedCount'] ?? 0) as num).toInt() +
+      ((r['hcUnarmedCount'] ?? 0) as num).toInt() +
+      ((r['constArmedCount'] ?? 0) as num).toInt() +
       ((r['constUnarmedCount'] ?? 0) as num).toInt() +
-      ((r['auxForceCount']     ?? 0) as num).toInt();
+      ((r['auxForceCount'] ?? 0) as num).toInt();
 }
 
 class _StatusBadge extends StatelessWidget {
