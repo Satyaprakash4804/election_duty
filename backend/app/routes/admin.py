@@ -3844,12 +3844,82 @@ def start_district_assign():
 
     admin_id = request.user["id"]
 
-    result = auto_assign_district(
-        admin_id,
-        request.user["id"]
-    )
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # ✅ Create job ONLY
+            cur.execute("""
+                INSERT INTO district_duty_jobs (admin_id, status, created_by)
+                VALUES (%s, 'pending', %s)
+            """, (admin_id, admin_id))
 
-    return ok(result, "District auto assign completed")
+            job_id = cur.lastrowid
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+    # ✅ Run in background thread
+    thread = threading.Thread(
+        target=auto_assign_district_background,
+        args=(job_id, admin_id),
+        daemon=True
+    )
+    thread.start()
+
+    return ok({
+        "jobId": job_id,
+        "status": "started"
+    })
+
+def auto_assign_district_background(job_id, admin_id):
+
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='running'
+                WHERE id=%s
+            """, (job_id,))
+        conn.commit()
+
+        # 🔥 CALL YOUR EXISTING FUNCTION
+        result = auto_assign_district(admin_id, admin_id)
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='done',
+                    assigned=%s,
+                    skipped=%s
+                WHERE id=%s
+            """, (
+                result.get("assigned", 0),
+                result.get("skipped", 0),
+                job_id
+            ))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE district_duty_jobs
+                SET status='error', error_msg=%s
+                WHERE id=%s
+            """, (str(e), job_id))
+
+        conn.commit()
+
+    finally:
+        conn.close()
+
+
 # ✅ ADD THIS AT TOP (MANDATORY)
 FALLBACK = {
     "SI": ["Head Constable", "Constable", "Aux"],
@@ -4065,103 +4135,103 @@ def auto_assign_district(admin_id, created_by):
         conn.close()
 
 
-@admin_bp.route("/district-duty/auto-assign/start", methods=["POST"])
-@admin_required
-def start_district_auto_assign():
+# @admin_bp.route("/district-duty/auto-assign/start", methods=["POST"])
+# @admin_required
+# def start_district_auto_assign():
 
-    conn = get_db()
+#     conn = get_db()
 
-    try:
-        with conn.cursor() as cur:
+#     try:
+#         with conn.cursor() as cur:
 
-            # 1️⃣ create job
-            cur.execute("""
-                INSERT INTO district_duty_jobs
-                (admin_id, status, total_types, done_types, assigned, skipped, created_by)
-                VALUES (%s, 'running', 0, 0, 0, 0, %s)
-            """, (_admin_id(), _admin_id()))
+#             # 1️⃣ create job
+#             cur.execute("""
+#                 INSERT INTO district_duty_jobs
+#                 (admin_id, status, total_types, done_types, assigned, skipped, created_by)
+#                 VALUES (%s, 'running', 0, 0, 0, 0, %s)
+#             """, (_admin_id(), _admin_id()))
 
-            job_id = cur.lastrowid
+#             job_id = cur.lastrowid
 
-            # 2️⃣ get all duty types
-            cur.execute("""
-                SELECT duty_type FROM district_rules
-                WHERE admin_id=%s
-            """, (_admin_id(),))
+#             # 2️⃣ get all duty types
+#             cur.execute("""
+#                 SELECT duty_type FROM district_rules
+#                 WHERE admin_id=%s
+#             """, (_admin_id(),))
 
-            duty_types = [r["duty_type"] for r in cur.fetchall()]
+#             duty_types = [r["duty_type"] for r in cur.fetchall()]
 
-            # update total
-            cur.execute("""
-                UPDATE district_duty_jobs
-                SET total_types=%s
-                WHERE id=%s
-            """, (len(duty_types), job_id))
+#             # update total
+#             cur.execute("""
+#                 UPDATE district_duty_jobs
+#                 SET total_types=%s
+#                 WHERE id=%s
+#             """, (len(duty_types), job_id))
 
-        conn.commit()
+#         conn.commit()
 
-    finally:
-        conn.close()
+#     finally:
+#         conn.close()
 
-    # 🔥 RUN IN BACKGROUND
-    threading.Thread(
-        target=_run_district_assign_job,
-        args=(job_id, duty_types, _admin_id())
-    ).start()
+#     # 🔥 RUN IN BACKGROUND
+#     threading.Thread(
+#         target=_run_district_assign_job,
+#         args=(job_id, duty_types, _admin_id())
+#     ).start()
 
-    return ok({"jobId": job_id})
+#     return ok({"jobId": job_id})
 
-def _run_district_assign_job(job_id, duty_types, admin_id):
+# def _run_district_assign_job(job_id, duty_types, admin_id):
 
-    conn = get_db()
+#     conn = get_db()
 
-    assigned_total = 0
-    skipped_total = 0
+#     assigned_total = 0
+#     skipped_total = 0
 
-    try:
-        for i, duty_type in enumerate(duty_types):
+#     try:
+#         for i, duty_type in enumerate(duty_types):
 
-            try:
-                # 👉 CALL YOUR EXISTING FUNCTION
-                res = _auto_assign_single_duty(conn, duty_type, admin_id)
+#             try:
+#                 # 👉 CALL YOUR EXISTING FUNCTION
+#                 res = _auto_assign_single_duty(conn, duty_type, admin_id)
 
-                assigned_total += res.get("assigned", 0)
-                skipped_total += res.get("skipped", 0)
+#                 assigned_total += res.get("assigned", 0)
+#                 skipped_total += res.get("skipped", 0)
 
-            except Exception as e:
-                print("❌ Error in duty:", duty_type, e)
+#             except Exception as e:
+#                 print("❌ Error in duty:", duty_type, e)
 
-            # update progress
-            with conn.cursor() as cur:
-                cur.execute("""
-                    UPDATE district_duty_jobs
-                    SET done_types=%s,
-                        assigned=%s,
-                        skipped=%s
-                    WHERE id=%s
-                """, (i+1, assigned_total, skipped_total, job_id))
-            conn.commit()
+#             # update progress
+#             with conn.cursor() as cur:
+#                 cur.execute("""
+#                     UPDATE district_duty_jobs
+#                     SET done_types=%s,
+#                         assigned=%s,
+#                         skipped=%s
+#                     WHERE id=%s
+#                 """, (i+1, assigned_total, skipped_total, job_id))
+#             conn.commit()
 
-        # ✅ DONE
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE district_duty_jobs
-                SET status='done'
-                WHERE id=%s
-            """, (job_id,))
-        conn.commit()
+#         # ✅ DONE
+#         with conn.cursor() as cur:
+#             cur.execute("""
+#                 UPDATE district_duty_jobs
+#                 SET status='done'
+#                 WHERE id=%s
+#             """, (job_id,))
+#         conn.commit()
 
-    except Exception as e:
-        with conn.cursor() as cur:
-            cur.execute("""
-                UPDATE district_duty_jobs
-                SET status='error', error_msg=%s
-                WHERE id=%s
-            """, (str(e), job_id))
-        conn.commit()
+#     except Exception as e:
+#         with conn.cursor() as cur:
+#             cur.execute("""
+#                 UPDATE district_duty_jobs
+#                 SET status='error', error_msg=%s
+#                 WHERE id=%s
+#             """, (str(e), job_id))
+#         conn.commit()
 
-    finally:
-        conn.close()
+#     finally:
+#         conn.close()
 
 @admin_bp.route("/district-duty/auto-assign/status/<int:job_id>", methods=["GET"])
 @admin_required
@@ -5190,4 +5260,53 @@ def auto_assign_internal(super_zone_id, admin_id):
         conn.close()
 
 
-        
+@admin_bp.route("/booth-rules/center-counts", methods=["GET"])
+@admin_required
+def get_center_counts():
+
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+
+            cur.execute("""
+                SELECT 
+                    ms.id AS center_id,
+                    ms.name AS center_name,
+
+                    -- 🏫 number of rooms / booths
+                    COUNT(DISTINCT mk.id) AS room_count,
+
+                    -- 👮 assigned staff
+                    COUNT(DISTINCT da.staff_id) AS staff_count
+
+                FROM matdan_sthal ms
+
+                LEFT JOIN matdan_kendra mk 
+                    ON mk.matdan_sthal_id = ms.id
+
+                LEFT JOIN duty_assignments da 
+                    ON da.sthal_id = ms.id
+
+                GROUP BY ms.id, ms.name
+                ORDER BY ms.name
+            """)
+
+            rows = cur.fetchall()
+
+            result = []
+            for r in rows:
+                result.append({
+                    "centerId": r["center_id"],
+                    "centerName": r["center_name"],
+                    "roomCount": r["room_count"] or 0,
+                    "staffCount": r["staff_count"] or 0
+                })
+
+            return ok(result)
+
+    except Exception as e:
+        print("❌ CENTER COUNT ERROR:", e)
+        return err(str(e), 500)
+
+    finally:
+        conn.close()
