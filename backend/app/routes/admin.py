@@ -4135,104 +4135,6 @@ def auto_assign_district(admin_id, created_by):
         conn.close()
 
 
-# @admin_bp.route("/district-duty/auto-assign/start", methods=["POST"])
-# @admin_required
-# def start_district_auto_assign():
-
-#     conn = get_db()
-
-#     try:
-#         with conn.cursor() as cur:
-
-#             # 1️⃣ create job
-#             cur.execute("""
-#                 INSERT INTO district_duty_jobs
-#                 (admin_id, status, total_types, done_types, assigned, skipped, created_by)
-#                 VALUES (%s, 'running', 0, 0, 0, 0, %s)
-#             """, (_admin_id(), _admin_id()))
-
-#             job_id = cur.lastrowid
-
-#             # 2️⃣ get all duty types
-#             cur.execute("""
-#                 SELECT duty_type FROM district_rules
-#                 WHERE admin_id=%s
-#             """, (_admin_id(),))
-
-#             duty_types = [r["duty_type"] for r in cur.fetchall()]
-
-#             # update total
-#             cur.execute("""
-#                 UPDATE district_duty_jobs
-#                 SET total_types=%s
-#                 WHERE id=%s
-#             """, (len(duty_types), job_id))
-
-#         conn.commit()
-
-#     finally:
-#         conn.close()
-
-#     # 🔥 RUN IN BACKGROUND
-#     threading.Thread(
-#         target=_run_district_assign_job,
-#         args=(job_id, duty_types, _admin_id())
-#     ).start()
-
-#     return ok({"jobId": job_id})
-
-# def _run_district_assign_job(job_id, duty_types, admin_id):
-
-#     conn = get_db()
-
-#     assigned_total = 0
-#     skipped_total = 0
-
-#     try:
-#         for i, duty_type in enumerate(duty_types):
-
-#             try:
-#                 # 👉 CALL YOUR EXISTING FUNCTION
-#                 res = _auto_assign_single_duty(conn, duty_type, admin_id)
-
-#                 assigned_total += res.get("assigned", 0)
-#                 skipped_total += res.get("skipped", 0)
-
-#             except Exception as e:
-#                 print("❌ Error in duty:", duty_type, e)
-
-#             # update progress
-#             with conn.cursor() as cur:
-#                 cur.execute("""
-#                     UPDATE district_duty_jobs
-#                     SET done_types=%s,
-#                         assigned=%s,
-#                         skipped=%s
-#                     WHERE id=%s
-#                 """, (i+1, assigned_total, skipped_total, job_id))
-#             conn.commit()
-
-#         # ✅ DONE
-#         with conn.cursor() as cur:
-#             cur.execute("""
-#                 UPDATE district_duty_jobs
-#                 SET status='done'
-#                 WHERE id=%s
-#             """, (job_id,))
-#         conn.commit()
-
-#     except Exception as e:
-#         with conn.cursor() as cur:
-#             cur.execute("""
-#                 UPDATE district_duty_jobs
-#                 SET status='error', error_msg=%s
-#                 WHERE id=%s
-#             """, (str(e), job_id))
-#         conn.commit()
-
-#     finally:
-#         conn.close()
-
 @admin_bp.route("/district-duty/auto-assign/status/<int:job_id>", methods=["GET"])
 @admin_required
 def get_district_job_status(job_id):
@@ -4554,21 +4456,7 @@ def run_district_duty_job(job_id: int, admin_id: int):
     _auto_assign_district_duties_internal(job_id, admin_id)
     print(f"✅ DISTRICT AUTO ASSIGN DONE  — job={job_id}")
  
- 
-def run_district_duty_job(job_id: int, admin_id: int):
-    """Thread target for district duty auto-assign."""
-    print(f"🚀 DISTRICT AUTO ASSIGN STARTED — job_id={job_id} admin_id={admin_id}")
-    _auto_assign_district_duties_internal(job_id, admin_id)
-    print(f"✅ DISTRICT AUTO ASSIGN FINISHED — job_id={job_id}")
- 
- 
-# ══════════════════════════════════════════════════════════════════════════════
-#  ROUTES  — paste these into admin_bp  in admin.py
-# ══════════════════════════════════════════════════════════════════════════════
- 
- 
-  
- 
+
  
 
 @admin_bp.route("/district-duty/auto-assign/status/<int:job_id>", methods=["GET"])
@@ -4687,6 +4575,9 @@ def clear_all_district_assignments():
  
  
 
+
+
+
 def _assign_one_center(conn, center, admin_id):
     assigned_count = 0
 
@@ -4785,6 +4676,9 @@ def _assign_one_center(conn, center, admin_id):
         print("❌ Assign error:", e)
 
     return assigned_count
+
+
+
 
 @admin_bp.route("/swap", methods=["POST"])
 @admin_required

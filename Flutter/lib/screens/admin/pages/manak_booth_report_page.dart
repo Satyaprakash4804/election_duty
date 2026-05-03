@@ -96,7 +96,7 @@ const _sensColors = {
 // ══════════════════════════════════════════════════════════════════════════════
 class ManakBoothReportPage extends StatefulWidget {
   const ManakBoothReportPage({super.key});
-
+ 
   @override
   State<ManakBoothReportPage> createState() => _ManakBoothReportPageState();
 }
