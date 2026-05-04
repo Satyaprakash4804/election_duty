@@ -134,6 +134,16 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
   int    _autoSkipped   = 0;
   Timer? _pollTimer;
 
+  /// Shortage report keyed by duty_type from the latest finished job.
+  /// Shape (per duty):
+  ///   {
+  ///     'label': 'क्लस्टर मोबाईल',
+  ///     'shortages': [{ 'rank': 'SI', 'armed': true, 'missing': 2 }, ...],
+  ///     'batches_made': 3,
+  ///     'batches_target': 5
+  ///   }
+  Map<String, dynamic> _shortageReport = {};
+
   @override
   void initState() {
     super.initState();
@@ -189,6 +199,12 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
           _autoJobStatus = status;
           _autoJobPct    = (jobData['pct'] as num?)?.toInt() ?? 0;
           if (token != null) _startPolling(token);
+        } else if (status == 'done') {
+          // Pick up shortage report from last completed run
+          final sr = jobData['shortageReport'];
+          if (sr is Map) {
+            _shortageReport = Map<String, dynamic>.from(sr);
+          }
         }
       }
     } catch (e) {
@@ -321,8 +337,24 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
         if (status == 'done' || status == 'error') {
           _pollTimer?.cancel();
           if (status == 'done') {
+            // Capture shortage report BEFORE _loadAll overwrites it via latest
+            final sr = d['shortageReport'];
+            if (sr is Map) {
+              _safeSetState(() {
+                _shortageReport = Map<String, dynamic>.from(sr);
+              });
+            }
             await _loadAll();
-            if (!_disposed && mounted) showSnack(context, '$assigned staff assign हुए ✓');
+            if (!_disposed && mounted) {
+              final hasShortages = _hasAnyShortages();
+              if (hasShortages) {
+                showSnack(context,
+                    '$assigned staff assign हुए • कुछ ड्यूटी में कमी है — विवरण देखें');
+                _showShortageDialog();
+              } else {
+                showSnack(context, '$assigned staff assign हुए ✓');
+              }
+            }
           } else {
             final err = d['errorMsg'] as String? ?? 'Unknown error';
             if (!_disposed && mounted) showSnack(context, 'Error: $err', error: true);
@@ -330,6 +362,122 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
         }
       } catch (_) {}
     });
+  }
+
+  /// Returns true if any duty in the latest report has at least one shortage.
+  bool _hasAnyShortages() {
+    for (final v in _shortageReport.values) {
+      if (v is Map) {
+        final list = v['shortages'];
+        if (list is List && list.isNotEmpty) return true;
+      }
+    }
+    return false;
+  }
+
+  /// Returns shortage list (rank/armed/missing) for a single duty type, or [].
+  List<Map<String, dynamic>> _shortagesFor(String dutyType) {
+    final v = _shortageReport[dutyType];
+    if (v is Map) {
+      final list = v['shortages'];
+      if (list is List) {
+        return list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    }
+    return const [];
+  }
+
+  /// Per-duty auto-assign — same flow as global but for one duty_type.
+  Future<void> _runSingleDutyAutoAssign(_DutyEntry entry) async {
+    if (entry.sankhya <= 0) {
+      showSnack(context,
+          'पहले मानक टैब में "संख्या" सेट करें', error: true);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kBg,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14)),
+        title: Row(children: [
+          Icon(entry.icon, color: kDistrictColor, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(entry.label,
+                style: const TextStyle(color: kDark, fontSize: 14,
+                    fontWeight: FontWeight.w800),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+          ),
+        ]),
+        content: Text(
+            'सिर्फ "${entry.label}" के लिए auto-assign चलाएं?\n\n'
+            'संख्या: ${entry.sankhya} batches\n'
+            'पहले से assigned staff को छोड़कर random staff चुने जाएंगे।',
+            style: const TextStyle(color: kDark, fontSize: 13)),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('रद्द', style: TextStyle(color: kSubtle))),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(backgroundColor: kDistrictColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8))),
+            child: const Text('Start')),
+        ],
+      ),
+    );
+    if (confirmed != true || _disposed) return;
+    try {
+      final token = await AuthService.getToken();
+      final res = await ApiService.post(
+          '/admin/district-duty/${entry.type}/auto-assign', {}, token: token);
+      final jobId = ((res['data'] ?? res)['jobId'] as num?)?.toInt();
+      if (jobId == null || jobId <= 0) {
+        if (!_disposed && mounted) showSnack(context, 'Job शुरू नहीं हुआ', error: true);
+        return;
+      }
+      _safeSetState(() {
+        _autoJobId = jobId; _autoJobStatus = 'running';
+        _autoJobPct = 0; _autoAssigned = 0; _autoSkipped = 0;
+      });
+      if (token != null) _startPolling(token);
+      if (!_disposed && mounted) {
+        showSnack(context, '${entry.label}: auto-assign शुरू हो गई!');
+      }
+    } catch (e) {
+      if (!_disposed && mounted) showSnack(context, 'Error: $e', error: true);
+    }
+  }
+
+  /// Shows a popup with all duty types that had shortages,
+  /// with rank/missing breakdown so admin can decide what to fix.
+  void _showShortageDialog() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (ctx) => Dialog(
+        backgroundColor: kBg,
+        insetPadding: const EdgeInsets.all(16),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
+            side: const BorderSide(color: kError, width: 1.2)),
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+              maxHeight: MediaQuery.of(ctx).size.height * 0.78,
+              maxWidth: 500),
+          child: _ShortageReportView(
+              report: _shortageReport,
+              onClose: () => Navigator.pop(ctx),
+              onFixDuty: (entry) {
+                Navigator.pop(ctx);
+                _openRankEditor(entry, 0);
+              }),
+        ),
+      ),
+    );
   }
 
   Future<void> _clearAllAssignments() async {
@@ -700,7 +848,11 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
                   _DutyTab(
                     duties: _duties, summary: _summary,
                     assignedAll: assignedAll,
-                    onOpenDetail: _openDutyDetail, onRefresh: _loadAll),
+                    onOpenDetail: _openDutyDetail, onRefresh: _loadAll,
+                    shortageReport: _shortageReport,
+                    onSingleAuto: _runSingleDutyAutoAssign,
+                    onShowAllShortages: _showShortageDialog,
+                    isJobRunning: isJobRunning),
                 ])),
               ]),
         bottomNavigationBar: SafeArea(
@@ -2151,12 +2303,50 @@ class _DutyTab extends StatelessWidget {
   final int                               assignedAll;
   final void Function(_DutyEntry)         onOpenDetail;
   final VoidCallback                      onRefresh;
+  // Shortage data from latest auto-assign run
+  final Map<String, dynamic>              shortageReport;
+  // Trigger auto-assign for one duty type
+  final void Function(_DutyEntry)         onSingleAuto;
+  // Open the shortage details popup
+  final VoidCallback                      onShowAllShortages;
+  // True while any auto job is running — disables single-duty buttons
+  final bool                              isJobRunning;
 
   const _DutyTab({
     required this.duties, required this.summary,
     required this.assignedAll, required this.onOpenDetail,
     required this.onRefresh,
+    required this.shortageReport,
+    required this.onSingleAuto,
+    required this.onShowAllShortages,
+    required this.isJobRunning,
   });
+
+  /// Returns shortage list for a duty type from the report.
+  List<Map<String, dynamic>> _shortagesFor(String dutyType) {
+    final v = shortageReport[dutyType];
+    if (v is Map) {
+      final list = v['shortages'];
+      if (list is List) {
+        return list
+            .whereType<Map>()
+            .map((e) => Map<String, dynamic>.from(e))
+            .toList();
+      }
+    }
+    return const [];
+  }
+
+  int _shortageCount() {
+    int n = 0;
+    for (final v in shortageReport.values) {
+      if (v is Map) {
+        final list = v['shortages'];
+        if (list is List && list.isNotEmpty) n++;
+      }
+    }
+    return n;
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2167,7 +2357,11 @@ class _DutyTab extends StatelessWidget {
       const Text('पहले मानक टैब में ड्यूटी प्रकार सेट करें',
           style: TextStyle(color: kSubtle, fontSize: 13)),
     ]));
+
+    final shortageCount = _shortageCount();
+
     return Column(children: [
+      // Top info bar
       Container(
         color: kAssignColor.withOpacity(0.07),
         padding: EdgeInsets.symmetric(horizontal: r.s(10, 14), vertical: 10),
@@ -2187,6 +2381,29 @@ class _DutyTab extends StatelessWidget {
                 color: kAssignColor, fontSize: r.s(10.5, 11.5),
                 fontWeight: FontWeight.w800))),
         ])),
+      // Shortage notification strip — visible only if last run had shortages
+      if (shortageCount > 0)
+        InkWell(
+          onTap: onShowAllShortages,
+          child: Container(
+            color: kError.withOpacity(0.08),
+            padding: EdgeInsets.symmetric(
+                horizontal: r.s(10, 14), vertical: 8),
+            child: Row(children: [
+              const Icon(Icons.warning_amber_rounded,
+                  size: 16, color: kError),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                    '$shortageCount ड्यूटी में स्टाफ की कमी है — विवरण देखें',
+                    style: const TextStyle(color: kError, fontSize: 11.5,
+                        fontWeight: FontWeight.w700),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+              ),
+              const Icon(Icons.chevron_right, size: 16, color: kError),
+            ]),
+          ),
+        ),
       Expanded(child: ListView.separated(
         padding: EdgeInsets.fromLTRB(r.s(8, 12), 12, r.s(8, 12), 120),
         itemCount: duties.length,
@@ -2199,12 +2416,17 @@ class _DutyTab extends StatelessWidget {
           final sankhya  = entry.sankhya;
           final pct = sankhya > 0
               ? (assigned / sankhya).clamp(0.0, 1.0) : 0.0;
+          final shortages = _shortagesFor(entry.type);
           return _DutyAssignCard(
             entry: entry, assigned: assigned, batches: batches,
             sankhya: sankhya, pct: pct,
             isOver: assigned > sankhya && sankhya > 0,
             isFull: sankhya > 0 && assigned >= sankhya,
-            onTap: () => onOpenDetail(entry));
+            shortages: shortages,
+            isJobRunning: isJobRunning,
+            onTap: () => onOpenDetail(entry),
+            onAutoAssign: () => onSingleAuto(entry),
+          );
         },
       )),
     ]);
@@ -2219,12 +2441,18 @@ class _DutyAssignCard extends StatelessWidget {
   final int assigned, batches, sankhya;
   final double pct;
   final bool isOver, isFull;
+  final List<Map<String, dynamic>> shortages;
+  final bool isJobRunning;
   final VoidCallback onTap;
+  final VoidCallback onAutoAssign;
 
   const _DutyAssignCard({
     required this.entry, required this.assigned, required this.batches,
     required this.sankhya, required this.pct,
     required this.isOver, required this.isFull, required this.onTap,
+    required this.shortages,
+    required this.isJobRunning,
+    required this.onAutoAssign,
   });
 
   Color get _barColor {
@@ -2234,20 +2462,36 @@ class _DutyAssignCard extends StatelessWidget {
     return kAssignColor;
   }
 
+  /// Compact label: "SI-स. ×2", "Const-नि. ×4"
+  String _shortageLabel(Map<String, dynamic> s) {
+    final rank = (s['rank'] ?? '').toString();
+    final armed = s['armed'] == true;
+    final missing = (s['missing'] as num?)?.toInt() ?? 0;
+    final short = rank == 'Head Constable' ? 'HC'
+        : rank == 'Constable' ? 'Const'
+        : rank == 'SI' ? 'SI' : rank;
+    return '$short-${armed ? "स." : "नि."} ×$missing';
+  }
+
   @override
   Widget build(BuildContext context) {
     final r = rOf(context);
     final color = entry.isDefault ? kDistrictColor : kCustomColor;
+    final hasShortage = shortages.isNotEmpty;
     return Material(color: Colors.transparent,
       child: InkWell(onTap: onTap, borderRadius: BorderRadius.circular(12),
         child: Container(
           decoration: BoxDecoration(
-            color: assigned > 0 ? color.withOpacity(0.04) : Colors.white,
+            color: hasShortage
+                ? kError.withOpacity(0.04)
+                : (assigned > 0 ? color.withOpacity(0.04) : Colors.white),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-                color: assigned > 0
-                    ? color.withOpacity(0.35) : kBorder.withOpacity(0.4),
-                width: assigned > 0 ? 1.5 : 1)),
+                color: hasShortage
+                    ? kError.withOpacity(0.5)
+                    : (assigned > 0
+                        ? color.withOpacity(0.35) : kBorder.withOpacity(0.4)),
+                width: (hasShortage || assigned > 0) ? 1.5 : 1)),
           padding: EdgeInsets.fromLTRB(r.s(10, 14), 12, r.s(10, 14), 12),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
@@ -2287,7 +2531,7 @@ class _DutyAssignCard extends StatelessWidget {
                               fontSize: 9, fontWeight: FontWeight.w700))),
                 ]),
               ])),
-              if (isFull && !r.isCompact) Container(
+              if (isFull && !hasShortage && !r.isCompact) Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                     color: kSuccess.withOpacity(0.1),
@@ -2327,8 +2571,312 @@ class _DutyAssignCard extends StatelessWidget {
                   valueColor: AlwaysStoppedAnimation(_barColor),
                   minHeight: 5)),
             ],
+            // ── Shortage chips (last run had ranks short for this duty) ──────
+            if (hasShortage) ...[
+              const SizedBox(height: 10),
+              Container(
+                padding: const EdgeInsets.all(8),
+                decoration: BoxDecoration(
+                  color: kError.withOpacity(0.07),
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: kError.withOpacity(0.3)),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      const Icon(Icons.warning_amber_rounded,
+                          size: 13, color: kError),
+                      const SizedBox(width: 5),
+                      const Text('स्टाफ की कमी',
+                          style: TextStyle(color: kError, fontSize: 10.5,
+                              fontWeight: FontWeight.w800)),
+                    ]),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 5, runSpacing: 4,
+                      children: shortages.map((s) => Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 7, vertical: 3),
+                        decoration: BoxDecoration(
+                            color: kError.withOpacity(0.12),
+                            borderRadius: BorderRadius.circular(5),
+                            border: Border.all(color: kError.withOpacity(0.3))),
+                        child: Text(_shortageLabel(s),
+                            style: const TextStyle(color: kError,
+                                fontSize: 10, fontWeight: FontWeight.w700)),
+                      )).toList(),
+                    ),
+                  ]),
+              ),
+            ],
+            // ── Auto-assign single-duty button ─────────────────────────────
+            if (sankhya > 0) ...[
+              const SizedBox(height: 10),
+              Row(children: [
+                Expanded(
+                  child: GestureDetector(
+                    onTap: isJobRunning ? null : onAutoAssign,
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 10, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: isJobRunning
+                            ? kSubtle.withOpacity(0.15)
+                            : kOrange.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(
+                            color: isJobRunning
+                                ? kSubtle.withOpacity(0.3)
+                                : kOrange.withOpacity(0.4)),
+                      ),
+                      child: Row(mainAxisSize: MainAxisSize.min,
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                        Icon(Icons.auto_fix_high,
+                            size: 14,
+                            color: isJobRunning ? kSubtle : kOrange),
+                        const SizedBox(width: 5),
+                        Text(
+                          hasShortage
+                              ? 'फिर से try करें'
+                              : (isFull ? 'पूर्ण' : 'इस duty को auto-assign करें'),
+                          style: TextStyle(
+                              color: isJobRunning ? kSubtle : kOrange,
+                              fontSize: r.s(10.5, 11),
+                              fontWeight: FontWeight.w800),
+                          maxLines: 1, overflow: TextOverflow.ellipsis,
+                        ),
+                      ]),
+                    ),
+                  ),
+                ),
+              ]),
+            ],
           ]),
         )));
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SHORTAGE REPORT VIEW (shown in popup after auto-assign completes)
+// ══════════════════════════════════════════════════════════════════════════════
+class _ShortageReportView extends StatelessWidget {
+  final Map<String, dynamic> report;
+  final VoidCallback onClose;
+  // Called when user taps "मानक ठीक करें" — opens rank editor for that duty.
+  // We don't have an _DutyEntry here, so this callback receives a synthetic
+  // entry built from report data; the parent state has the real list.
+  final void Function(_DutyEntry) onFixDuty;
+
+  const _ShortageReportView({
+    required this.report,
+    required this.onClose,
+    required this.onFixDuty,
+  });
+
+  String _rankShort(String rank) {
+    if (rank == 'Head Constable') return 'HC';
+    if (rank == 'Constable')      return 'Const';
+    if (rank == 'SI')             return 'SI';
+    return rank;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // Build display list, only including duties WITH shortages
+    final entries = <MapEntry<String, Map<String, dynamic>>>[];
+    report.forEach((k, v) {
+      if (v is Map) {
+        final list = v['shortages'];
+        if (list is List && list.isNotEmpty) {
+          entries.add(MapEntry(k, Map<String, dynamic>.from(v)));
+        }
+      }
+    });
+
+    return Column(mainAxisSize: MainAxisSize.min, children: [
+      // Header
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: const BoxDecoration(
+          color: kError,
+          borderRadius:
+              BorderRadius.vertical(top: Radius.circular(15)),
+        ),
+        child: Row(children: [
+          const Icon(Icons.warning_amber_rounded,
+              color: Colors.white, size: 22),
+          const SizedBox(width: 10),
+          const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('स्टाफ की कमी की रिपोर्ट',
+                style: TextStyle(color: Colors.white, fontSize: 15,
+                    fontWeight: FontWeight.w800)),
+            Text('इन ड्यूटी में पूरा बैच नहीं बन पाया',
+                style: TextStyle(color: Colors.white70, fontSize: 11)),
+          ])),
+          IconButton(onPressed: onClose,
+              icon: const Icon(Icons.close, color: Colors.white))
+        ]),
+      ),
+      Flexible(child: SingleChildScrollView(
+        padding: const EdgeInsets.fromLTRB(12, 12, 12, 4),
+        child: Column(children: [
+          if (entries.isEmpty)
+            const Padding(
+              padding: EdgeInsets.all(20),
+              child: Text('कोई कमी नहीं — सभी batches पूरे बने ✓',
+                  style: TextStyle(color: kSuccess, fontSize: 13,
+                      fontWeight: FontWeight.w700)))
+          else
+            ...entries.map((e) {
+              final dutyType = e.key;
+              final v       = e.value;
+              final label   = (v['label'] ?? dutyType).toString();
+              final made    = (v['batches_made']   as num?)?.toInt() ?? 0;
+              final target  = (v['batches_target'] as num?)?.toInt() ?? 0;
+              final list    = (v['shortages'] as List)
+                  .whereType<Map>()
+                  .map((m) => Map<String, dynamic>.from(m))
+                  .toList();
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: kError.withOpacity(0.3)),
+                ),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(children: [
+                      Expanded(
+                        child: Text(label,
+                            style: const TextStyle(color: kDark,
+                                fontSize: 13, fontWeight: FontWeight.w800),
+                            maxLines: 2, overflow: TextOverflow.ellipsis),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: (made >= target ? kSuccess : kOrange)
+                              .withOpacity(0.12),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text('$made / $target batches',
+                            style: TextStyle(
+                                color: made >= target ? kSuccess : kOrange,
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w800)),
+                      ),
+                    ]),
+                    const SizedBox(height: 8),
+                    const Text('गायब staff (per batch):',
+                        style: TextStyle(color: kSubtle, fontSize: 10.5,
+                            fontWeight: FontWeight.w700)),
+                    const SizedBox(height: 6),
+                    Wrap(spacing: 6, runSpacing: 6,
+                      children: list.map((s) {
+                        final rank    = (s['rank'] ?? '').toString();
+                        final armed   = s['armed'] == true;
+                        final missing =
+                            (s['missing'] as num?)?.toInt() ?? 0;
+                        final color   = _rankColor(rank);
+                        return Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 8, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: color.withOpacity(0.1),
+                            borderRadius: BorderRadius.circular(6),
+                            border: Border.all(color: color.withOpacity(0.3)),
+                          ),
+                          child: Row(mainAxisSize: MainAxisSize.min, children: [
+                            Icon(armed ? Icons.gavel : Icons.shield_outlined,
+                                size: 11, color: color),
+                            const SizedBox(width: 4),
+                            Text('${_rankShort(rank)} ${armed ? "सशस्त्र" : "निःशस्त्र"}',
+                                style: TextStyle(
+                                    color: color, fontSize: 10.5,
+                                    fontWeight: FontWeight.w700)),
+                            const SizedBox(width: 4),
+                            Container(
+                              padding: const EdgeInsets.symmetric(
+                                  horizontal: 5, vertical: 1),
+                              decoration: BoxDecoration(
+                                  color: kError,
+                                  borderRadius: BorderRadius.circular(4)),
+                              child: Text('×$missing',
+                                  style: const TextStyle(
+                                      color: Colors.white, fontSize: 9.5,
+                                      fontWeight: FontWeight.w900)),
+                            ),
+                          ]));
+                      }).toList(),
+                    ),
+                    const SizedBox(height: 10),
+                    Row(children: [
+                      Expanded(
+                        child: GestureDetector(
+                          onTap: () {
+                            // Build a synthetic _DutyEntry and pass to parent
+                            final fake = _DutyEntry(
+                              type:      dutyType,
+                              label:     label,
+                              icon:      _kDefaultIcons[dutyType]
+                                         ?? Icons.assignment_outlined,
+                              isDefault: _kDefaultIcons.containsKey(dutyType),
+                            );
+                            onFixDuty(fake);
+                          },
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 10, vertical: 8),
+                            decoration: BoxDecoration(
+                              color: kDistrictColor.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                              border: Border.all(
+                                  color: kDistrictColor.withOpacity(0.4)),
+                            ),
+                            child: const Row(mainAxisSize: MainAxisSize.min,
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                              Icon(Icons.tune,
+                                  size: 13, color: kDistrictColor),
+                              SizedBox(width: 5),
+                              Text('मानक ठीक करें',
+                                  style: TextStyle(
+                                      color: kDistrictColor,
+                                      fontSize: 11,
+                                      fontWeight: FontWeight.w800)),
+                            ]),
+                          ),
+                        ),
+                      ),
+                    ]),
+                  ]),
+              );
+            }),
+        ]),
+      )),
+      // Footer info bar
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+        decoration: const BoxDecoration(
+          color: Color(0xFFF5E6C8),
+          borderRadius:
+              BorderRadius.vertical(bottom: Radius.circular(15)),
+        ),
+        child: const Row(children: [
+          Icon(Icons.info_outline, size: 14, color: kPrimary),
+          SizedBox(width: 6),
+          Expanded(child: Text(
+              'मानक बदलें या नया staff add करें, फिर "इस duty को auto-assign करें" दबाएं',
+              style: TextStyle(color: kPrimary, fontSize: 11,
+                  fontWeight: FontWeight.w600))),
+        ]),
+      ),
+    ]);
   }
 }
 
