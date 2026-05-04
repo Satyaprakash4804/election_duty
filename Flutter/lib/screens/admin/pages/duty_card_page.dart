@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -8,6 +7,7 @@ import '../../../services/api_service.dart';
 import '../../../services/auth_service.dart';
 import '../core/widgets.dart';
 
+// ── Rank map (Hindi abbreviations) ───────────────────────────────────────────
 const _rankMap = {
   'constable':               'कां0',
   'head constable':          'हो0गा0',
@@ -29,7 +29,6 @@ const _kAllRanks = [
 
 enum _ArmedFilter    { all, armed, unarmed }
 enum _DownloadFilter { all, downloaded, notDownloaded }
-enum _DutyTabFilter  { booth, district }
 
 String _rh(dynamic val) =>
     _rankMap[(val ?? '').toString().toLowerCase().trim()] ??
@@ -39,7 +38,7 @@ String _vd(dynamic x) =>
     (x == null || x.toString().trim().isEmpty) ? '—' : x.toString();
 
 // ─────────────────────────────────────────────────────────────────────────────
-//  Election config model
+//  Election config model — handles BOTH camelCase and snake_case API keys
 // ─────────────────────────────────────────────────────────────────────────────
 class _ElectionConfig {
   final String district;
@@ -48,44 +47,60 @@ class _ElectionConfig {
   final String electionName;
   final String phase;
   final String electionYear;
-  final String electionDate;
+  final String electionDate;   // always DD.MM.YYYY for PDF display
   final String pratahSamay;
   final String sayaSamay;
 
   const _ElectionConfig({
-    this.district    = '',
-    this.state       = '',
+    this.district     = '',
+    this.state        = '',
     this.electionType = '',
     this.electionName = '',
-    this.phase       = 'द्वितीय',
+    this.phase        = 'द्वितीय',
     this.electionYear = '2024',
     this.electionDate = '26.04.2024',
     this.pratahSamay  = '07:00',
     this.sayaSamay    = '06:00',
   });
 
+  bool get isEmpty =>
+      electionName.isEmpty && electionDate == '26.04.2024' && district.isEmpty;
+
+  /// Accepts both camelCase (API response) and snake_case keys.
   factory _ElectionConfig.fromMap(Map<String, dynamic> m) {
-    // Format date from yyyy-mm-dd → dd.mm.yyyy
-    String rawDate = (m['election_date'] ?? '').toString();
-    String fmtDate = rawDate;
+    // ── date: try camelCase first, then snake_case ────────────────────────
+    String rawDate = (m['electionDate'] ?? m['election_date'] ?? '').toString().trim();
+
+    // Normalise YYYY-MM-DD  →  DD.MM.YYYY
     if (rawDate.contains('-') && rawDate.length == 10) {
-      final parts = rawDate.split('-');
-      fmtDate = '${parts[2]}.${parts[1]}.${parts[0]}';
+      final p = rawDate.split('-');
+      rawDate = '${p[2]}.${p[1]}.${p[0]}';
     }
-    final year = fmtDate.length >= 4
-        ? fmtDate.substring(fmtDate.length - 4)
-        : (m['election_year'] ?? '2024').toString();
+    final fmtDate = rawDate.isNotEmpty ? rawDate : '26.04.2024';
+
+    // ── year: prefer explicit field, fallback to last 4 chars of date ────
+    String year = (m['electionYear'] ?? m['election_year'] ?? '').toString().trim();
+    if (year.isEmpty && fmtDate.length >= 4) {
+      year = fmtDate.substring(fmtDate.length - 4);
+    }
+    if (year.isEmpty) year = '2024';
+
+    // ── pratahSamay / sayaSamay: camelCase first ──────────────────────────
+    String pratah = (m['pratahSamay'] ?? m['pratah_samay'] ?? '07:00').toString().trim();
+    String saya   = (m['sayaSamay']   ?? m['saya_samay']   ?? '06:00').toString().trim();
+    if (pratah.isEmpty) pratah = '07:00';
+    if (saya.isEmpty)   saya   = '06:00';
 
     return _ElectionConfig(
-      district:     (m['district']     ?? '').toString(),
-      state:        (m['state']        ?? '').toString(),
-      electionType: (m['election_type'] ?? '').toString(),
-      electionName: (m['election_name'] ?? '').toString(),
-      phase:        (m['phase']        ?? 'द्वितीय').toString(),
+      district:     (m['district']                           ?? '').toString().trim(),
+      state:        (m['state']                              ?? '').toString().trim(),
+      electionType: (m['electionType'] ?? m['election_type'] ?? '').toString().trim(),
+      electionName: (m['electionName'] ?? m['election_name'] ?? '').toString().trim(),
+      phase:        (m['phase']                              ?? 'द्वितीय').toString().trim(),
       electionYear: year,
-      electionDate: fmtDate.isNotEmpty ? fmtDate : '26.04.2024',
-      pratahSamay:  (m['pratah_samay'] ?? '07:00').toString(),
-      sayaSamay:    (m['saya_samay']   ?? '06:00').toString(),
+      electionDate: fmtDate,
+      pratahSamay:  pratah,
+      sayaSamay:    saya,
     );
   }
 
@@ -103,7 +118,7 @@ class _ElectionConfig {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BOOTH DUTY CARD PDF  (format unchanged — only config keys extended)
+//  BOOTH DUTY CARD PDF  ← FORMAT UNCHANGED
 // ══════════════════════════════════════════════════════════════════════════════
 pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
     {Map<String, String> config = const {}}) {
@@ -113,17 +128,17 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
           ? s['adminDistrict'].toString().trim()
           : (config['district']?.isNotEmpty == true ? config['district']! : 'बागपत');
 
-  final String stateName    = config['state']?.isNotEmpty == true        ? config['state']!        : 'उत्तर प्रदेश';
-  final String electionName = config['electionName']?.isNotEmpty == true ? config['electionName']! : 'लोकसभा सामान्य निर्वाचन';
-  final String electionPhase = config['phase']?.isNotEmpty == true       ? config['phase']!        : 'द्वितीय';
+  final String stateName     = config['state']?.isNotEmpty == true        ? config['state']!        : 'उत्तर प्रदेश';
+  final String electionName  = config['electionName']?.isNotEmpty == true ? config['electionName']! : 'लोकसभा सामान्य निर्वाचन';
+  final String electionPhase = config['phase']?.isNotEmpty == true        ? config['phase']!        : 'द्वितीय';
   final String electionDate  = config['electionDate']?.isNotEmpty == true ? config['electionDate']! : '26.04.2024';
   final String electionYear  = config['electionYear']?.isNotEmpty == true
       ? config['electionYear']!
       : (electionDate.length >= 4 ? electionDate.substring(electionDate.length - 4) : '2024');
-  final String pratahSamay   = config['pratahSamay']?.isNotEmpty == true  ? config['pratahSamay']!  : '07:00';
-  final String sayaSamay     = config['sayaSamay']?.isNotEmpty == true     ? config['sayaSamay']!    : '06:00';
+  final String pratahSamay   = config['pratahSamay']?.isNotEmpty == true ? config['pratahSamay']!  : '07:00';
+  final String sayaSamay     = config['sayaSamay']?.isNotEmpty == true    ? config['sayaSamay']!    : '06:00';
 
-  final sahyogi        = (s['sahyogi']        ?? s['allStaff']       ?? s['all_staff']       ?? []) as List;
+  final sahyogi        = (s['sahyogi'] ?? s['allStaff'] ?? s['all_staff'] ?? []) as List;
   final int totalRows  = sahyogi.length < 12 ? 12 : sahyogi.length;
 
   final zonalOfficers  = (s['zonalOfficers']  ?? s['zonal_officers']  ?? []) as List;
@@ -137,18 +152,15 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
       ? sectorOfficers[1]
       : (sectorOfficers.isNotEmpty ? sectorOfficers[0] : null);
 
-  // ── helpers (identical to original) ──────────────────────────────────────
   pw.Widget th(String t) => pw.Container(
         decoration: const pw.BoxDecoration(color: PdfColors.grey300),
         padding: const pw.EdgeInsets.symmetric(horizontal: 1, vertical: 1),
-        child: pw.Center(
-            child: pw.Text(t,
-                style: pw.TextStyle(font: bold, fontSize: 5.5),
-                textAlign: pw.TextAlign.center)),
+        child: pw.Center(child: pw.Text(t,
+            style: pw.TextStyle(font: bold, fontSize: 5.5),
+            textAlign: pw.TextAlign.center)),
       );
 
-  pw.Widget td(String t,
-          {bool center = false, bool isBold = false, double fs = 5.5}) =>
+  pw.Widget td(String t, {bool center = false, bool isBold = false, double fs = 5.5}) =>
       pw.Padding(
         padding: const pw.EdgeInsets.symmetric(horizontal: 1, vertical: 1),
         child: pw.Text(t,
@@ -186,8 +198,7 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
         ),
       );
 
-  pw.Widget sCell(String text,
-          {int flex = 1, bool isBold = false, bool isLast = false}) =>
+  pw.Widget sCell(String text, {int flex = 1, bool isBold = false, bool isLast = false}) =>
       pw.Expanded(
         flex: flex,
         child: pw.Container(
@@ -213,7 +224,8 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
         pw.Padding(
           padding: const pw.EdgeInsets.all(2),
           child: pw.Text(
-            [if (rank != null && rank.isNotEmpty) rank, name ?? '—',
+            [if (rank != null && rank.isNotEmpty) rank,
+             name ?? '—',
              if (mobile != null && mobile.isNotEmpty && mobile != '—') mobile].join('\n'),
             style: pw.TextStyle(font: font, fontSize: 4.5),
             textAlign: pw.TextAlign.center,
@@ -221,12 +233,11 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
         ),
       ]);
 
-  // ── CARD LAYOUT ───────────────────────────────────────────────────────────
   return pw.Container(
     decoration: pw.BoxDecoration(border: pw.Border.all(width: 1)),
     child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
 
-      // HEADER
+      // ── HEADER ────────────────────────────────────────────────────────────
       pw.Container(
         decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(width: 0.8))),
         child: pw.Row(children: [
@@ -235,31 +246,30 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
             child: pw.Center(child: pw.Text('ECI', style: pw.TextStyle(font: bold, fontSize: 7)))),
           pw.Expanded(
             child: pw.Padding(
-              padding: const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 4),
+              padding: const pw.EdgeInsets.symmetric(vertical: 2, horizontal: 4),
               child: pw.Column(mainAxisAlignment: pw.MainAxisAlignment.center,
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
-                  children: [
-                    pw.Text('ड्यूटी कार्ड',
-                        style: pw.TextStyle(font: bold, fontSize: 10,
-                            decoration: pw.TextDecoration.underline)),
-                    pw.Text('$electionName–$electionYear',
-                        style: pw.TextStyle(font: bold, fontSize: 7)),
-                    // STATE line (new)
-                    if (stateName.isNotEmpty)
-                      pw.Text('राज्य: $stateName',
-                          style: pw.TextStyle(font: font, fontSize: 5.5)),
-                    pw.Text('जनपद $districtLabel',
-                        style: pw.TextStyle(font: font, fontSize: 6.5)),
-                    pw.SizedBox(height: 1),
-                    pw.Container(
-                      decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(width: 0.5))),
-                      padding: const pw.EdgeInsets.only(top: 1),
-                      child: pw.Text(
-                          'मतदान चरण–$electionPhase  दिनांक $electionDate  प्रातः $pratahSamay से सांय $sayaSamay तक',
-                          style: pw.TextStyle(font: bold, fontSize: 5.5),
-                          textAlign: pw.TextAlign.center),
-                    ),
-                  ]),
+                  crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+                pw.Text('ड्यूटी कार्ड',
+                    style: pw.TextStyle(font: bold, fontSize: 10,
+                        decoration: pw.TextDecoration.underline)),
+                pw.Text('$electionName–$electionYear',
+                    style: pw.TextStyle(font: bold, fontSize: 7)),
+                if (stateName.isNotEmpty)
+                  pw.Text('राज्य: $stateName',
+                      style: pw.TextStyle(font: font, fontSize: 5.5)),
+                pw.Text('जनपद $districtLabel',
+                    style: pw.TextStyle(font: font, fontSize: 6.5)),
+                pw.SizedBox(height: 1),
+                pw.Container(
+                  decoration: const pw.BoxDecoration(
+                      border: pw.Border(top: pw.BorderSide(width: 0.5))),
+                  padding: const pw.EdgeInsets.only(top: 1),
+                  child: pw.Text(
+                      'मतदान चरण–$electionPhase  दिनांक $electionDate  प्रातः $pratahSamay से सांय $sayaSamay तक',
+                      style: pw.TextStyle(font: bold, fontSize: 5.5),
+                      textAlign: pw.TextAlign.center),
+                ),
+              ]),
             ),
           ),
           pw.Container(width: 42, padding: const pw.EdgeInsets.all(3),
@@ -270,7 +280,7 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
         ]),
       ),
 
-      // PRIMARY OFFICER TABLE
+      // ── PRIMARY OFFICER TABLE ─────────────────────────────────────────────
       pw.Table(
         border: const pw.TableBorder(
           left: pw.BorderSide(width: 0.5), right: pw.BorderSide(width: 0.5),
@@ -307,10 +317,9 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
         ],
       ),
 
-      // MIDDLE
+      // ── MIDDLE ────────────────────────────────────────────────────────────
       pw.Expanded(
         child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.stretch, children: [
-          // Duty location
           pw.Container(width: 50,
             decoration: const pw.BoxDecoration(border: pw.Border(
                 right: pw.BorderSide(width: 0.5), bottom: pw.BorderSide(width: 0.5))),
@@ -320,8 +329,7 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
                   padding: const pw.EdgeInsets.all(1),
                   child: pw.Center(child: pw.Text('डियूटी स्थान',
                       style: pw.TextStyle(font: bold, fontSize: 5.5)))),
-              pw.Expanded(child: pw.Padding(
-                  padding: const pw.EdgeInsets.all(2),
+              pw.Expanded(child: pw.Padding(padding: const pw.EdgeInsets.all(2),
                   child: pw.Center(child: pw.Text(
                       _vd(s['centerName'] ?? s['center_name']),
                       style: pw.TextStyle(font: bold, fontSize: 5.5),
@@ -336,7 +344,6 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
                       style: pw.TextStyle(font: bold, fontSize: 5.5)))),
             ]),
           ),
-          // Staff table
           pw.Expanded(
             child: pw.Column(children: [
               pw.Container(
@@ -374,7 +381,6 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
               ),
             ]),
           ),
-          // Bus/Date column
           pw.Container(width: 28,
             decoration: const pw.BoxDecoration(border: pw.Border(
                 left: pw.BorderSide(width: 0.5), bottom: pw.BorderSide(width: 0.5))),
@@ -382,8 +388,7 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
               pw.Container(decoration: const pw.BoxDecoration(color: PdfColors.grey300,
                   border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
                   padding: const pw.EdgeInsets.all(1),
-                  child: pw.Center(child: pw.Text(
-                      'बस–${_vd(s['busNo'] ?? s['bus_no'])}',
+                  child: pw.Center(child: pw.Text('बस–${_vd(s['busNo'] ?? s['bus_no'])}',
                       style: pw.TextStyle(font: bold, fontSize: 5)))),
               pw.SizedBox(height: 4),
               pw.Center(child: pw.Text('दिनांक', style: pw.TextStyle(font: bold, fontSize: 5))),
@@ -408,15 +413,15 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
         ]),
       ),
 
-      // BOTTOM
+      // ── BOTTOM ───────────────────────────────────────────────────────────
       pw.Container(
         decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(width: 0.8))),
         child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
           pw.Container(width: 50,
             decoration: const pw.BoxDecoration(border: pw.Border(right: pw.BorderSide(width: 0.5))),
             child: pw.Column(children: [
-              metaRow('म0 केंद्र सं0', _vd(s['centerId'] ?? s['center_id'] ?? '—')),
-              metaRow('बूथ सं0',       _vd(s['boothNo']  ?? s['booth_no']  ?? '—')),
+              metaRow('म0 केंद्र सं0', _vd(s['centerId']   ?? s['center_id']   ?? '—')),
+              metaRow('बूथ सं0',       _vd(s['boothNo']    ?? s['booth_no']    ?? '—')),
               metaRow('थाना',          _vd(s['staffThana'] ?? s['thana'])),
               metaRow('जोन न0',        _vd(s['zoneName']   ?? s['zone_name'])),
               metaRow('सेक्टर न0',     _vd(s['sectorName'] ?? s['sector_name'])),
@@ -468,43 +473,29 @@ pw.Widget buildDutyCardPdf(Map s, pw.Font font, pw.Font bold,
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  DISTRICT DUTY CARD PDF  (new — same visual language as booth card)
+//  DISTRICT DUTY CARD PDF  ← FORMAT UNCHANGED
 // ══════════════════════════════════════════════════════════════════════════════
-pw.Widget buildDistrictDutyCardPdf(
-  Map s,
-  pw.Font font,
-  pw.Font bold, {
-  Map<String, String> config = const {},
-}) {
-  final String districtLabel = config['district']?.isNotEmpty == true
-      ? config['district']! : 'बागपत';
-  final String stateName      = config['state']?.isNotEmpty == true
-      ? config['state']!    : 'उत्तर प्रदेश';
-  final String electionName   = config['electionName']?.isNotEmpty == true
-      ? config['electionName']! : 'लोकसभा सामान्य निर्वाचन';
-  final String electionPhase  = config['phase']?.isNotEmpty == true
-      ? config['phase']!    : 'द्वितीय';
-  final String electionDate   = config['electionDate']?.isNotEmpty == true
-      ? config['electionDate']! : '26.04.2024';
+pw.Widget buildDistrictDutyCardPdf(Map s, pw.Font font, pw.Font bold,
+    {Map<String, String> config = const {}}) {
+
+  final String districtLabel = config['district']?.isNotEmpty == true ? config['district']! : 'बागपत';
+  final String stateName      = config['state']?.isNotEmpty == true     ? config['state']!     : 'उत्तर प्रदेश';
+  final String electionName   = config['electionName']?.isNotEmpty == true ? config['electionName']! : 'लोकसभा सामान्य निर्वाचन';
+  final String electionPhase  = config['phase']?.isNotEmpty == true     ? config['phase']!     : 'द्वितीय';
+  final String electionDate   = config['electionDate']?.isNotEmpty == true ? config['electionDate']! : '26.04.2024';
   final String electionYear   = config['electionYear']?.isNotEmpty == true
       ? config['electionYear']!
       : (electionDate.length >= 4 ? electionDate.substring(electionDate.length - 4) : '2024');
-  final String pratahSamay    = config['pratahSamay']?.isNotEmpty == true
-      ? config['pratahSamay']! : '07:00';
-  final String sayaSamay      = config['sayaSamay']?.isNotEmpty == true
-      ? config['sayaSamay']!  : '06:00';
+  final String pratahSamay    = config['pratahSamay']?.isNotEmpty == true ? config['pratahSamay']! : '07:00';
+  final String sayaSamay      = config['sayaSamay']?.isNotEmpty == true   ? config['sayaSamay']!   : '06:00';
 
-  // District-duty specific fields
-  final String dutyLabelHi  = _vd(s['dutyLabelHi'] ?? s['duty_label_hi']);
-  final int    batchNo      = (s['batchNo'] ?? s['batch_no'] ?? 1) as int;
-  final String busNo        = _vd(s['busNo'] ?? s['bus_no']);
-  final String note         = _vd(s['note']);
+  final String dutyLabelHi = _vd(s['dutyLabelHi'] ?? s['duty_label_hi']);
+  final int    batchNo     = (s['batchNo'] ?? s['batch_no'] ?? 1) as int;
+  final String busNo       = _vd(s['busNo'] ?? s['bus_no']);
+  final String note        = _vd(s['note']);
+  final List   staffList   = (s['staff'] ?? []) as List;
+  final int    totalRows   = staffList.length < 14 ? 14 : staffList.length;
 
-  // Staff in this batch
-  final List staffList = (s['staff'] ?? []) as List;
-  final int totalRows  = staffList.length < 14 ? 14 : staffList.length;
-
-  // ── helpers ───────────────────────────────────────────────────────────────
   pw.Widget th(String t) => pw.Container(
         decoration: const pw.BoxDecoration(color: PdfColors.grey300),
         padding: const pw.EdgeInsets.symmetric(horizontal: 1, vertical: 1),
@@ -556,12 +547,10 @@ pw.Widget buildDistrictDutyCardPdf(
         ),
       ]);
 
-  // ── CARD ──────────────────────────────────────────────────────────────────
   return pw.Container(
     decoration: pw.BoxDecoration(border: pw.Border.all(width: 1)),
     child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
 
-      // HEADER (same structure as booth card)
       pw.Container(
         decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(width: 0.8))),
         child: pw.Row(children: [
@@ -572,42 +561,35 @@ pw.Widget buildDistrictDutyCardPdf(
             child: pw.Padding(
               padding: const pw.EdgeInsets.symmetric(vertical: 3, horizontal: 4),
               child: pw.Column(mainAxisAlignment: pw.MainAxisAlignment.center,
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
-                  children: [
-                    pw.Text('ड्यूटी कार्ड (जनपदीय)',
-                        style: pw.TextStyle(font: bold, fontSize: 9,
-                            decoration: pw.TextDecoration.underline)),
-                    pw.Text('$electionName–$electionYear',
-                        style: pw.TextStyle(font: bold, fontSize: 7)),
-                    if (stateName.isNotEmpty)
-                      pw.Text('राज्य: $stateName',
-                          style: pw.TextStyle(font: font, fontSize: 5.5)),
-                    pw.Text('जनपद $districtLabel',
-                        style: pw.TextStyle(font: font, fontSize: 6.5)),
-                    pw.SizedBox(height: 1),
-                    pw.Container(
-                      decoration: const pw.BoxDecoration(
-                          border: pw.Border(top: pw.BorderSide(width: 0.5))),
-                      padding: const pw.EdgeInsets.only(top: 1),
-                      child: pw.Text(
-                          'मतदान चरण–$electionPhase  दिनांक $electionDate  '
-                          'प्रातः $pratahSamay से सांय $sayaSamay तक',
-                          style: pw.TextStyle(font: bold, fontSize: 5.5),
-                          textAlign: pw.TextAlign.center),
-                    ),
-                  ]),
+                  crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+                pw.Text('ड्यूटी कार्ड (जनपदीय)',
+                    style: pw.TextStyle(font: bold, fontSize: 9,
+                        decoration: pw.TextDecoration.underline)),
+                pw.Text('$electionName–$electionYear',
+                    style: pw.TextStyle(font: bold, fontSize: 7)),
+                if (stateName.isNotEmpty)
+                  pw.Text('राज्य: $stateName', style: pw.TextStyle(font: font, fontSize: 5.5)),
+                pw.Text('जनपद $districtLabel', style: pw.TextStyle(font: font, fontSize: 6.5)),
+                pw.SizedBox(height: 1),
+                pw.Container(
+                  decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(width: 0.5))),
+                  padding: const pw.EdgeInsets.only(top: 1),
+                  child: pw.Text(
+                      'मतदान चरण–$electionPhase  दिनांक $electionDate  प्रातः $pratahSamay से सांय $sayaSamay तक',
+                      style: pw.TextStyle(font: bold, fontSize: 5.5),
+                      textAlign: pw.TextAlign.center),
+                ),
+              ]),
             ),
           ),
           pw.Container(width: 42, padding: const pw.EdgeInsets.all(3),
-            decoration: const pw.BoxDecoration(
-                border: pw.Border(left: pw.BorderSide(width: 0.5))),
+            decoration: const pw.BoxDecoration(border: pw.Border(left: pw.BorderSide(width: 0.5))),
             child: pw.Center(child: pw.Text('उ0प्र0\nपुलिस',
                 style: pw.TextStyle(font: bold, fontSize: 6),
                 textAlign: pw.TextAlign.center))),
         ]),
       ),
 
-      // DUTY TYPE + BATCH INFO ROW
       pw.Table(
         border: const pw.TableBorder(
           left: pw.BorderSide(width: 0.5), right: pw.BorderSide(width: 0.5),
@@ -622,33 +604,23 @@ pw.Widget buildDistrictDutyCardPdf(
         },
         children: [
           pw.TableRow(children: [
-            th('ड्यूटी प्रकार'),
-            th('बैच सं0'),
-            th('बस सं0'),
-            th('दिनांक'),
-            th('कुल कर्मी'),
+            th('ड्यूटी प्रकार'), th('बैच सं0'), th('बस सं0'), th('दिनांक'), th('कुल कर्मी'),
           ]),
           pw.TableRow(children: [
             pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-              child: pw.Text(dutyLabelHi,
-                  style: pw.TextStyle(font: bold, fontSize: 6.0))),
+              child: pw.Text(dutyLabelHi, style: pw.TextStyle(font: bold, fontSize: 6.0))),
             pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-              child: pw.Center(child: pw.Text('$batchNo',
-                  style: pw.TextStyle(font: bold, fontSize: 6.0)))),
+              child: pw.Center(child: pw.Text('$batchNo', style: pw.TextStyle(font: bold, fontSize: 6.0)))),
             pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-              child: pw.Center(child: pw.Text(busNo,
-                  style: pw.TextStyle(font: bold, fontSize: 5.5)))),
+              child: pw.Center(child: pw.Text(busNo, style: pw.TextStyle(font: bold, fontSize: 5.5)))),
             pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-              child: pw.Center(child: pw.Text(electionDate,
-                  style: pw.TextStyle(font: font, fontSize: 5.5)))),
+              child: pw.Center(child: pw.Text(electionDate, style: pw.TextStyle(font: font, fontSize: 5.5)))),
             pw.Padding(padding: const pw.EdgeInsets.symmetric(horizontal: 2, vertical: 2),
-              child: pw.Center(child: pw.Text('${staffList.length}',
-                  style: pw.TextStyle(font: bold, fontSize: 6.0)))),
+              child: pw.Center(child: pw.Text('${staffList.length}', style: pw.TextStyle(font: bold, fontSize: 6.0)))),
           ]),
         ],
       ),
 
-      // NOTE row (if any)
       if (note.isNotEmpty && note != '—')
         pw.Container(
           decoration: const pw.BoxDecoration(color: PdfColors.grey100,
@@ -656,27 +628,18 @@ pw.Widget buildDistrictDutyCardPdf(
           padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: pw.Row(children: [
             pw.Text('विशेष टिप्पणी: ', style: pw.TextStyle(font: bold, fontSize: 5)),
-            pw.Expanded(child: pw.Text(note,
-                style: pw.TextStyle(font: font, fontSize: 5))),
+            pw.Expanded(child: pw.Text(note, style: pw.TextStyle(font: font, fontSize: 5))),
           ]),
         ),
 
-      // STAFF LIST
       pw.Expanded(
         child: pw.Column(children: [
-          // Column headers
           pw.Container(
-            decoration: const pw.BoxDecoration(
-                border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
+            decoration: const pw.BoxDecoration(border: pw.Border(bottom: pw.BorderSide(width: 0.5))),
             child: pw.Row(children: [
-              sHdr('क्र0', flex: 1),
-              sHdr('पद', flex: 2),
-              sHdr('बैज सं0', flex: 2),
-              sHdr('नाम', flex: 4),
-              sHdr('मोबाइल', flex: 3),
-              sHdr('थाना', flex: 3),
-              sHdr('जनपद', flex: 3),
-              sHdr('स0/नि0', flex: 2, isLast: true),
+              sHdr('क्र0', flex: 1), sHdr('पद', flex: 2), sHdr('बैज सं0', flex: 2),
+              sHdr('नाम', flex: 4), sHdr('मोबाइल', flex: 3), sHdr('थाना', flex: 3),
+              sHdr('जनपद', flex: 3), sHdr('स0/नि0', flex: 2, isLast: true),
             ]),
           ),
           pw.Expanded(
@@ -691,11 +654,11 @@ pw.Widget buildDistrictDutyCardPdf(
                   child: pw.Row(children: [
                     sCell('${i + 1}', flex: 1),
                     sCell(e != null ? _rh(e['rank'] ?? e['user_rank']) : '', flex: 2),
-                    sCell(e != null ? _vd(e['pno']) : '', flex: 2),
-                    sCell(e != null ? _vd(e['name']) : '', flex: 4, isBold: e != null),
-                    sCell(e != null ? _vd(e['mobile']) : '', flex: 3),
-                    sCell(e != null ? _vd(e['thana']) : '', flex: 3),
-                    sCell(e != null ? _vd(e['district']) : '', flex: 3),
+                    sCell(e != null ? _vd(e['pno'])     : '', flex: 2),
+                    sCell(e != null ? _vd(e['name'])    : '', flex: 4, isBold: e != null),
+                    sCell(e != null ? _vd(e['mobile'])  : '', flex: 3),
+                    sCell(e != null ? _vd(e['thana'])   : '', flex: 3),
+                    sCell(e != null ? _vd(e['district']): '', flex: 3),
                     sCell(e != null
                         ? ((e['isArmed'] == true || e['is_armed'] == true || e['is_armed'] == 1)
                             ? 'सशस्त्र' : 'निःशस्त्र')
@@ -708,7 +671,6 @@ pw.Widget buildDistrictDutyCardPdf(
         ]),
       ),
 
-      // BOTTOM — meta + signature
       pw.Container(
         decoration: const pw.BoxDecoration(border: pw.Border(top: pw.BorderSide(width: 0.8))),
         child: pw.Row(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
@@ -716,28 +678,26 @@ pw.Widget buildDistrictDutyCardPdf(
             decoration: const pw.BoxDecoration(border: pw.Border(right: pw.BorderSide(width: 0.5))),
             child: pw.Column(children: [
               metaRow('ड्यूटी प्रकार', dutyLabelHi),
-              metaRow('बैच सं0',        '$batchNo'),
-              metaRow('बस सं0',         busNo),
-              metaRow('चरण',            electionPhase),
-              metaRow('मतदान दिनांक',   electionDate),
-              metaRow('जनपद',           districtLabel),
+              metaRow('बैच सं0',       '$batchNo'),
+              metaRow('बस सं0',        busNo),
+              metaRow('चरण',           electionPhase),
+              metaRow('मतदान दिनांक',  electionDate),
+              metaRow('जनपद',          districtLabel),
             ]),
           ),
           pw.Expanded(
             child: pw.Padding(
               padding: const pw.EdgeInsets.all(4),
-              child: pw.Column(
-                  mainAxisAlignment: pw.MainAxisAlignment.center,
-                  crossAxisAlignment: pw.CrossAxisAlignment.center,
-                  children: [
-                    pw.SizedBox(height: 12),
-                    pw.Text('पुलिस अधीक्षक',
-                        style: pw.TextStyle(font: bold, fontSize: 6),
-                        textAlign: pw.TextAlign.center),
-                    pw.Text(districtLabel,
-                        style: pw.TextStyle(font: bold, fontSize: 6),
-                        textAlign: pw.TextAlign.center),
-                  ]),
+              child: pw.Column(mainAxisAlignment: pw.MainAxisAlignment.center,
+                  crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+                pw.SizedBox(height: 12),
+                pw.Text('पुलिस अधीक्षक',
+                    style: pw.TextStyle(font: bold, fontSize: 6),
+                    textAlign: pw.TextAlign.center),
+                pw.Text(districtLabel,
+                    style: pw.TextStyle(font: bold, fontSize: 6),
+                    textAlign: pw.TextAlign.center),
+              ]),
             ),
           ),
         ]),
@@ -746,7 +706,7 @@ pw.Widget buildDistrictDutyCardPdf(
   );
 }
 
-// ── Page format helpers ────────────────────────────────────────────────────────
+// ── Page format helpers ───────────────────────────────────────────────────────
 PdfPageFormat _pageFormatFor(Map s) {
   final count = ((s['sahyogi'] ?? s['allStaff'] ?? s['all_staff'] ?? []) as List).length;
   if (count > 20) return PdfPageFormat.a4.landscape;
@@ -756,7 +716,6 @@ PdfPageFormat _pageFormatFor(Map s) {
 
 PdfPageFormat _districtPageFormat(int staffCount) {
   if (staffCount > 20) return PdfPageFormat.a4.landscape;
-  if (staffCount > 12) return PdfPageFormat.a5.landscape;
   return PdfPageFormat.a5.landscape;
 }
 
@@ -772,11 +731,9 @@ class DutyCardPage extends StatefulWidget {
 class _DutyCardPageState extends State<DutyCardPage>
     with SingleTickerProviderStateMixin {
 
-  // ── Tab ──────────────────────────────────────────────────────────────────
   late final TabController _tabCtrl;
-  _DutyTabFilter _activeTab = _DutyTabFilter.booth;
 
-  // ── booth list state ──────────────────────────────────────────────────────
+  // ── booth state ────────────────────────────────────────────────────────────
   final List<Map<String, dynamic>> _items = [];
   int  _page       = 1;
   int  _totalCount = 0;
@@ -786,25 +743,26 @@ class _DutyCardPageState extends State<DutyCardPage>
   static const int _kLimit = 50;
 
   // ── district duty state ───────────────────────────────────────────────────
-  // Map<dutyType, { rule info + batches: [ {batchNo, staff:[]} ] }>
-  Map<String, dynamic>         _districtSummary = {};
-  Map<String, List<dynamic>>   _districtBatches = {};  // dutyType → batches
-  bool _districtLoading = false;
+  Map<String, dynamic>       _districtSummary = {};
+  Map<String, List<dynamic>> _districtBatches = {};
+  bool    _districtLoading   = false;
   String? _expandedDutyType;
 
-  // ── filter state ──────────────────────────────────────────────────────────
+  // ── filters ───────────────────────────────────────────────────────────────
   String          _q              = '';
   String?         _rankFilter;
   _ArmedFilter    _armedFilter    = _ArmedFilter.all;
   _DownloadFilter _downloadFilter = _DownloadFilter.all;
 
-  // ── election config fetched from server ───────────────────────────────────
+  // ── election config (from admin's district only) ──────────────────────────
   _ElectionConfig _electionConfig = const _ElectionConfig();
+  bool            _configLoading  = true;   // show banner while loading
+  String          _adminDistrict  = '';      // stored after /auth/me
 
-  Timer?       _debounce;
-  final        _searchCtrl = TextEditingController();
-  Set<int>     _selected   = {};
-  final        _scroll     = ScrollController();
+  Timer?                   _debounce;
+  final TextEditingController _searchCtrl = TextEditingController();
+  Set<int>                 _selected   = {};
+  final ScrollController   _scroll     = ScrollController();
 
   // ── lifecycle ─────────────────────────────────────────────────────────────
   @override
@@ -813,18 +771,13 @@ class _DutyCardPageState extends State<DutyCardPage>
     _tabCtrl = TabController(length: 2, vsync: this);
     _tabCtrl.addListener(() {
       if (!_tabCtrl.indexIsChanging) {
-        setState(() {
-          _activeTab = _DutyTabFilter.values[_tabCtrl.index];
-        });
         if (_tabCtrl.index == 1 && _districtSummary.isEmpty) {
           _loadDistrictDutySummary();
         }
       }
     });
-
     _scroll.addListener(() {
-      if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 300)
-        _loadMore();
+      if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 300) _loadMore();
     });
     _searchCtrl.addListener(() {
       _debounce?.cancel();
@@ -833,8 +786,10 @@ class _DutyCardPageState extends State<DutyCardPage>
         if (q != _q) { _q = q; _reload(); }
       });
     });
+
+    // 1. First get admin profile (to know their district), then fetch config
+    _initAdminThenConfig();
     _reload();
-    _fetchConfig();
   }
 
   @override
@@ -846,44 +801,87 @@ class _DutyCardPageState extends State<DutyCardPage>
     super.dispose();
   }
 
-  // ── fetch active election config for this district ────────────────────────
-  Future<void> _fetchConfig() async {
+  // ── Step 1: get admin district, Step 2: fetch election config ─────────────
+  Future<void> _initAdminThenConfig() async {
     try {
-      final token = await AuthService.getToken();
+      final token      = await AuthService.getToken();
+      final profileRes = await ApiService.get('/auth/me', token: token);
+      final profile    = (profileRes['data'] as Map<String, dynamic>?) ?? {};
+      _adminDistrict   = (profile['district'] ?? '').toString().trim();
+    } catch (_) {}
 
-      // Active election config for this district (new endpoint)
-      final configRes  = await ApiService.get('/admin/election-config/active', token: token);
-      final configData = (configRes['data'] as Map<String, dynamic>?) ?? {};
-
-      if (!mounted) return;
-      setState(() {
-        _electionConfig = _ElectionConfig.fromMap(configData);
-      });
-    } catch (_) {
-      // Fallback to app_config
-      try {
-        final token     = await AuthService.getToken();
-        final legacyRes = await ApiService.get('/admin/config', token: token);
-        final legacyData = (legacyRes['data'] as Map<String, dynamic>?) ?? {};
-        final profileRes = await ApiService.get('/auth/me', token: token);
-        final profileData = (profileRes['data'] as Map<String, dynamic>?) ?? {};
-
-        if (!mounted) return;
-        setState(() {
-          _electionConfig = _ElectionConfig(
-            district:    (profileData['district'] ?? '').toString(),
-            phase:       (legacyData['phase']        ?? 'द्वितीय').toString(),
-            electionDate: (legacyData['electionDate'] ?? '26.04.2024').toString(),
-            electionYear: (legacyData['electionYear'] ?? '2024').toString(),
-          );
-        });
-      } catch (_) {
-        // silently keep defaults
-      }
-    }
+    await _fetchConfig();
   }
 
-  // ── district duty summary ────────────────────────────────────────────────
+  // ── Fetch election config strictly for admin's district ───────────────────
+  Future<void> _fetchConfig() async {
+    if (!mounted) return;
+    setState(() => _configLoading = true);
+
+    // ── Source 1: /admin/election-config/active ────────────────────────────
+    //    Backend already filters by the logged-in admin's district.
+    try {
+      final token     = await AuthService.getToken();
+      final res       = await ApiService.get('/admin/election-config/active', token: token);
+      final data      = (res['data'] as Map<String, dynamic>?) ?? {};
+
+      if (data.isNotEmpty && mounted) {
+        final cfg = _ElectionConfig.fromMap(data);
+        // Extra safety: only use if district matches (or is empty in response)
+        if (cfg.district.isEmpty ||
+            cfg.district.toLowerCase() == _adminDistrict.toLowerCase()) {
+          setState(() { _electionConfig = cfg; _configLoading = false; });
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // ── Source 2: electionConfig embedded in /duties page-1 response ────────
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get('/admin/duties?page=1&limit=1', token: token);
+      final wrap  = (res['data'] as Map<String, dynamic>?) ?? {};
+      final emb   = wrap['electionConfig'];
+
+      if (emb is Map<String, dynamic> && emb.isNotEmpty && mounted) {
+        final cfg = _ElectionConfig.fromMap(emb);
+        if (cfg.district.isEmpty ||
+            cfg.district.toLowerCase() == _adminDistrict.toLowerCase()) {
+          setState(() { _electionConfig = cfg; _configLoading = false; });
+          return;
+        }
+      }
+    } catch (_) {}
+
+    // ── Source 3: /admin/config (legacy key-value table) ─────────────────
+    try {
+      final token      = await AuthService.getToken();
+      final legacyRes  = await ApiService.get('/admin/config', token: token);
+      final legacy     = (legacyRes['data'] as Map<String, dynamic>?) ?? {};
+
+      if (legacy.isNotEmpty && mounted) {
+        setState(() {
+          _electionConfig = _ElectionConfig(
+            district:     _adminDistrict,
+            phase:        (legacy['phase']        ?? 'द्वितीय').toString(),
+            electionDate: (legacy['electionDate'] ?? '26.04.2024').toString(),
+            electionYear: (legacy['electionYear'] ?? '2024').toString(),
+            electionName: (legacy['electionName'] ?? '').toString(),
+            state:        (legacy['state']        ?? '').toString(),
+            pratahSamay:  (legacy['pratahSamay']  ?? '07:00').toString(),
+            sayaSamay:    (legacy['sayaSamay']    ?? '06:00').toString(),
+          );
+          _configLoading = false;
+        });
+        return;
+      }
+    } catch (_) {}
+
+    // All sources failed — keep defaults, stop loading
+    if (mounted) setState(() => _configLoading = false);
+  }
+
+  // ── District duty ─────────────────────────────────────────────────────────
   Future<void> _loadDistrictDutySummary() async {
     if (_districtLoading) return;
     setState(() => _districtLoading = true);
@@ -892,33 +890,28 @@ class _DutyCardPageState extends State<DutyCardPage>
       final res   = await ApiService.get('/admin/district-duty/summary', token: token);
       if (!mounted) return;
       setState(() {
-        _districtSummary  = Map<String, dynamic>.from(res['data'] as Map? ?? {});
-        _districtLoading  = false;
+        _districtSummary = Map<String, dynamic>.from(res['data'] as Map? ?? {});
+        _districtLoading = false;
       });
     } catch (e) {
-      if (mounted) {
-        setState(() => _districtLoading = false);
-        showSnack(context, 'District duty load failed: $e', error: true);
-      }
+      if (mounted) { setState(() => _districtLoading = false); showSnack(context, 'District duty load failed: $e', error: true); }
     }
   }
 
   Future<void> _loadBatchesForDutyType(String dutyType) async {
     try {
       final token = await AuthService.getToken();
-      final res   = await ApiService.get(
-          '/admin/district-duty/$dutyType/batches', token: token);
+      final res   = await ApiService.get('/admin/district-duty/$dutyType/batches', token: token);
       if (!mounted) return;
       setState(() {
-        _districtBatches[dutyType] =
-            (res['data'] as List?)?.map((e) => e as Map).toList() ?? [];
+        _districtBatches[dutyType] = (res['data'] as List?)?.map((e) => e as Map).toList() ?? [];
       });
     } catch (e) {
       if (mounted) showSnack(context, 'Failed: $e', error: true);
     }
   }
 
-  // ── booth data loading ────────────────────────────────────────────────────
+  // ── Booth data ────────────────────────────────────────────────────────────
   void _reload() {
     setState(() {
       _items.clear(); _page = 1; _totalCount = 0;
@@ -935,12 +928,24 @@ class _DutyCardPageState extends State<DutyCardPage>
       final url   = StringBuffer('/admin/duties?page=$_page&limit=$_kLimit');
       if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
 
-      final res     = await ApiService.get(url.toString(), token: token);
-      final wrapper = (res['data'] as Map<String, dynamic>?) ?? {};
-      final items   = (wrapper['data'] as List?)
+      final res        = await ApiService.get(url.toString(), token: token);
+      final wrapper    = (res['data'] as Map<String, dynamic>?) ?? {};
+      final items      = (wrapper['data'] as List?)
               ?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? [];
       final total      = (wrapper['total']      as num?)?.toInt() ?? 0;
       final totalPages = (wrapper['totalPages'] as num?)?.toInt() ?? 1;
+
+      // ── If config still empty, try to pick it from this response ─────────
+      if (_electionConfig.isEmpty && _configLoading == false) {
+        final emb = wrapper['electionConfig'];
+        if (emb is Map<String, dynamic> && emb.isNotEmpty) {
+          final cfg = _ElectionConfig.fromMap(emb);
+          if (cfg.district.isEmpty ||
+              cfg.district.toLowerCase() == _adminDistrict.toLowerCase()) {
+            if (mounted) setState(() => _electionConfig = cfg);
+          }
+        }
+      }
 
       if (!mounted) return;
       setState(() {
@@ -952,41 +957,35 @@ class _DutyCardPageState extends State<DutyCardPage>
         _loading    = false;
       });
     } catch (e) {
-      if (mounted) {
-        setState(() => _loading = false);
-        showSnack(context, 'Failed to load: $e', error: true);
-      }
+      if (mounted) { setState(() => _loading = false); showSnack(context, 'Failed to load: $e', error: true); }
     }
   }
 
   void _loadMore() { if (!_loading && _hasMore) _fetch(); }
 
-  // ── client-side filter ────────────────────────────────────────────────────
-  List<Map<String, dynamic>> get _visible {
-    return _items.where((s) {
-      if (_rankFilter != null && _rankFilter!.isNotEmpty) {
-        final rf      = _rankFilter!.toLowerCase();
-        final primary = (s['rank'] ?? s['user_rank'] ?? '').toString().toLowerCase();
-        final rankOk  = primary == rf ||
-            ((s['sahyogi'] ?? []) as List).any((e) =>
-                (e['user_rank'] ?? e['rank'] ?? '').toString().toLowerCase() == rf);
-        if (!rankOk) return false;
-      }
-      if (_armedFilter != _ArmedFilter.all) {
-        final wantArmed = _armedFilter == _ArmedFilter.armed;
-        final isArmed   = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
-        if (wantArmed != isArmed) return false;
-      }
-      if (_downloadFilter != _DownloadFilter.all) {
-        final downloaded = s['cardDownloaded'] == true;
-        if (_downloadFilter == _DownloadFilter.downloaded   && !downloaded) return false;
-        if (_downloadFilter == _DownloadFilter.notDownloaded &&  downloaded) return false;
-      }
-      return true;
-    }).toList();
-  }
+  // ── Filters ───────────────────────────────────────────────────────────────
+  List<Map<String, dynamic>> get _visible => _items.where((s) {
+    if (_rankFilter != null && _rankFilter!.isNotEmpty) {
+      final rf = _rankFilter!.toLowerCase();
+      final pr = (s['rank'] ?? s['user_rank'] ?? '').toString().toLowerCase();
+      if (pr != rf && !((s['sahyogi'] ?? []) as List).any(
+          (e) => (e['user_rank'] ?? e['rank'] ?? '').toString().toLowerCase() == rf))
+        return false;
+    }
+    if (_armedFilter != _ArmedFilter.all) {
+      final want    = _armedFilter == _ArmedFilter.armed;
+      final isArmed = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
+      if (want != isArmed) return false;
+    }
+    if (_downloadFilter != _DownloadFilter.all) {
+      final dl = s['cardDownloaded'] == true;
+      if (_downloadFilter == _DownloadFilter.downloaded    && !dl) return false;
+      if (_downloadFilter == _DownloadFilter.notDownloaded &&  dl) return false;
+    }
+    return true;
+  }).toList();
 
-  // ── label helpers ─────────────────────────────────────────────────────────
+  // ── Label helpers ─────────────────────────────────────────────────────────
   String   _armedLabel(_ArmedFilter f)    => const ['सभी', 'सशस्त्र', 'निःशस्त्र'][f.index];
   Color    _armedColor(_ArmedFilter f)    => [kPrimary, const Color(0xFFC62828), const Color(0xFF1565C0)][f.index];
   IconData _armedIcon(_ArmedFilter f)     => [Icons.people_outline, Icons.shield_outlined, Icons.person_outline][f.index];
@@ -994,7 +993,7 @@ class _DutyCardPageState extends State<DutyCardPage>
   Color    _dlColor(_DownloadFilter f)    => [kPrimary, kSuccess, const Color(0xFFE65100)][f.index];
   IconData _dlIcon(_DownloadFilter f)     => [Icons.list_outlined, Icons.check_circle_outline, Icons.pending_outlined][f.index];
 
-  // ── print helpers ─────────────────────────────────────────────────────────
+  // ── Print helpers ─────────────────────────────────────────────────────────
   Future<void> _print(List<Map> list) async {
     if (list.isEmpty) return;
     final pdf  = pw.Document();
@@ -1005,50 +1004,42 @@ class _DutyCardPageState extends State<DutyCardPage>
       pdf.addPage(pw.Page(
         pageFormat: _pageFormatFor(s),
         margin:     const pw.EdgeInsets.all(4),
-        build: (_) => buildDutyCardPdf(s, font, bold, config: cfg),
+        build: (_)  => buildDutyCardPdf(s, font, bold, config: cfg),
       ));
     }
     await Printing.layoutPdf(onLayout: (_) => pdf.save());
   }
 
   Future<void> _printDistrictBatch(Map batchData, String dutyLabelHi) async {
-    final pdf  = pw.Document();
-    final font = await PdfGoogleFonts.notoSansDevanagariRegular();
-    final bold = await PdfGoogleFonts.notoSansDevanagariBold();
-    final cfg  = _electionConfig.toConfigMap();
-
+    final pdf      = pw.Document();
+    final font     = await PdfGoogleFonts.notoSansDevanagariRegular();
+    final bold     = await PdfGoogleFonts.notoSansDevanagariBold();
+    final cfg      = _electionConfig.toConfigMap();
     final staffList = (batchData['staff'] as List?) ?? [];
-    final payload   = {
-      ...batchData,
-      'dutyLabelHi': dutyLabelHi,
-    };
-
     pdf.addPage(pw.Page(
       pageFormat: _districtPageFormat(staffList.length),
       margin:     const pw.EdgeInsets.all(4),
-      build: (_) => buildDistrictDutyCardPdf(payload, font, bold, config: cfg),
+      build: (_)  => buildDistrictDutyCardPdf(
+          {...batchData, 'dutyLabelHi': dutyLabelHi}, font, bold, config: cfg),
     ));
     await Printing.layoutPdf(onLayout: (_) => pdf.save());
   }
 
   Future<void> _printAllDistrictBatches(String dutyType, String dutyLabelHi) async {
     final batches = _districtBatches[dutyType] ?? [];
-    if (batches.isEmpty) {
-      showSnack(context, 'पहले batches लोड करें', error: true);
-      return;
-    }
+    if (batches.isEmpty) { showSnack(context, 'पहले batches लोड करें', error: true); return; }
     final pdf  = pw.Document();
     final font = await PdfGoogleFonts.notoSansDevanagariRegular();
     final bold = await PdfGoogleFonts.notoSansDevanagariBold();
     final cfg  = _electionConfig.toConfigMap();
-
     for (final batch in batches) {
       final staffList = (batch['staff'] as List?) ?? [];
-      final payload   = { ...Map<String, dynamic>.from(batch as Map), 'dutyLabelHi': dutyLabelHi };
       pdf.addPage(pw.Page(
         pageFormat: _districtPageFormat(staffList.length),
         margin:     const pw.EdgeInsets.all(4),
-        build: (_) => buildDistrictDutyCardPdf(payload, font, bold, config: cfg),
+        build: (_)  => buildDistrictDutyCardPdf(
+            {...Map<String, dynamic>.from(batch as Map), 'dutyLabelHi': dutyLabelHi},
+            font, bold, config: cfg),
       ));
     }
     await Printing.layoutPdf(onLayout: (_) => pdf.save());
@@ -1059,7 +1050,7 @@ class _DutyCardPageState extends State<DutyCardPage>
     try {
       final token = await AuthService.getToken();
       final all   = List<Map<String, dynamic>>.from(_items);
-      int pg      = _page;
+      int pg = _page;
       while (pg <= _totalPages) {
         final url = StringBuffer('/admin/duties?page=$pg&limit=200');
         if (_q.isNotEmpty) url.write('&q=${Uri.encodeComponent(_q)}');
@@ -1069,37 +1060,39 @@ class _DutyCardPageState extends State<DutyCardPage>
                 ?.map((e) => Map<String, dynamic>.from(e as Map)).toList() ?? []);
         pg++;
       }
-      final toPrint = all.where((s) {
+      await _print(all.where((s) {
         if (_rankFilter != null && _rankFilter!.isNotEmpty) {
           final rf = _rankFilter!.toLowerCase();
           final pr = (s['rank'] ?? s['user_rank'] ?? '').toString().toLowerCase();
-          if (pr != rf && !((s['sahyogi'] ?? []) as List).any((e) =>
-              (e['user_rank'] ?? e['rank'] ?? '').toString().toLowerCase() == rf))
+          if (pr != rf && !((s['sahyogi'] ?? []) as List).any(
+              (e) => (e['user_rank'] ?? e['rank'] ?? '').toString().toLowerCase() == rf))
             return false;
         }
         if (_armedFilter != _ArmedFilter.all) {
-          final wantArmed = _armedFilter == _ArmedFilter.armed;
-          final isArmed   = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
-          if (wantArmed != isArmed) return false;
+          final want    = _armedFilter == _ArmedFilter.armed;
+          final isArmed = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
+          if (want != isArmed) return false;
         }
         if (_downloadFilter != _DownloadFilter.all) {
-          final downloaded = s['cardDownloaded'] == true;
-          if (_downloadFilter == _DownloadFilter.downloaded   && !downloaded) return false;
-          if (_downloadFilter == _DownloadFilter.notDownloaded &&  downloaded) return false;
+          final dl = s['cardDownloaded'] == true;
+          if (_downloadFilter == _DownloadFilter.downloaded    && !dl) return false;
+          if (_downloadFilter == _DownloadFilter.notDownloaded &&  dl) return false;
         }
         return true;
-      }).toList();
-      await _print(toPrint);
+      }).toList());
     } catch (e) {
       if (mounted) showSnack(context, 'Print failed: $e', error: true);
     }
   }
 
-  // ── build ─────────────────────────────────────────────────────────────────
+  // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     return Column(children: [
-      // ── Tab bar ──────────────────────────────────────────────────────────
+      // Election config info banner
+      _buildConfigBanner(),
+
+      // Tab bar
       Container(
         color: kSurface,
         child: TabBar(
@@ -1117,23 +1110,109 @@ class _DutyCardPageState extends State<DutyCardPage>
       Expanded(
         child: TabBarView(
           controller: _tabCtrl,
-          children: [
-            _buildBoothTab(),
-            _buildDistrictTab(),
-          ],
+          children: [_buildBoothTab(), _buildDistrictTab()],
         ),
       ),
     ]);
   }
 
+  // ── Election config info banner ────────────────────────────────────────────
+  Widget _buildConfigBanner() {
+    if (_configLoading) {
+      return Container(
+        color: kSurface,
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(children: [
+          const SizedBox(width: 14, height: 14,
+              child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary)),
+          const SizedBox(width: 10),
+          const Text('निर्वाचन विवरण लोड हो रहा है...',
+              style: TextStyle(color: kSubtle, fontSize: 11)),
+        ]),
+      );
+    }
+
+    if (_electionConfig.isEmpty) {
+      return Container(
+        color: const Color(0xFFFFF3E0),
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        child: Row(children: [
+          const Icon(Icons.warning_amber_rounded, color: Color(0xFFE65100), size: 16),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('निर्वाचन विवरण उपलब्ध नहीं है। कृपया Election Config सेट करें।',
+                style: TextStyle(color: Color(0xFFE65100), fontSize: 11)),
+          ),
+          IconButton(
+            icon: const Icon(Icons.refresh, size: 16, color: Color(0xFFE65100)),
+            onPressed: _fetchConfig,
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
+        ]),
+      );
+    }
+
+    // Show election details
+    return Container(
+      decoration: const BoxDecoration(
+        color: kSurface,
+        border: Border(bottom: BorderSide(color: kBorder, width: 0.5)),
+      ),
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+      child: Row(children: [
+        const Icon(Icons.how_to_vote, color: kPrimary, size: 15),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(
+              _electionConfig.electionName.isNotEmpty
+                  ? _electionConfig.electionName
+                  : 'निर्वाचन',
+              style: const TextStyle(color: kDark, fontSize: 11, fontWeight: FontWeight.w800),
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+            ),
+            const SizedBox(height: 1),
+            Text(
+              'जनपद: ${_electionConfig.district.isNotEmpty ? _electionConfig.district : _adminDistrict}'
+              '  •  चरण: ${_electionConfig.phase}'
+              '  •  दिनांक: ${_electionConfig.electionDate}',
+              style: const TextStyle(color: kSubtle, fontSize: 9),
+              maxLines: 1, overflow: TextOverflow.ellipsis,
+            ),
+          ]),
+        ),
+        const SizedBox(width: 6),
+        // Timing pill
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+          decoration: BoxDecoration(
+            color: kPrimary.withOpacity(0.1),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kPrimary.withOpacity(0.3)),
+          ),
+          child: Text(
+            '${_electionConfig.pratahSamay}–${_electionConfig.sayaSamay}',
+            style: const TextStyle(color: kPrimary, fontSize: 9, fontWeight: FontWeight.w700),
+          ),
+        ),
+        const SizedBox(width: 4),
+        GestureDetector(
+          onTap: _fetchConfig,
+          child: const Icon(Icons.refresh, size: 14, color: kSubtle),
+        ),
+      ]),
+    );
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
-  //  BOOTH TAB (original UI — untouched)
+  //  BOOTH TAB
   // ══════════════════════════════════════════════════════════════════════════
   Widget _buildBoothTab() {
     final visible = _visible;
     return Column(children: [
 
-      // Search + Filter bar
+      // Search + Filters
       Container(
         color: kSurface,
         padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
@@ -1165,10 +1244,7 @@ class _DutyCardPageState extends State<DutyCardPage>
               padding: const EdgeInsets.only(right: 5),
               child: _FilterChip(label: _armedLabel(f), color: _armedColor(f),
                 icon: _armedIcon(f), selected: _armedFilter == f,
-                onTap: () {
-                  if (_armedFilter != f)
-                    setState(() { _armedFilter = f; _selected.clear(); });
-                }),
+                onTap: () { if (_armedFilter != f) setState(() { _armedFilter = f; _selected.clear(); }); }),
             )),
           ]),
           const SizedBox(height: 8),
@@ -1178,10 +1254,10 @@ class _DutyCardPageState extends State<DutyCardPage>
                 onTap: () { if (_rankFilter != null) setState(() => _rankFilter = null); }),
               const SizedBox(width: 6),
               ..._kAllRanks.map((rank) {
-                final selected = _rankFilter == rank;
+                final sel = _rankFilter == rank;
                 return Padding(padding: const EdgeInsets.only(right: 6),
-                  child: _RankChip(label: rank, selected: selected, color: _rankColor(rank),
-                    onTap: () => setState(() { _rankFilter = selected ? null : rank; _selected.clear(); })));
+                  child: _RankChip(label: rank, selected: sel, color: _rankColor(rank),
+                    onTap: () => setState(() { _rankFilter = sel ? null : rank; _selected.clear(); })));
               }),
             ]),
           ),
@@ -1193,15 +1269,13 @@ class _DutyCardPageState extends State<DutyCardPage>
               padding: const EdgeInsets.only(right: 5),
               child: _FilterChip(label: _dlLabel(f), color: _dlColor(f),
                 icon: _dlIcon(f), selected: _downloadFilter == f,
-                onTap: () {
-                  if (_downloadFilter != f)
-                    setState(() { _downloadFilter = f; _selected.clear(); });
-                }),
+                onTap: () { if (_downloadFilter != f) setState(() { _downloadFilter = f; _selected.clear(); }); }),
             )),
           ]),
         ]),
       ),
 
+      // Count + action bar
       if (visible.isNotEmpty)
         Container(
           color: kBg,
@@ -1261,13 +1335,13 @@ class _DutyCardPageState extends State<DutyCardPage>
                     child: Center(child: SizedBox(width: 22, height: 22,
                         child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))));
 
-              final s          = visible[i];
-              final id         = s['id'] as int;
-              final sel        = _selected.contains(id);
+              final s           = visible[i];
+              final id          = s['id'] as int;
+              final sel         = _selected.contains(id);
               final primaryRank = s['rank'] ?? s['user_rank'] ?? '';
-              final rankHindi  = _rh(primaryRank);
-              final isArmed    = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
-              final downloaded = s['cardDownloaded'] == true;
+              final rankHindi   = _rh(primaryRank);
+              final isArmed     = s['isArmed'] == true || s['is_armed'] == true || s['is_armed'] == 1;
+              final downloaded  = s['cardDownloaded'] == true;
 
               return GestureDetector(
                 onTap: () => setState(() => sel ? _selected.remove(id) : _selected.add(id)),
@@ -1316,8 +1390,9 @@ class _DutyCardPageState extends State<DutyCardPage>
                               color: isArmed ? const Color(0xFFC62828) : const Color(0xFF1565C0)),
                           const SizedBox(width: 3),
                           Text(isArmed ? 'सशस्त्र' : 'निःशस्त्र',
-                              style: TextStyle(color: isArmed ? const Color(0xFFC62828) : const Color(0xFF1565C0),
-                                  fontSize: 9, fontWeight: FontWeight.w700)),
+                              style: TextStyle(
+                                color: isArmed ? const Color(0xFFC62828) : const Color(0xFF1565C0),
+                                fontSize: 9, fontWeight: FontWeight.w700)),
                         ]),
                       ),
                       Container(padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
@@ -1340,7 +1415,8 @@ class _DutyCardPageState extends State<DutyCardPage>
                       const SizedBox(height: 3),
                       _tag(Icons.location_on_outlined, '${s['centerName']} • ${s['gpName']}', color: kInfo),
                       const SizedBox(height: 2),
-                      _tag(Icons.layers_outlined, '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}'),
+                      _tag(Icons.layers_outlined,
+                          '${s['sectorName']} › ${s['zoneName']} › ${s['superZoneName']}'),
                     ]),
                     trailing: IconButton(
                       icon: const Icon(Icons.print_outlined, color: kPrimary),
@@ -1357,7 +1433,7 @@ class _DutyCardPageState extends State<DutyCardPage>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  DISTRICT DUTY TAB
+  //  DISTRICT TAB
   // ══════════════════════════════════════════════════════════════════════════
   Widget _buildDistrictTab() {
     if (_districtLoading) {
@@ -1387,31 +1463,28 @@ class _DutyCardPageState extends State<DutyCardPage>
         final dutyType   = entries[i].key;
         final info       = entries[i].value as Map;
         final labelHi    = (info['dutyLabelHi'] ?? dutyType).toString();
-        final sankhya    = (info['sankhya'] ?? 0) as int;
+        final sankhya    = (info['sankhya']       ?? 0) as int;
         final assigned   = (info['totalAssigned'] ?? 0) as int;
-        final batchCount = (info['batchCount'] ?? 0) as int;
+        final batchCount = (info['batchCount']    ?? 0) as int;
         final isExpanded = _expandedDutyType == dutyType;
         final batches    = _districtBatches[dutyType] ?? [];
-
-        final pct = sankhya == 0 ? 0.0 : (assigned / sankhya).clamp(0.0, 1.0);
+        final pct        = sankhya == 0 ? 0.0 : (assigned / sankhya).clamp(0.0, 1.0);
 
         return Container(
           decoration: BoxDecoration(
             color: Colors.white,
             borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: isExpanded ? kPrimary : kBorder.withOpacity(0.5),
+            border: Border.all(
+                color: isExpanded ? kPrimary : kBorder.withOpacity(0.5),
                 width: isExpanded ? 1.5 : 1),
             boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3))],
           ),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-            // ── Header row ────────────────────────────────────────────────
             InkWell(
               borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
               onTap: () async {
-                setState(() {
-                  _expandedDutyType = isExpanded ? null : dutyType;
-                });
+                setState(() { _expandedDutyType = isExpanded ? null : dutyType; });
                 if (!isExpanded && !_districtBatches.containsKey(dutyType)) {
                   await _loadBatchesForDutyType(dutyType);
                 }
@@ -1420,11 +1493,8 @@ class _DutyCardPageState extends State<DutyCardPage>
                 padding: const EdgeInsets.all(14),
                 child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
-                    Expanded(
-                      child: Text(labelHi,
-                          style: const TextStyle(color: kDark, fontWeight: FontWeight.w800, fontSize: 14)),
-                    ),
-                    // Print all batches
+                    Expanded(child: Text(labelHi,
+                        style: const TextStyle(color: kDark, fontWeight: FontWeight.w800, fontSize: 14))),
                     if (batchCount > 0)
                       IconButton(
                         icon: const Icon(Icons.print_outlined, color: kPrimary, size: 20),
@@ -1442,8 +1512,7 @@ class _DutyCardPageState extends State<DutyCardPage>
                   Row(children: [
                     _statBadge('कुल आवश्यक', '$sankhya', kAccent),
                     const SizedBox(width: 6),
-                    _statBadge('नियुक्त', '$assigned',
-                        assigned >= sankhya ? kSuccess : kPrimary),
+                    _statBadge('नियुक्त', '$assigned', assigned >= sankhya ? kSuccess : kPrimary),
                     const SizedBox(width: 6),
                     _statBadge('बैच', '$batchCount', kInfo),
                   ]),
@@ -1465,18 +1534,15 @@ class _DutyCardPageState extends State<DutyCardPage>
               ),
             ),
 
-            // ── Expanded: batch list ──────────────────────────────────────
             if (isExpanded) ...[
               const Divider(height: 1, color: kBorder),
               if (batches.isEmpty)
-                const Padding(
-                  padding: EdgeInsets.all(16),
-                  child: Center(child: SizedBox(width: 20, height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))),
-                )
+                const Padding(padding: EdgeInsets.all(16),
+                    child: Center(child: SizedBox(width: 20, height: 20,
+                        child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))))
               else
                 ...batches.map((batch) {
-                  final batchNo    = (batch['batchNo'] ?? batch['batch_no'] ?? 0) as int;
+                  final batchNo    = (batch['batchNo']    ?? batch['batch_no']    ?? 0) as int;
                   final staffCount = (batch['staffCount'] ?? batch['staff_count'] ?? 0) as int;
                   final staffList  = (batch['staff'] ?? []) as List;
                   final busNo      = (batch['busNo'] ?? batch['bus_no'] ?? '').toString();
@@ -1490,31 +1556,25 @@ class _DutyCardPageState extends State<DutyCardPage>
                       border: Border.all(color: kBorder.withOpacity(0.4)),
                     ),
                     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                      // Batch header
                       Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         child: Row(children: [
                           Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                            decoration: BoxDecoration(color: kPrimary,
-                                borderRadius: BorderRadius.circular(6)),
+                            decoration: BoxDecoration(color: kPrimary, borderRadius: BorderRadius.circular(6)),
                             child: Text('बैच $batchNo',
-                                style: const TextStyle(color: Colors.white,
-                                    fontSize: 11, fontWeight: FontWeight.w800))),
+                                style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w800))),
                           const SizedBox(width: 8),
-                          if (busNo.isNotEmpty)
-                            _tag(Icons.directions_bus, 'बस–$busNo', color: kAccent),
+                          if (busNo.isNotEmpty) _tag(Icons.directions_bus, 'बस–$busNo', color: kAccent),
                           const SizedBox(width: 6),
                           _tag(Icons.people_outline, '$staffCount कर्मी'),
                           const Spacer(),
-                          // Print this batch
                           GestureDetector(
                             onTap: () => _printDistrictBatch(
-                                {  ...Map<String, dynamic>.from(batch as Map), 'dutyLabelHi': labelHi },
+                                {...Map<String, dynamic>.from(batch as Map), 'dutyLabelHi': labelHi},
                                 labelHi),
                             child: Container(
                               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                              decoration: BoxDecoration(color: kPrimary,
-                                  borderRadius: BorderRadius.circular(7)),
+                              decoration: BoxDecoration(color: kPrimary, borderRadius: BorderRadius.circular(7)),
                               child: const Row(mainAxisSize: MainAxisSize.min, children: [
                                 Icon(Icons.print, color: Colors.white, size: 13),
                                 SizedBox(width: 4),
@@ -1526,11 +1586,8 @@ class _DutyCardPageState extends State<DutyCardPage>
                         ]),
                       ),
                       if (note.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          child: _tag(Icons.note_outlined, note, color: kSubtle),
-                        ),
-                      // Staff mini list
+                        Padding(padding: const EdgeInsets.symmetric(horizontal: 12),
+                            child: _tag(Icons.note_outlined, note, color: kSubtle)),
                       if (staffList.isNotEmpty) ...[
                         const Divider(height: 1, indent: 12, endIndent: 12),
                         Padding(
@@ -1545,8 +1602,7 @@ class _DutyCardPageState extends State<DutyCardPage>
                                     decoration: const BoxDecoration(color: kPrimary, shape: BoxShape.circle)),
                                   const SizedBox(width: 6),
                                   Expanded(child: Text(e['name'] ?? '',
-                                      style: const TextStyle(color: kDark, fontSize: 11,
-                                          fontWeight: FontWeight.w600))),
+                                      style: const TextStyle(color: kDark, fontSize: 11, fontWeight: FontWeight.w600))),
                                   Text(_rh(e['rank'] ?? e['user_rank']),
                                       style: TextStyle(color: _rankColor(e['rank'] ?? ''),
                                           fontSize: 10, fontWeight: FontWeight.w700)),
@@ -1560,11 +1616,9 @@ class _DutyCardPageState extends State<DutyCardPage>
                           ),
                         ),
                         if (staffList.length > 5)
-                          Padding(
-                            padding: const EdgeInsets.only(left: 12, bottom: 8),
+                          Padding(padding: const EdgeInsets.only(left: 12, bottom: 8),
                             child: Text('+ ${staffList.length - 5} और कर्मी...',
-                                style: const TextStyle(color: kSubtle, fontSize: 10)),
-                          ),
+                                style: const TextStyle(color: kSubtle, fontSize: 10))),
                       ],
                       const SizedBox(height: 4),
                     ]),
@@ -1578,7 +1632,7 @@ class _DutyCardPageState extends State<DutyCardPage>
     );
   }
 
-  // ── helper widgets ─────────────────────────────────────────────────────────
+  // ── Helpers ───────────────────────────────────────────────────────────────
   Widget _statBadge(String label, String value, Color color) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
     decoration: BoxDecoration(
@@ -1619,7 +1673,7 @@ class _DutyCardPageState extends State<DutyCardPage>
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  HELPERS
+//  REUSABLE WIDGETS
 // ══════════════════════════════════════════════════════════════════════════════
 Color _rankColor(String rank) {
   switch (rank.toUpperCase()) {
