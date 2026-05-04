@@ -21,8 +21,8 @@ const NAV_BY_ROLE = {
   SUPER_ADMIN: [
     { label: 'Overview', icon: LayoutDashboard, path: 'overview' },
     { label: 'Admins', icon: Shield, path: 'admins' },
+    { label: 'Unlock', icon: TableOfContents , path: 'unlocks' },
     { label: 'Form Data', icon: FileText, path: 'formdata' },
-    // { label: 'Manual Page', icon: TableOfContents , path: 'manual_page' },
   ],
   MASTER: [
     { label: 'Overview', icon: LayoutDashboard, path: 'overview' },

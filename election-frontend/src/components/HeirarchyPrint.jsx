@@ -53,7 +53,7 @@ export function printHierarchy(tab, filteredSZ, fZone, fSect, fGP) {
                 const zOffStr = zOff.map(o => `${o.name ?? ""}\n${o.user_rank ?? ""}`).join("\n") || "—";
                 const hq = dash(z.hq_address ?? z.hqAddress);
                 if (sectors.length === 0) {
-                    rows.push({ zNo: zi + 1, zOff: zOffStr, hq, sNo: "", sOff: "—", sHq: hq, gps: "—", thanas: "—" });
+                    rows.push({ zNo: zi + 1, zOff: zOffStr, hq, sNo: "", sOff: "—", sHq: "—", gps: "—", thanas: "—" });
                 } else {
                     sectors.forEach(s => {
                         globalSector++;
@@ -61,7 +61,7 @@ export function printHierarchy(tab, filteredSZ, fZone, fSect, fGP) {
                         const sOff = (s.officers ?? []).map(o => `${o.name ?? ""}\n${o.user_rank ?? ""}\n${o.mobile ?? ""}`).join("\n") || "—";
                         rows.push({
                             zNo: zi + 1, zOff: zOffStr, hq,
-                            sNo: globalSector, sOff, sHq: dash(s.hq ?? z.hq_address),
+                            sNo: globalSector, sOff, sHq: dash(s.hq_address),
                             gps: dash(gps.map(g => g.name).join("، ")),
                             thanas: dash([...new Set(gps.map(g => g.thana).filter(Boolean))].join("، ")),
                         });
