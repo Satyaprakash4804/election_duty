@@ -11,6 +11,7 @@ import { adminApi } from '../../api/endpoints';
 import { RANKS, debounce } from '../../utils/helpers';
 import { useAuthStore } from '../../store/authStore';
 import toast from 'react-hot-toast';
+import { decodeCsvBytes, normalizeCell } from '../../utils/encodingHelper';
 
 // ── Constants ─────────────────────────────────────────────────────────────────
 const PAGE_SIZE = 50;
@@ -696,12 +697,12 @@ function detectCols(headers) {
 }
 
 async function parseCSV(bytes) {
-  const text = new TextDecoder('utf-8').decode(new Uint8Array(bytes)).replace(/^\uFEFF/, '');
+  const text = decodeCsvBytes(bytes);
   const lines = text.split(/\r?\n/);
   if (lines.length < 2) return [];
   const headers = parseCSVLine(lines[0]).map(h => h.toLowerCase());
   const cols = detectCols(headers);
-  const cell = (row, idx) => idx != null && idx < row.length ? row[idx].trim() : '';
+  const cell = (row, idx) => idx != null && idx < row.length ? normalizeCell(row[idx]) : '';
   const result = [];
   lines.slice(1).forEach((line, ri) => {
     if (!line.trim()) return;

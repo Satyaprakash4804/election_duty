@@ -732,7 +732,7 @@ function Tab1Card({ sz, onEdit, onDelete, onAddZone, onManageOfficers }) {
                     <td className="border p-1.5 align-top" style={{ borderColor: COLORS.border }}>{isFirstInZone ? (r.z.hq_address || r.z.hqAddress || "—") : ""}</td>
                     <td className="border p-1.5 text-center align-top font-extrabold" style={{ borderColor: COLORS.border, color: COLORS.green }}>{r.sGlobal || ""}</td>
                     <td className="border p-1.5 align-top whitespace-pre-line" style={{ borderColor: COLORS.border }}>{sText}</td>
-                    <td className="border p-1.5 align-top" style={{ borderColor: COLORS.border }}>{r.s?.hq || r.z.hq_address || "—"}</td>
+                    <td className="border p-1.5 align-top" style={{ borderColor: COLORS.border }}>{r.s?.hq_address  || "—"}</td>
                     <td className="border p-1.5 align-top" style={{ borderColor: COLORS.border }}>{r.gpNames}</td>
                     <td className="border p-1.5 align-top" style={{ borderColor: COLORS.border }}>{r.thanas}</td>
                   </tr>
@@ -988,6 +988,8 @@ export default function HierarchyReportPage({ role, onBack }) {
     setLoading(true); setError(null);
     try {
       const res = await apiClient.get("/admin/hierarchy/full");
+      console.log(res);
+      
       setData(Array.isArray(res) ? res : (res?.data || []));
     } catch (e) {
       setError(e.message);

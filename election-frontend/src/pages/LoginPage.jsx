@@ -194,14 +194,7 @@ export default function LoginPage() {
               </button>
             </form>
 
-            {/* Server indicator */}
-            <div className="flex items-center justify-center gap-1.5 mt-4">
-              <CircleDot size={8} style={{ color: '#4CAF50' }} />
-              <span className="font-mono text-[10px]" style={{ color: 'var(--subtle)' }}>
-                {import.meta.env.VITE_API_URL || 'http://localhost:5000/api'}
-              </span>
-            </div>
-
+            
             {/* Footer */}
             <div className="mt-4 pt-4 border-t text-center" style={{ borderColor: 'var(--border)' }}>
               <p className="text-[11px] leading-relaxed" style={{ color: 'var(--subtle)' }}>
