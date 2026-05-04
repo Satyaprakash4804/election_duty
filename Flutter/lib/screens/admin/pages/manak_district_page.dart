@@ -390,6 +390,28 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
     return const [];
   }
 
+  /// Opens the full-screen shortage resolver for a single duty.
+  /// On return, refresh data so any rule/assignment changes show up.
+  void _openShortageResolver(_DutyEntry entry) async {
+    if (_disposed || !mounted) return;
+    final result = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => _ShortageResolverPage(
+          entry: entry,
+          rule:  _byDuty[entry.type],
+        ),
+      ),
+    );
+    if (result == true && !_disposed && mounted) {
+      // Drop stale shortage entry for this duty so the strip/chips refresh
+      _safeSetState(() {
+        _shortageReport.remove(entry.type);
+      });
+      await _loadAll();
+    }
+  }
+
   /// Per-duty auto-assign — same flow as global but for one duty_type.
   Future<void> _runSingleDutyAutoAssign(_DutyEntry entry) async {
     if (entry.sankhya <= 0) {
@@ -473,7 +495,7 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
               onClose: () => Navigator.pop(ctx),
               onFixDuty: (entry) {
                 Navigator.pop(ctx);
-                _openRankEditor(entry, 0);
+                _openShortageResolver(entry);
               }),
         ),
       ),
@@ -851,6 +873,7 @@ class _ManakDistrictPageState extends State<ManakDistrictPage>
                     onOpenDetail: _openDutyDetail, onRefresh: _loadAll,
                     shortageReport: _shortageReport,
                     onSingleAuto: _runSingleDutyAutoAssign,
+                    onResolveShortage: _openShortageResolver,
                     onShowAllShortages: _showShortageDialog,
                     isJobRunning: isJobRunning),
                 ])),
@@ -2307,6 +2330,8 @@ class _DutyTab extends StatelessWidget {
   final Map<String, dynamic>              shortageReport;
   // Trigger auto-assign for one duty type
   final void Function(_DutyEntry)         onSingleAuto;
+  // Open the resolver page for a duty type with a shortage
+  final void Function(_DutyEntry)         onResolveShortage;
   // Open the shortage details popup
   final VoidCallback                      onShowAllShortages;
   // True while any auto job is running — disables single-duty buttons
@@ -2318,6 +2343,7 @@ class _DutyTab extends StatelessWidget {
     required this.onRefresh,
     required this.shortageReport,
     required this.onSingleAuto,
+    required this.onResolveShortage,
     required this.onShowAllShortages,
     required this.isJobRunning,
   });
@@ -2426,6 +2452,7 @@ class _DutyTab extends StatelessWidget {
             isJobRunning: isJobRunning,
             onTap: () => onOpenDetail(entry),
             onAutoAssign: () => onSingleAuto(entry),
+            onResolveShortage: () => onResolveShortage(entry),
           );
         },
       )),
@@ -2445,6 +2472,7 @@ class _DutyAssignCard extends StatelessWidget {
   final bool isJobRunning;
   final VoidCallback onTap;
   final VoidCallback onAutoAssign;
+  final VoidCallback onResolveShortage;
 
   const _DutyAssignCard({
     required this.entry, required this.assigned, required this.batches,
@@ -2453,6 +2481,7 @@ class _DutyAssignCard extends StatelessWidget {
     required this.shortages,
     required this.isJobRunning,
     required this.onAutoAssign,
+    required this.onResolveShortage,
   });
 
   Color get _barColor {
@@ -2612,43 +2641,101 @@ class _DutyAssignCard extends StatelessWidget {
             if (sankhya > 0) ...[
               const SizedBox(height: 10),
               Row(children: [
-                Expanded(
-                  child: GestureDetector(
+                if (hasShortage) ...[
+                  // Primary action: open the resolver — admin can fix it
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: isJobRunning ? null : onResolveShortage,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 9),
+                        decoration: BoxDecoration(
+                          color: isJobRunning
+                              ? kSubtle.withOpacity(0.15) : kError,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                          Icon(Icons.build_circle_outlined,
+                              size: 14,
+                              color: isJobRunning ? kSubtle : Colors.white),
+                          const SizedBox(width: 5),
+                          Text('कमी ठीक करें',
+                              style: TextStyle(
+                                  color: isJobRunning ? kSubtle : Colors.white,
+                                  fontSize: r.s(11, 12),
+                                  fontWeight: FontWeight.w800),
+                              maxLines: 1, overflow: TextOverflow.ellipsis),
+                        ]),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  // Secondary action: try the same auto-assign again
+                  GestureDetector(
                     onTap: isJobRunning ? null : onAutoAssign,
                     child: Container(
                       padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 8),
+                          horizontal: 12, vertical: 9),
                       decoration: BoxDecoration(
-                        color: isJobRunning
-                            ? kSubtle.withOpacity(0.15)
-                            : kOrange.withOpacity(0.1),
+                        color: kOrange.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(8),
-                        border: Border.all(
-                            color: isJobRunning
-                                ? kSubtle.withOpacity(0.3)
-                                : kOrange.withOpacity(0.4)),
+                        border: Border.all(color: kOrange.withOpacity(0.4)),
                       ),
-                      child: Row(mainAxisSize: MainAxisSize.min,
-                          mainAxisAlignment: MainAxisAlignment.center,
-                          children: [
-                        Icon(Icons.auto_fix_high,
-                            size: 14,
+                      child: Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.refresh, size: 13,
                             color: isJobRunning ? kSubtle : kOrange),
-                        const SizedBox(width: 5),
-                        Text(
-                          hasShortage
-                              ? 'फिर से try करें'
-                              : (isFull ? 'पूर्ण' : 'इस duty को auto-assign करें'),
-                          style: TextStyle(
-                              color: isJobRunning ? kSubtle : kOrange,
-                              fontSize: r.s(10.5, 11),
-                              fontWeight: FontWeight.w800),
-                          maxLines: 1, overflow: TextOverflow.ellipsis,
-                        ),
+                        const SizedBox(width: 4),
+                        Text('फिर से',
+                            style: TextStyle(
+                                color: isJobRunning ? kSubtle : kOrange,
+                                fontSize: r.s(10.5, 11),
+                                fontWeight: FontWeight.w700)),
                       ]),
                     ),
                   ),
-                ),
+                ] else ...[
+                  Expanded(
+                    child: GestureDetector(
+                      onTap: (isJobRunning || isFull) ? null : onAutoAssign,
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 10, vertical: 8),
+                        decoration: BoxDecoration(
+                          color: (isJobRunning || isFull)
+                              ? kSubtle.withOpacity(0.15)
+                              : kOrange.withOpacity(0.1),
+                          borderRadius: BorderRadius.circular(8),
+                          border: Border.all(
+                              color: (isJobRunning || isFull)
+                                  ? kSubtle.withOpacity(0.3)
+                                  : kOrange.withOpacity(0.4)),
+                        ),
+                        child: Row(mainAxisSize: MainAxisSize.min,
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                          Icon(isFull
+                                  ? Icons.check_circle_outline
+                                  : Icons.auto_fix_high,
+                              size: 14,
+                              color: (isJobRunning || isFull)
+                                  ? kSubtle : kOrange),
+                          const SizedBox(width: 5),
+                          Text(
+                            isFull ? 'पूर्ण' : 'इस duty को auto-assign करें',
+                            style: TextStyle(
+                                color: (isJobRunning || isFull)
+                                    ? kSubtle : kOrange,
+                                fontSize: r.s(10.5, 11),
+                                fontWeight: FontWeight.w800),
+                            maxLines: 1, overflow: TextOverflow.ellipsis,
+                          ),
+                        ]),
+                      ),
+                    ),
+                  ),
+                ],
               ]),
             ],
           ]),
@@ -2662,7 +2749,7 @@ class _DutyAssignCard extends StatelessWidget {
 class _ShortageReportView extends StatelessWidget {
   final Map<String, dynamic> report;
   final VoidCallback onClose;
-  // Called when user taps "मानक ठीक करें" — opens rank editor for that duty.
+  // Called when user taps "कमी ठीक करें" — opens shortage resolver for that duty.
   // We don't have an _DutyEntry here, so this callback receives a synthetic
   // entry built from report data; the parent state has the real list.
   final void Function(_DutyEntry) onFixDuty;
@@ -2840,10 +2927,10 @@ class _ShortageReportView extends StatelessWidget {
                             child: const Row(mainAxisSize: MainAxisSize.min,
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
-                              Icon(Icons.tune,
+                              Icon(Icons.build_circle_outlined,
                                   size: 13, color: kDistrictColor),
                               SizedBox(width: 5),
-                              Text('मानक ठीक करें',
+                              Text('कमी ठीक करें',
                                   style: TextStyle(
                                       color: kDistrictColor,
                                       fontSize: 11,
@@ -4055,3 +4142,1199 @@ Future<bool> _confirmDlg(BuildContext ctx, String msg) async =>
                     borderRadius: BorderRadius.circular(8))),
             child: const Text('हटाएं')),
         ])) ?? false;
+
+// ═════════════════════════════════════════════════════════════════════════════
+//
+//  SHORTAGE RESOLVER PAGE
+//
+//  Full-screen page that opens when admin needs to resolve a shortage on a
+//  single duty type. Loads /district-duty/<type>/availability and gives the
+//  admin three independent actions:
+//
+//    A. Reset Manak (auto-fit) — recalculate per-batch counts so they fit
+//       within the currently free staff pool. Calls /adjust then user can
+//       re-run auto-assign manually.
+//
+//    B. Override Ranks         — admin manually builds a per-batch breakdown
+//       using steppers for each rank+armed slot. Live previews remaining
+//       free pool. Submitting calls /auto-assign-override which runs strict
+//       batch assignment AND syncs district_rules to match.
+//
+//    C. Add Staff              — explanatory card pointing admin to the
+//       staff add/bulk page (we don't navigate inside this page; admin
+//       returns to dashboard and adds, then comes back).
+//
+// ═════════════════════════════════════════════════════════════════════════════
+class _ShortageResolverPage extends StatefulWidget {
+  final _DutyEntry entry;
+  final Map<String, dynamic>? rule;
+
+  const _ShortageResolverPage({
+    super.key, required this.entry, required this.rule,
+  });
+
+  @override
+  State<_ShortageResolverPage> createState() => _ShortageResolverPageState();
+}
+
+/// Holds per-slot data for the resolver.
+class _SlotInfo {
+  final String  rank;          // backend rank (SI / Head Constable / Constable)
+  final bool    armed;
+  final String  ruleField;     // snake_case column name (si_armed_count etc.)
+  final String  camelField;    // camelCase API key (siArmedCount etc.)
+  final String  labelShort;    // SI / HC / Const / Aux
+  final String  labelArmed;    // सशस्त्र / निःशस्त्र
+  final int     perBatch;      // current per-batch from rule
+  final int     required;      // perBatch × sankhya
+  final int     assigned;      // already in this duty
+  final int     gap;           // required - assigned (≥0)
+  final int     totalInSystem; // active staff with this rank+armed
+  final int     freeInSystem;  // not in any district duty
+
+  _SlotInfo({
+    required this.rank, required this.armed,
+    required this.ruleField, required this.camelField,
+    required this.labelShort, required this.labelArmed,
+    required this.perBatch, required this.required,
+    required this.assigned, required this.gap,
+    required this.totalInSystem, required this.freeInSystem,
+  });
+
+  factory _SlotInfo.fromJson(Map<String, dynamic> j) {
+    final ruleField  = (j['ruleField']  ?? '') as String;
+    return _SlotInfo(
+      rank:           (j['rank']       ?? '') as String,
+      armed:          (j['armed']      ?? false) as bool,
+      ruleField:       ruleField,
+      camelField:     _snakeToCamel(ruleField),
+      labelShort:     (j['labelShort'] ?? '') as String,
+      labelArmed:     (j['labelArmed'] ?? '') as String,
+      perBatch:       ((j['perBatch']     ?? 0) as num).toInt(),
+      required:       ((j['required']     ?? 0) as num).toInt(),
+      assigned:       ((j['assigned']     ?? 0) as num).toInt(),
+      gap:            ((j['gap']          ?? 0) as num).toInt(),
+      totalInSystem:  ((j['totalInSystem'] ?? 0) as num).toInt(),
+      freeInSystem:   ((j['freeInSystem'] ?? 0) as num).toInt(),
+    );
+  }
+
+  static String _snakeToCamel(String s) {
+    final parts = s.split('_');
+    if (parts.isEmpty) return s;
+    return parts.first +
+        parts.skip(1).map((p) =>
+            p.isEmpty ? '' : p[0].toUpperCase() + p.substring(1)).join();
+  }
+}
+
+class _ShortageResolverPageState extends State<_ShortageResolverPage> {
+  bool   _loading   = true;
+  bool   _busy      = false;
+  bool   _disposed  = false;
+  String _error     = '';
+  int    _sankhya   = 0;
+  String _dutyLabel = '';
+
+  /// Slots returned by /availability — one entry per (rank, armed) the rule
+  /// already exposes (SI, HC, Const, Aux × armed/unarmed = 8 slots).
+  List<_SlotInfo> _slots = [];
+
+  /// Aggregated free pool ignoring slot duplication.
+  /// Key: "rank|armedFlag" → { total, free }
+  Map<String, Map<String, dynamic>> _pool = {};
+
+  /// Override mode state. Maps camelField → custom per-batch count.
+  Map<String, int> _override = {};
+
+  /// True when override mode is active (admin is editing custom counts)
+  bool _overrideMode = false;
+
+  /// Result was successful — used to pop with `true`
+  bool _changed = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
+  void _safeSetState(VoidCallback fn) {
+    if (!_disposed && mounted) setState(fn);
+  }
+
+  Future<void> _load() async {
+    _safeSetState(() { _loading = true; _error = ''; });
+    try {
+      final token = await AuthService.getToken();
+      if (_disposed) return;
+      final res = await ApiService.get(
+          '/admin/district-duty/${widget.entry.type}/availability',
+          token: token);
+      if (_disposed) return;
+      final data = (res['data'] ?? res) as Map;
+
+      final list  = (data['breakdown'] as List?) ?? [];
+      final pool  = (data['availablePool'] as List?) ?? [];
+
+      _slots = list
+          .whereType<Map>()
+          .map((e) => _SlotInfo.fromJson(Map<String, dynamic>.from(e)))
+          .toList();
+
+      _pool = {};
+      for (final p in pool) {
+        if (p is Map) {
+          final rank  = (p['rank']  ?? '') as String;
+          final armed = (p['armed'] ?? false) as bool;
+          _pool['$rank|${armed ? 1 : 0}'] = {
+            'rank':  rank,
+            'armed': armed,
+            'total': ((p['total'] ?? 0) as num).toInt(),
+            'free':  ((p['free']  ?? 0) as num).toInt(),
+          };
+        }
+      }
+
+      _safeSetState(() {
+        _sankhya   = ((data['sankhya'] ?? 0) as num).toInt();
+        _dutyLabel = (data['dutyLabelHi'] ?? widget.entry.label) as String;
+        _loading   = false;
+        // initial override = current rule
+        _override = {
+          for (final s in _slots) s.camelField: s.perBatch,
+        };
+      });
+    } catch (e) {
+      _safeSetState(() {
+        _loading = false;
+        _error   = e.toString();
+      });
+    }
+  }
+
+  // ── derived ───────────────────────────────────────────────────────────────
+  bool get _hasShortage => _slots.any((s) => s.gap > 0);
+
+  int get _totalAssigned =>
+      _slots.fold<int>(0, (acc, s) => acc + s.assigned);
+
+  /// Batches already created for this duty (assuming rule's perBatch is fixed)
+  int get _batchesMade {
+    int totalPerBatch = _slots.fold<int>(0, (acc, s) => acc + s.perBatch);
+    if (totalPerBatch == 0) return 0;
+    return _totalAssigned ~/ totalPerBatch;
+  }
+
+  int get _batchesTarget => _sankhya;
+  int get _batchesGap    => (_batchesTarget - _batchesMade).clamp(0, 999999);
+
+  /// Total people needed per batch under the current OVERRIDE input.
+  int get _overridePerBatch =>
+      _override.values.fold<int>(0, (acc, v) => acc + v);
+
+  /// Calculate, for a given (rank, armed) pool key, how much of the override
+  /// is currently "consumed" before this slot. Used to compute the live
+  /// remaining count so admin can't overcommit.
+  int _overrideConsumed(String poolKey, {String? excludeCamel}) {
+    int used = 0;
+    for (final s in _slots) {
+      if (s.camelField == excludeCamel) continue;
+      final key = '${s.rank}|${s.armed ? 1 : 0}';
+      if (key == poolKey) {
+        used += (_override[s.camelField] ?? 0) * _batchesGap;
+      }
+    }
+    return used;
+  }
+
+  /// Free remaining for this slot's pool, considering override-allocated picks.
+  int _slotRemaining(_SlotInfo s) {
+    final poolKey = '${s.rank}|${s.armed ? 1 : 0}';
+    final pool = _pool[poolKey];
+    if (pool == null) return 0;
+    final free = (pool['free'] as int?) ?? 0;
+    final used = _overrideConsumed(poolKey, excludeCamel: s.camelField);
+    return (free - used).clamp(0, 999999);
+  }
+
+  /// Validate override vs free pool. Returns list of error messages, or [].
+  List<String> _validateOverride() {
+    final errors = <String>[];
+    // Group consumption by pool
+    final consumed = <String, int>{};
+    for (final s in _slots) {
+      final n = _override[s.camelField] ?? 0;
+      if (n <= 0) continue;
+      final key = '${s.rank}|${s.armed ? 1 : 0}';
+      consumed[key] = (consumed[key] ?? 0) + n * _batchesGap;
+    }
+    for (final entry in consumed.entries) {
+      final pool = _pool[entry.key];
+      if (pool == null) continue;
+      final free = (pool['free'] as int?) ?? 0;
+      if (entry.value > free) {
+        final rank = (pool['rank'] as String?) ?? '';
+        final armed = pool['armed'] == true;
+        errors.add(
+            '$rank ${armed ? "सशस्त्र" : "निःशस्त्र"} — ज़रूरत ${entry.value}, '
+            'उपलब्ध $free');
+      }
+    }
+    if (_overridePerBatch == 0) {
+      errors.add('कम से कम एक रैंक चुनें');
+    }
+    return errors;
+  }
+
+  // ── ACTIONS ───────────────────────────────────────────────────────────────
+
+  /// A. Reset Manak — auto-fit per_batch values to the free pool.
+  ///   Uses a simple fairness approach: take `min(currentPerBatch, free / sankhya_remaining)`
+  ///   per slot. If remaining batches = 0, no-op.
+  Future<void> _resetManakAuto() async {
+    if (_batchesGap <= 0) {
+      showSnack(context, 'सभी batches पहले से बने हैं', error: false);
+      return;
+    }
+
+    // Compute new per-batch per slot — share free pool fairly
+    final newPerBatch = <String, int>{};
+    final remainingFree = <String, int>{};
+    for (final entry in _pool.entries) {
+      remainingFree[entry.key] = (entry.value['free'] as int?) ?? 0;
+    }
+    for (final s in _slots) {
+      final poolKey = '${s.rank}|${s.armed ? 1 : 0}';
+      final free = remainingFree[poolKey] ?? 0;
+      // Cap at the current rule (don't auto-INCREASE rule)
+      final maxFromPool = (free / _batchesGap).floor();
+      final newVal = s.perBatch < maxFromPool ? s.perBatch : maxFromPool;
+      newPerBatch[s.camelField] = newVal < 0 ? 0 : newVal;
+      remainingFree[poolKey] = (free - newVal * _batchesGap).clamp(0, 999999);
+    }
+
+    final totalPerBatch = newPerBatch.values
+        .fold<int>(0, (acc, v) => acc + v);
+    if (totalPerBatch == 0) {
+      _showSnack(
+          'मानक auto-fit नहीं हो सकता — एक भी रैंक के लिए staff उपलब्ध नहीं है',
+          error: true);
+      return;
+    }
+
+    // Confirmation
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kBg,
+        shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14)),
+        title: const Text('मानक auto-fit करें?',
+            style: TextStyle(color: kDark, fontSize: 14,
+                fontWeight: FontWeight.w800)),
+        content: SingleChildScrollView(
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('मानक को उपलब्ध staff के हिसाब से कम किया जाएगा।',
+                  style: TextStyle(color: kDark, fontSize: 12)),
+              const SizedBox(height: 10),
+              ...['siArmedCount','siUnarmedCount','hcArmedCount','hcUnarmedCount',
+                  'constArmedCount','constUnarmedCount','auxArmedCount',
+                  'auxUnarmedCount']
+                .where((k) => (_slotByCamel(k)?.perBatch ?? 0) !=
+                    (newPerBatch[k] ?? 0))
+                .map((k) {
+                  final s = _slotByCamel(k);
+                  if (s == null) return const SizedBox.shrink();
+                  return Padding(
+                    padding: const EdgeInsets.symmetric(vertical: 2),
+                    child: Row(children: [
+                      Expanded(child: Text(
+                          '${s.labelShort}-${s.armed ? "स" : "नि"}',
+                          style: const TextStyle(
+                              color: kDark, fontSize: 11.5))),
+                      Text(
+                        '${s.perBatch} → ${newPerBatch[k] ?? 0}',
+                        style: TextStyle(
+                          color: (newPerBatch[k] ?? 0) < s.perBatch
+                              ? kError : kSuccess,
+                          fontSize: 11.5, fontWeight: FontWeight.w800),
+                      ),
+                    ]),
+                  );
+                }),
+            ]),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('रद्द', style: TextStyle(color: kSubtle))),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: kDistrictColor,
+                foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8))),
+            child: const Text('Apply')),
+        ],
+      ),
+    );
+
+    if (confirmed != true || _disposed) return;
+
+    _safeSetState(() => _busy = true);
+    try {
+      final token = await AuthService.getToken();
+      await ApiService.put(
+          '/admin/district-rules/${widget.entry.type}/adjust',
+          newPerBatch, token: token);
+      if (!_disposed && mounted) {
+        _changed = true;
+        _showSnack('मानक update हो गया ✓');
+        await _load();
+      }
+    } catch (e) {
+      _showSnack('Update विफल: $e', error: true);
+    } finally {
+      _safeSetState(() => _busy = false);
+    }
+  }
+
+  _SlotInfo? _slotByCamel(String c) {
+    for (final s in _slots) {
+      if (s.camelField == c) return s;
+    }
+    return null;
+  }
+
+  /// B. Run override auto-assign — uses _override breakdown.
+  Future<void> _runOverrideAssign() async {
+    final errors = _validateOverride();
+    if (errors.isNotEmpty) {
+      _showSnack(errors.first, error: true);
+      return;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+        title: const Text('Override के साथ assign करें?',
+            style: TextStyle(color: kDark, fontSize: 14,
+                fontWeight: FontWeight.w800)),
+        content: Column(mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text('$_batchesGap batches में $_overridePerBatch staff/batch जोड़े जाएंगे।',
+              style: const TextStyle(color: kDark, fontSize: 12.5)),
+          const SizedBox(height: 8),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: kSuccess.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kSuccess.withOpacity(0.3)),
+            ),
+            child: const Row(children: [
+              Icon(Icons.sync, size: 14, color: kSuccess),
+              SizedBox(width: 6),
+              Expanded(child: Text(
+                  'मानक भी इसी हिसाब से auto-update हो जाएगा',
+                  style: TextStyle(color: kSuccess, fontSize: 11,
+                      fontWeight: FontWeight.w700))),
+            ]),
+          ),
+        ]),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('रद्द', style: TextStyle(color: kSubtle))),
+          ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: kSuccess, foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8))),
+            child: const Text('Assign करें')),
+        ],
+      ),
+    );
+    if (confirmed != true || _disposed) return;
+
+    _safeSetState(() => _busy = true);
+    try {
+      final token = await AuthService.getToken();
+      final res = await ApiService.post(
+          '/admin/district-duty/${widget.entry.type}/auto-assign-override',
+          {
+            'perBatch':  _override,
+            'syncManak': true,
+          },
+          token: token);
+      final data = (res['data'] ?? res) as Map?;
+      final assigned = ((data?['assigned'] ?? 0) as num).toInt();
+      final batches  = ((data?['batchesMade'] ?? 0) as num).toInt();
+      final partial  = (data?['shortages'] as List?)?.isNotEmpty ?? false;
+      _changed = true;
+      if (!_disposed && mounted) {
+        if (partial) {
+          _showSnack(
+              '$batches batches बने • $assigned staff assign • '
+              'अब भी कुछ कमी है', error: true);
+        } else {
+          _showSnack('$batches batches • $assigned staff assign ✓');
+        }
+        await _load();
+      }
+    } catch (e) {
+      _showSnack('Assign विफल: $e', error: true);
+    } finally {
+      _safeSetState(() => _busy = false);
+    }
+  }
+
+  void _showSnack(String msg, {bool error = false}) {
+    if (_disposed || !mounted) return;
+    showSnack(context, msg, error: error);
+  }
+
+  // ── BUILD ─────────────────────────────────────────────────────────────────
+  @override
+  Widget build(BuildContext context) {
+    final r = rOf(context);
+    final color = widget.entry.isDefault ? kDistrictColor : kCustomColor;
+
+    return WillPopScope(
+      onWillPop: () async {
+        Navigator.pop(context, _changed);
+        return false;
+      },
+      child: Scaffold(
+        backgroundColor: kBg,
+        appBar: AppBar(
+          backgroundColor: kError, foregroundColor: Colors.white,
+          elevation: 0, titleSpacing: 0,
+          title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('कमी ठीक करें', style: TextStyle(
+                fontSize: r.s(14, 16), fontWeight: FontWeight.w800)),
+            Text(_dutyLabel.isEmpty ? widget.entry.label : _dutyLabel,
+                style: TextStyle(fontSize: r.s(10, 11), color: Colors.white70),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ]),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: () => Navigator.pop(context, _changed)),
+          actions: [
+            IconButton(
+                onPressed: _loading ? null : _load,
+                icon: const Icon(Icons.refresh, size: 20)),
+          ],
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator(color: kError))
+            : _error.isNotEmpty
+                ? _ErrorState(error: _error, onRetry: _load)
+                : _buildBody(r, color),
+      ),
+    );
+  }
+
+  Widget _buildBody(RScale r, Color color) {
+    return Stack(children: [
+      ListView(
+        padding: EdgeInsets.fromLTRB(r.s(10, 14), 12, r.s(10, 14), 24),
+        children: [
+          _buildSummaryCard(r, color),
+          const SizedBox(height: 12),
+          _buildBreakdownTable(r),
+          const SizedBox(height: 16),
+          _buildSectionTitle('समाधान चुनें', Icons.healing_outlined, color),
+          const SizedBox(height: 8),
+          if (_hasShortage) ...[
+            _ActionA_AddStaff(slots: _slots),
+            const SizedBox(height: 10),
+            _buildResetCard(r),
+            const SizedBox(height: 10),
+          ],
+          _buildOverrideCard(r),
+          const SizedBox(height: 80),
+        ],
+      ),
+      if (_busy)
+        Container(
+          color: Colors.black54,
+          child: const Center(
+              child: CircularProgressIndicator(color: Colors.white)),
+        ),
+    ]);
+  }
+
+  // ── Summary Card ──────────────────────────────────────────────────────────
+  Widget _buildSummaryCard(RScale r, Color color) {
+    final isDone = _batchesGap <= 0;
+    return Container(
+      padding: EdgeInsets.fromLTRB(r.s(12, 14), 12, r.s(12, 14), 12),
+      decoration: BoxDecoration(
+        color: isDone ? kSuccess.withOpacity(0.07) : kError.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color:
+            isDone ? kSuccess.withOpacity(0.3) : kError.withOpacity(0.3)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Icon(isDone ? Icons.check_circle : Icons.warning_amber_rounded,
+              color: isDone ? kSuccess : kError, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(isDone ? 'सभी batches पूर्ण' : 'अधूरी ड्यूटी',
+                style: TextStyle(
+                    color: isDone ? kSuccess : kError,
+                    fontSize: r.s(13, 14), fontWeight: FontWeight.w800)),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        Row(children: [
+          _summaryStat('batches', '$_batchesMade / $_batchesTarget',
+              isDone ? kSuccess : kError),
+          _summaryStat('staff', '$_totalAssigned',  kDistrictColor),
+          _summaryStat('संख्या', '$_sankhya',       kOrange),
+          if (_batchesGap > 0)
+            _summaryStat('बाकी', '$_batchesGap', kError),
+        ]),
+      ]),
+    );
+  }
+
+  Widget _summaryStat(String label, String value, Color color) {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.only(right: 6),
+        padding: const EdgeInsets.symmetric(vertical: 6, horizontal: 4),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.6),
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Column(children: [
+          FittedBox(child: Text(value,
+              style: TextStyle(color: color, fontSize: 15,
+                  fontWeight: FontWeight.w900))),
+          Text(label, style: const TextStyle(
+              color: kSubtle, fontSize: 9.5, fontWeight: FontWeight.w600)),
+        ]),
+      ),
+    );
+  }
+
+  // ── Breakdown Table ───────────────────────────────────────────────────────
+  Widget _buildBreakdownTable(RScale r) {
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder.withOpacity(0.4)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Container(
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: const BoxDecoration(
+              color: Color(0xFF1A1A2E),
+              borderRadius:
+                  BorderRadius.vertical(top: Radius.circular(11)),
+            ),
+            child: const Row(children: [
+              Icon(Icons.table_chart_outlined,
+                  color: Colors.white, size: 14),
+              SizedBox(width: 6),
+              Text('रैंक-वार विवरण',
+                  style: TextStyle(color: Colors.white, fontSize: 12,
+                      fontWeight: FontWeight.w800)),
+            ]),
+          ),
+          // Header row
+          Container(
+            color: const Color(0xFFF8F4FF),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 7),
+            child: Row(children: const [
+              SizedBox(width: 80,
+                  child: Text('रैंक', style: TextStyle(
+                      color: kDark, fontSize: 10.5,
+                      fontWeight: FontWeight.w800))),
+              Expanded(child: Text('आवश्यक',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: kDark, fontSize: 10.5,
+                      fontWeight: FontWeight.w800))),
+              Expanded(child: Text('Assigned',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: kDark, fontSize: 10.5,
+                      fontWeight: FontWeight.w800))),
+              Expanded(child: Text('कमी',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: kDark, fontSize: 10.5,
+                      fontWeight: FontWeight.w800))),
+              Expanded(child: Text('Free',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: kDark, fontSize: 10.5,
+                      fontWeight: FontWeight.w800))),
+            ]),
+          ),
+          // Data rows
+          ...List.generate(_slots.length, (i) {
+            final s     = _slots[i];
+            final hasGap = s.gap > 0;
+            final cantFill = s.gap > s.freeInSystem;
+            final bg = i.isEven
+                ? Colors.white : const Color(0xFFFDFBFF);
+            return Container(
+              color: bg,
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(children: [
+                SizedBox(width: 80,
+                    child: Row(children: [
+                      Container(width: 4, height: 16,
+                          decoration: BoxDecoration(
+                              color: _rankColor(s.rank),
+                              borderRadius: BorderRadius.circular(2))),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(s.labelShort,
+                                style: const TextStyle(color: kDark,
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w800)),
+                            Text(s.armed ? 'सशस्त्र' : 'निःशस्त्र',
+                                style: const TextStyle(color: kSubtle,
+                                    fontSize: 9)),
+                          ],
+                        ),
+                      ),
+                    ])),
+                Expanded(child: Center(child:
+                    Text('${s.required}',
+                        style: const TextStyle(color: kDark,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700)))),
+                Expanded(child: Center(child:
+                    Text('${s.assigned}',
+                        style: TextStyle(
+                            color: s.assigned >= s.required
+                                ? kSuccess : kDark,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w800)))),
+                Expanded(child: Center(child:
+                    Text(hasGap ? '${s.gap}' : '-',
+                        style: TextStyle(
+                            color: hasGap ? kError : kSuccess,
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w900)))),
+                Expanded(child: Center(child:
+                    Text('${s.freeInSystem}',
+                        style: TextStyle(
+                            color: cantFill && hasGap
+                                ? kError
+                                : (s.freeInSystem > 0
+                                    ? kSuccess : kSubtle),
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w700)))),
+              ]),
+            );
+          }),
+        ]),
+    );
+  }
+
+  // ── Section Title ─────────────────────────────────────────────────────────
+  Widget _buildSectionTitle(String title, IconData icon, Color color) {
+    return Row(children: [
+      Container(width: 30, height: 30,
+          decoration: BoxDecoration(
+              color: color.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(8)),
+          child: Icon(icon, color: color, size: 16)),
+      const SizedBox(width: 8),
+      Text(title, style: const TextStyle(color: kDark, fontSize: 13,
+          fontWeight: FontWeight.w800)),
+    ]);
+  }
+
+  // ── Reset Manak Card ──────────────────────────────────────────────────────
+  Widget _buildResetCard(RScale r) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kDistrictColor.withOpacity(0.3)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 28, height: 28,
+            decoration: BoxDecoration(
+                color: kDistrictColor.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(7)),
+            child: const Icon(Icons.tune, color: kDistrictColor, size: 15)),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('मानक auto-fit करें',
+                style: TextStyle(color: kDark, fontSize: 13,
+                    fontWeight: FontWeight.w800)),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+                color: kDistrictColor.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(5)),
+            child: const Text('विकल्प A',
+                style: TextStyle(color: kDistrictColor, fontSize: 9,
+                    fontWeight: FontWeight.w800)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        const Text('मानक को घटाकर उपलब्ध staff के बराबर लाया जाएगा। '
+            'किसी रैंक की कमी हो तो उसका मानक 0 हो जाएगा।',
+            style: TextStyle(color: kSubtle, fontSize: 11.5,
+                height: 1.35)),
+        const SizedBox(height: 10),
+        SizedBox(width: double.infinity,
+          child: ElevatedButton.icon(
+            onPressed: _busy ? null : _resetManakAuto,
+            icon: const Icon(Icons.tune, size: 16),
+            label: const Text('मानक auto-fit करें',
+                style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800)),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: kDistrictColor, foregroundColor: Colors.white,
+              elevation: 0,
+              padding: const EdgeInsets.symmetric(vertical: 11),
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(9))))),
+      ]),
+    );
+  }
+
+  // ── Override Card ─────────────────────────────────────────────────────────
+  Widget _buildOverrideCard(RScale r) {
+    final errors = _overrideMode ? _validateOverride() : <String>[];
+    final canSubmit = _overrideMode && errors.isEmpty &&
+        _batchesGap > 0 && _overridePerBatch > 0;
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kSuccess.withOpacity(0.3)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 28, height: 28,
+            decoration: BoxDecoration(
+                color: kSuccess.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(7)),
+            child: const Icon(Icons.swap_horiz, color: kSuccess, size: 16)),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('अलग रैंक से assign करें',
+                style: TextStyle(color: kDark, fontSize: 13,
+                    fontWeight: FontWeight.w800)),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+                color: kSuccess.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(5)),
+            child: const Text('विकल्प C',
+                style: TextStyle(color: kSuccess, fontSize: 9,
+                    fontWeight: FontWeight.w800)),
+          ),
+        ]),
+        const SizedBox(height: 6),
+        const Text('मानक नहीं बदलना है? यहाँ हर रैंक की संख्या सेट करें — '
+            'staff उसी हिसाब से assign होंगे, और मानक auto-update हो जाएगा।',
+            style: TextStyle(color: kSubtle, fontSize: 11.5, height: 1.35)),
+        const SizedBox(height: 12),
+        if (!_overrideMode)
+          SizedBox(width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: _batchesGap == 0
+                  ? null
+                  : () => setState(() => _overrideMode = true),
+              icon: const Icon(Icons.edit, size: 14),
+              label: Text(_batchesGap == 0
+                  ? 'सभी batches पूर्ण'
+                  : 'Override के लिए खोलें',
+                  style: const TextStyle(fontSize: 12,
+                      fontWeight: FontWeight.w700)),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: kSuccess,
+                side: BorderSide(color: kSuccess.withOpacity(0.5)),
+                padding: const EdgeInsets.symmetric(vertical: 10),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(9)),
+              )))
+        else ...[
+          // Steppers
+          Container(
+            padding: const EdgeInsets.fromLTRB(8, 6, 8, 6),
+            decoration: BoxDecoration(
+              color: kBg,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kBorder.withOpacity(0.4)),
+            ),
+            child: Column(children: _slots.map((s) {
+              final remaining = _slotRemaining(s);
+              final value = _override[s.camelField] ?? 0;
+              return _OverrideStepperRow(
+                slot: s,
+                value: value,
+                remaining: remaining,
+                onChanged: (v) => setState(() {
+                  _override[s.camelField] = v;
+                }),
+              );
+            }).toList()),
+          ),
+          const SizedBox(height: 10),
+          // Live summary
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: kAssignColor.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: kAssignColor.withOpacity(0.25)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(children: [
+                  const Icon(Icons.calculate_outlined,
+                      size: 13, color: kAssignColor),
+                  const SizedBox(width: 5),
+                  Expanded(
+                    child: Text(
+                      'प्रति-batch: $_overridePerBatch staff'
+                      '  •  total: ${_overridePerBatch * _batchesGap}'
+                      ' staff in $_batchesGap batches',
+                      style: const TextStyle(
+                          color: kAssignColor, fontSize: 11,
+                          fontWeight: FontWeight.w700)),
+                  ),
+                ]),
+                if (errors.isNotEmpty) ...[
+                  const SizedBox(height: 6),
+                  ...errors.map((e) => Row(children: [
+                    const Icon(Icons.error_outline, size: 12,
+                        color: kError),
+                    const SizedBox(width: 5),
+                    Expanded(child: Text(e,
+                        style: const TextStyle(color: kError, fontSize: 11,
+                            fontWeight: FontWeight.w700))),
+                  ])),
+                ],
+              ]),
+          ),
+          const SizedBox(height: 10),
+          Row(children: [
+            Expanded(
+              child: OutlinedButton(
+                onPressed: () => setState(() {
+                  _overrideMode = false;
+                  // restore from rule
+                  _override = {
+                    for (final s in _slots) s.camelField: s.perBatch,
+                  };
+                }),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: kSubtle,
+                  side: BorderSide(color: kSubtle.withOpacity(0.5)),
+                  padding: const EdgeInsets.symmetric(vertical: 10),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(9))),
+                child: const Text('रद्द',
+                    style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700)),
+              ),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              flex: 2,
+              child: ElevatedButton.icon(
+                onPressed: (canSubmit && !_busy) ? _runOverrideAssign : null,
+                icon: const Icon(Icons.check_circle_outline, size: 14),
+                label: const Text('Assign करें + मानक update',
+                    style: TextStyle(fontSize: 12,
+                        fontWeight: FontWeight.w800)),
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: canSubmit ? kSuccess : kSubtle,
+                  foregroundColor: Colors.white,
+                  elevation: 0,
+                  padding: const EdgeInsets.symmetric(vertical: 11),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(9))),
+              ),
+            ),
+          ]),
+        ],
+      ]),
+    );
+  }
+}
+
+// ── Action A: Add Staff card ──────────────────────────────────────────────────
+class _ActionA_AddStaff extends StatelessWidget {
+  final List<_SlotInfo> slots;
+  const _ActionA_AddStaff({required this.slots});
+
+  @override
+  Widget build(BuildContext context) {
+    final shorts = slots.where((s) => s.gap > s.freeInSystem).toList();
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kOrange.withOpacity(0.3)),
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 28, height: 28,
+            decoration: BoxDecoration(
+                color: kOrange.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(7)),
+            child: const Icon(Icons.person_add_alt_outlined,
+                color: kOrange, size: 15)),
+          const SizedBox(width: 8),
+          const Expanded(
+            child: Text('इन रैंक का नया staff add करें',
+                style: TextStyle(color: kDark, fontSize: 13,
+                    fontWeight: FontWeight.w800)),
+          ),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            decoration: BoxDecoration(
+                color: kOrange.withOpacity(0.1),
+                borderRadius: BorderRadius.circular(5)),
+            child: const Text('विकल्प B',
+                style: TextStyle(color: kOrange, fontSize: 9,
+                    fontWeight: FontWeight.w800)),
+          ),
+        ]),
+        const SizedBox(height: 8),
+        if (shorts.isEmpty)
+          const Text('System में सभी रैंक का पर्याप्त staff है — '
+              'फिर भी कमी हो रही है? Reset या Override आज़माएं।',
+              style: TextStyle(color: kSubtle, fontSize: 11.5, height: 1.35))
+        else ...[
+          const Text('इन रैंक के लिए system में staff कम है:',
+              style: TextStyle(color: kSubtle, fontSize: 11.5)),
+          const SizedBox(height: 8),
+          ...shorts.map((s) {
+            final realShort = s.gap - s.freeInSystem;
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 3),
+              child: Row(children: [
+                Container(width: 4, height: 16,
+                    decoration: BoxDecoration(
+                        color: _rankColor(s.rank),
+                        borderRadius: BorderRadius.circular(2))),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    '${s.labelShort} ${s.armed ? "सशस्त्र" : "निःशस्त्र"}',
+                    style: const TextStyle(color: kDark, fontSize: 11.5,
+                        fontWeight: FontWeight.w700),
+                    maxLines: 1, overflow: TextOverflow.ellipsis),
+                ),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 6, vertical: 2),
+                  decoration: BoxDecoration(
+                      color: kError.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(5),
+                      border: Border.all(color: kError.withOpacity(0.3))),
+                  child: Text(
+                    '+$realShort जोड़ें',
+                    style: const TextStyle(color: kError, fontSize: 10.5,
+                        fontWeight: FontWeight.w800),
+                  ),
+                ),
+              ]),
+            );
+          }),
+        ],
+        const SizedBox(height: 8),
+        Container(
+          padding: const EdgeInsets.all(8),
+          decoration: BoxDecoration(
+            color: kSurface.withOpacity(0.5),
+            borderRadius: BorderRadius.circular(8),
+          ),
+          child: const Row(children: [
+            Icon(Icons.lightbulb_outline, size: 13, color: kPrimary),
+            SizedBox(width: 6),
+            Expanded(child: Text(
+                'Dashboard → Staff section में जाकर नया staff add करें '
+                'या CSV upload करें। फिर वापस आकर "auto-assign" चलाएं।',
+                style: TextStyle(color: kPrimary, fontSize: 11,
+                    height: 1.35))),
+          ]),
+        ),
+      ]),
+    );
+  }
+}
+
+// ── Override Stepper Row ─────────────────────────────────────────────────────
+class _OverrideStepperRow extends StatelessWidget {
+  final _SlotInfo slot;
+  final int value;
+  final int remaining;
+  final ValueChanged<int> onChanged;
+
+  const _OverrideStepperRow({
+    required this.slot, required this.value,
+    required this.remaining, required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final r       = rOf(context);
+    final color   = _rankColor(slot.rank);
+    final canInc  = remaining > 0;
+    final canDec  = value > 0;
+    final invalid = remaining < 0;
+
+    return Container(
+      margin: const EdgeInsets.symmetric(vertical: 3),
+      padding: EdgeInsets.symmetric(horizontal: r.s(6, 8), vertical: 6),
+      decoration: BoxDecoration(
+        color: invalid ? kError.withOpacity(0.06) : Colors.white,
+        borderRadius: BorderRadius.circular(7),
+        border: Border.all(
+            color: invalid
+                ? kError.withOpacity(0.4)
+                : kBorder.withOpacity(0.3)),
+      ),
+      child: Row(children: [
+        // Rank label
+        Container(width: 4, height: 28,
+            decoration: BoxDecoration(
+                color: color, borderRadius: BorderRadius.circular(2))),
+        const SizedBox(width: 8),
+        Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(slot.labelShort,
+              style: TextStyle(
+                  color: color, fontSize: r.s(11.5, 12.5),
+                  fontWeight: FontWeight.w800)),
+          Text(slot.armed ? 'सशस्त्र' : 'निःशस्त्र',
+              style: TextStyle(
+                  color: kSubtle, fontSize: r.s(9.5, 10),
+                  fontWeight: FontWeight.w600)),
+        ])),
+        // Pool indicator
+        Container(
+          padding: const EdgeInsets.symmetric(
+              horizontal: 6, vertical: 2),
+          decoration: BoxDecoration(
+              color: remaining > 0
+                  ? kSuccess.withOpacity(0.1)
+                  : kError.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(5)),
+          child: Text('Free: $remaining',
+              style: TextStyle(
+                  color: remaining > 0 ? kSuccess : kError,
+                  fontSize: 9.5, fontWeight: FontWeight.w800)),
+        ),
+        const SizedBox(width: 6),
+        // Stepper
+        _StepBtn(
+            icon: Icons.remove,
+            enabled: canDec,
+            onTap: () => onChanged(value - 1)),
+        Container(
+          width: 32,
+          alignment: Alignment.center,
+          child: Text('$value',
+              style: TextStyle(
+                  color: invalid ? kError : kDark,
+                  fontSize: r.s(13, 14.5), fontWeight: FontWeight.w900)),
+        ),
+        _StepBtn(
+            icon: Icons.add,
+            enabled: canInc,
+            onTap: () => onChanged(value + 1)),
+      ]),
+    );
+  }
+}
+
+class _StepBtn extends StatelessWidget {
+  final IconData icon;
+  final bool enabled;
+  final VoidCallback onTap;
+  const _StepBtn({required this.icon, required this.enabled, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: enabled ? onTap : null,
+      child: Container(
+        width: 28, height: 28,
+        decoration: BoxDecoration(
+          color: enabled
+              ? kDistrictColor.withOpacity(0.1)
+              : kSubtle.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(6),
+          border: Border.all(
+              color: enabled
+                  ? kDistrictColor.withOpacity(0.4)
+                  : kSubtle.withOpacity(0.2)),
+        ),
+        child: Icon(icon,
+            size: 14,
+            color: enabled ? kDistrictColor : kSubtle),
+      ),
+    );
+  }
+}
+
+class _ErrorState extends StatelessWidget {
+  final String error;
+  final VoidCallback onRetry;
+  const _ErrorState({required this.error, required this.onRetry});
+
+  @override
+  Widget build(BuildContext context) {
+    return Center(
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          const Icon(Icons.error_outline, size: 48, color: kError),
+          const SizedBox(height: 12),
+          const Text('लोड नहीं हो पाया',
+              style: TextStyle(color: kError, fontSize: 14,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 6),
+          Text(error,
+              textAlign: TextAlign.center,
+              style: const TextStyle(color: kSubtle, fontSize: 11)),
+          const SizedBox(height: 14),
+          ElevatedButton.icon(
+            onPressed: onRetry,
+            icon: const Icon(Icons.refresh, size: 16),
+            label: const Text('फिर से कोशिश करें'),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: kError, foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(9))),
+          ),
+        ]),
+      ),
+    );
+  }
+}
