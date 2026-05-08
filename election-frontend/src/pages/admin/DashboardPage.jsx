@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react';
 import {
   Layers, MapPin, Users, Vote, ChevronRight,
   CheckCircle, PlusCircle, Shield, FileText,
-  TableProperties, AlertCircle
+  TableProperties, AlertCircle,
+  Printer
 } from 'lucide-react';
 import { adminApi } from '../../api/endpoints';
 import { StatCard, Shimmer } from '../../components/common';
@@ -15,16 +16,16 @@ import { useNavigate } from 'react-router-dom';
 //  PALETTE (mirrors Flutter kXxx)
 // ─────────────────────────────────────────────
 const C = {
-  bg:      '#FDF6E3',
+  bg: '#FDF6E3',
   surface: '#F5E6C8',
   primary: '#8B6914',
-  accent:  '#B8860B',
-  dark:    '#4A3000',
-  subtle:  '#AA8844',
-  border:  '#D4A843',
-  error:   '#C0392B',
+  accent: '#B8860B',
+  dark: '#4A3000',
+  subtle: '#AA8844',
+  border: '#D4A843',
+  error: '#C0392B',
   success: '#2D6A1E',
-  info:    '#1A5276',
+  info: '#1A5276',
 };
 
 // ─────────────────────────────────────────────
@@ -32,9 +33,9 @@ const C = {
 // ─────────────────────────────────────────────
 const SENS_CONFIG = [
   { key: 'A++', hi: 'अति-अति संवेदनशील', color: '#6C3483' },
-  { key: 'A',   hi: 'अति संवेदनशील',      color: '#C0392B' },
-  { key: 'B',   hi: 'संवेदनशील',           color: '#E67E22' },
-  { key: 'C',   hi: 'सामान्य',             color: '#1A5276' },
+  { key: 'A', hi: 'अति संवेदनशील', color: '#C0392B' },
+  { key: 'B', hi: 'संवेदनशील', color: '#E67E22' },
+  { key: 'C', hi: 'सामान्य', color: '#1A5276' },
 ];
 
 // Staff fields that count for "has data" check
@@ -52,8 +53,8 @@ function rowHasAny(row) {
 
 function rowTotalStaff(row) {
   // pacCount excluded from total in Flutter's _rowTotalStaff
-  return ['siArmedCount','siUnarmedCount','hcArmedCount','hcUnarmedCount',
-          'constArmedCount','constUnarmedCount','auxForceCount']
+  return ['siArmedCount', 'siUnarmedCount', 'hcArmedCount', 'hcUnarmedCount',
+    'constArmedCount', 'constUnarmedCount', 'auxForceCount']
     .reduce((sum, f) => sum + ((row[f] ?? 0)), 0);
 }
 
@@ -118,8 +119,8 @@ function StatusBadge({ allSet }) {
       }}
     >
       {allSet
-        ? <CheckCircle  size={11} style={{ color: C.success }} />
-        : <AlertCircle  size={11} style={{ color: C.error   }} />
+        ? <CheckCircle size={11} style={{ color: C.success }} />
+        : <AlertCircle size={11} style={{ color: C.error }} />
       }
       <span
         className="text-[10px] font-bold"
@@ -153,8 +154,8 @@ function SensTile({ sensKey, hindi, color, isSet, totalStaff, filledRowCount, on
           {sensKey}
         </div>
         {isSet
-          ? <CheckCircle  size={14} style={{ color: C.success }} />
-          : <PlusCircle   size={14} style={{ color: C.subtle  }} />
+          ? <CheckCircle size={14} style={{ color: C.success }} />
+          : <PlusCircle size={14} style={{ color: C.subtle }} />
         }
       </div>
 
@@ -191,7 +192,7 @@ function SensTile({ sensKey, hindi, color, isSet, totalStaff, filledRowCount, on
 // ─────────────────────────────────────────────
 //  बूथ मानक SECTION  (Flutter: _BoothManakSection)
 // ─────────────────────────────────────────────
-function BoothManakSection({ boothRules, loading, onTapSens }) {
+function BoothManakSection({ boothRules, loading, onTapSens,manakReportRedirect }) {
   // allSet: every sensitivity has ≥1 row with data
   const allSet = SENS_CONFIG.every(s => {
     const rows = boothRules[s.key] ?? [];
@@ -241,10 +242,10 @@ function BoothManakSection({ boothRules, loading, onTapSens }) {
       ) : (
         <div className="grid grid-cols-2 gap-2.5 p-3">
           {SENS_CONFIG.map(s => {
-            const rows         = boothRules[s.key] ?? [];
-            const filledRows   = rows.filter(rowHasAny);
-            const isSet        = filledRows.length > 0;
-            const totalStaff   = filledRows.reduce((sum, r) => sum + rowTotalStaff(r), 0);
+            const rows = boothRules[s.key] ?? [];
+            const filledRows = rows.filter(rowHasAny);
+            const isSet = filledRows.length > 0;
+            const totalStaff = filledRows.reduce((sum, r) => sum + rowTotalStaff(r), 0);
             return (
               <SensTile
                 key={s.key}
@@ -258,6 +259,16 @@ function BoothManakSection({ boothRules, loading, onTapSens }) {
               />
             );
           })}
+          <div className='col-span-2'>
+            <GradientBanner
+
+              label="मानक रिपोर्ट देखें/प्रिंट करें"
+              icon={Printer}
+              colors={['#6C3483', '#884EA0']}
+              onClick={loading ? undefined : () => manakReportRedirect()}
+            />
+          </div>
+
         </div>
       )}
     </div>
@@ -270,7 +281,7 @@ function BoothManakSection({ boothRules, loading, onTapSens }) {
 function DistrictManakSection({ rules, loading, onClick }) {
   const filledCount = rules.filter(districtRowHasAny).length;
   const totalDuties = rules.length;
-  const totalStaff  = rules.reduce((sum, r) =>
+  const totalStaff = rules.reduce((sum, r) =>
     sum + STAFF_FIELDS.reduce((s2, f) => s2 + ((r[f] ?? 0)), 0), 0);
   const isSet = filledCount > 0;
 
@@ -298,17 +309,17 @@ function DistrictManakSection({ rules, loading, onClick }) {
 export default function AdminDashboardPage() {
   const nav = useNavigate();
 
-  const [stats,          setStats]          = useState(null);
-  const [loadingStats,   setLoadingStats]   = useState(true);
+  const [stats, setStats] = useState(null);
+  const [loadingStats, setLoadingStats] = useState(true);
 
   // boothRules: { 'A++': [ rowObj, ... ], 'A': [...], 'B': [...], 'C': [...] }
   // Each rowObj has siArmedCount, siUnarmedCount, hcArmedCount, etc.
-  const [boothRules,     setBoothRules]     = useState({ 'A++': [], A: [], B: [], C: [] });
-  const [loadingBooth,   setLoadingBooth]   = useState(true);
+  const [boothRules, setBoothRules] = useState({ 'A++': [], A: [], B: [], C: [] });
+  const [loadingBooth, setLoadingBooth] = useState(true);
 
   // districtRules: list of duty-type rows
-  const [districtRules,  setDistrictRules]  = useState([]);
-  const [loadingDistrict,setLoadingDistrict] = useState(true);
+  const [districtRules, setDistrictRules] = useState([]);
+  const [loadingDistrict, setLoadingDistrict] = useState(true);
 
   // ── Load stats ──────────────────────────────
   const loadStats = useCallback(async () => {
@@ -327,13 +338,13 @@ export default function AdminDashboardPage() {
   const loadAllBoothRules = useCallback(async () => {
     setLoadingBooth(true);
     try {
-      const res  = await adminApi.getBoothRules();          // GET /admin/booth-rules
+      const res = await adminApi.getBoothRules();          // GET /admin/booth-rules
       const data = res.data ?? {};                          // { 'A++': [...], A: [...], ... }
       setBoothRules({
         'A++': data['A++'] ?? [],
-        A:     data['A']   ?? [],
-        B:     data['B']   ?? [],
-        C:     data['C']   ?? [],
+        A: data['A'] ?? [],
+        B: data['B'] ?? [],
+        C: data['C'] ?? [],
       });
     } catch (e) {
       // silent — dashboard still usable
@@ -347,7 +358,7 @@ export default function AdminDashboardPage() {
   const loadDistrictRules = useCallback(async () => {
     setLoadingDistrict(true);
     try {
-      const res  = await adminApi.getDistrictRules();       // GET /admin/district-rules
+      const res = await adminApi.getDistrictRules();       // GET /admin/district-rules
       setDistrictRules(res.data ?? []);
     } catch (e) {
       console.warn('district rules load:', e);
@@ -377,11 +388,16 @@ export default function AdminDashboardPage() {
     nav('/manak-district', { state: { initialRules: districtRules } });
   };
 
+
+  const openManakBoothReportPage = () => {
+    nav('/manak-booth-report-page');
+  };
+
   const statItems = stats ? [
-    { label: 'Super Zones',    value: stats.superZones      ?? 0, icon: Layers, color: C.primary },
-    { label: 'Total Booths',   value: stats.totalBooths     ?? 0, icon: MapPin, color: C.success },
-    { label: 'Total Staff',    value: stats.totalStaff      ?? 0, icon: Users,  color: C.accent  },
-    { label: 'Assigned',       value: stats.assignedDuties  ?? 0, icon: Vote,   color: C.info    },
+    { label: 'Super Zones', value: stats.superZones ?? 0, icon: Layers, color: C.primary },
+    { label: 'Total Booths', value: stats.totalBooths ?? 0, icon: MapPin, color: C.success },
+    { label: 'Total Staff', value: stats.totalStaff ?? 0, icon: Users, color: C.accent },
+    { label: 'Assigned', value: stats.assignedDuties ?? 0, icon: Vote, color: C.info },
   ] : [];
 
   return (
@@ -392,16 +408,16 @@ export default function AdminDashboardPage() {
       {/* ── Stats Grid ── */}
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3">
         {loadingStats
-          ? [1,2,3,4].map(i => <Shimmer key={i} className="h-24 rounded-xl" />)
+          ? [1, 2, 3, 4].map(i => <Shimmer key={i} className="h-24 rounded-xl" />)
           : statItems.map(s => (
-              <StatCard
-                key={s.label}
-                label={s.label}
-                value={s.value}
-                icon={s.icon}
-                color={s.color}
-              />
-            ))
+            <StatCard
+              key={s.label}
+              label={s.label}
+              value={s.value}
+              icon={s.icon}
+              color={s.color}
+            />
+          ))
         }
       </div>
 
@@ -437,6 +453,7 @@ export default function AdminDashboardPage() {
         boothRules={boothRules}
         loading={loadingBooth}
         onTapSens={openBoothManak}
+        manakReportRedirect={openManakBoothReportPage}
       />
 
       {/* ── जनपदीय मानक SECTION (Flutter: _DistrictManakSection) ── */}

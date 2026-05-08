@@ -12,6 +12,7 @@ import DutyHistoryPage from './pages/staff/HistoryPage';
 import GoswaraPage from './pages/admin/GoswaraPage';
 import ManakBoothPage from './pages/admin/Manakboothpage';
 import ManakDistrictPage from './pages/admin/Manakdistrictpage';
+import ManakBoothReportPage from './pages/admin/Manakboothreportpage';
 
 export default function App() {
   return (
@@ -39,6 +40,7 @@ export default function App() {
         <Route path="/map-view" element={<ProtectedRoute allowedRoles={['STAFF', 'MASTER', 'SUPER_ADMIN', 'ADMIN']}>  <MapViewPage /></ProtectedRoute>} />
         <Route path="/staff/history" element={<ProtectedRoute allowedRoles={['STAFF']}>  <DutyHistoryPage /></ProtectedRoute>} />
         <Route path="/goswara-page" element={<ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>  <GoswaraPage /></ProtectedRoute>} />
+        <Route path="/manak-booth-report-page" element={<ProtectedRoute allowedRoles={['ADMIN', 'SUPER_ADMIN']}>  <ManakBoothReportPage /></ProtectedRoute>} />
         <Route path="/manak-booth" element={<ProtectedRoute allowedRoles={['ADMIN']}>  <ManakBoothPage /></ProtectedRoute>} />
         <Route path="/manak-district" element={<ProtectedRoute allowedRoles={['ADMIN']}>  <ManakDistrictPage /></ProtectedRoute>} />
         <Route path="/heirarchy-report" element={<ProtectedRoute allowedRoles={['STAFF', 'MASTER', 'SUPER_ADMIN', 'ADMIN']}>  <HierarchyReportPage role="admin" onBack={() => navigate(-1)} /></ProtectedRoute>} />

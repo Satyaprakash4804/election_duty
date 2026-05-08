@@ -136,6 +136,7 @@ router.get('/full', adminRequired, async (req, res) => {
             id: s.id, name: s.name || '',
             officers: await fetchOfficers(conn, 'sector_officers', 'sector_id', s.id),
             panchayats: gpList,
+            hq_address:s.hq_address,
           });
         }
         zoneList.push({

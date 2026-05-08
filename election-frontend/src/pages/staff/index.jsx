@@ -1,35 +1,24 @@
-import { useState, useEffect, useCallback } from 'react';
-import apiClient from '../../api/client';
+// staff/index.js
+
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { printDutyCard, toAdminShape } from '../../components/DutyCardPrint';
+import toast, { Toaster } from 'react-hot-toast';
 import {
-  LayoutDashboard,
-  MapPin,
-  Users,
-  ClipboardList,
-  Layers,
-  Map,
-  Ticket,
-} from "lucide-react";
+  LayoutDashboard, MapPin, Users, Badge, Map, Layers, Grid3x3,
+  Vote, Building2, Home, Globe, Hash, Briefcase, Phone,
+  Shield, User, Lock, Eye, EyeOff, Save, Search, Bus,
+  Check, X, RefreshCw, LogOut, History, Printer, FileText,
+  AlertCircle, CheckCircle2, Loader2, Info, ClipboardList,
+  Navigation, Menu, ChevronRight, Sparkles, Calendar, Clock,
+  Sun, Moon, Bell, Star, ShieldCheck, MapPinned, Building,
+  TicketCheck, Ticket, Award, Megaphone, Eye as EyeIcon,
+} from 'lucide-react';
+import apiClient from '../../api/client';
+import { printDutyCard, toAdminShape } from '../../components/DutyCardPrint';
 
-// ── PALETTE (matches Flutter exactly) ────────────────────────────────────────
-const C = {
-  bg: '#FDF6E3',
-  surface: '#F5E6C8',
-  primary: '#8B6914',
-  accent: '#B8860B',
-  dark: '#4A3000',
-  subtle: '#AA8844',
-  border: '#D4A843',
-  error: '#C0392B',
-  success: '#2D6A1E',
-  successBg: '#E6F2DF',
-  info: '#1A5276',
-  armed: '#1B5E20',
-  unarmed: '#37474F',
-};
-
-// ── Rank map (Hindi) ──────────────────────────────────────────────────────────
+// ═══════════════════════════════════════════════════════════════════════════════
+// HELPERS
+// ═══════════════════════════════════════════════════════════════════════════════
 const RANK_MAP = {
   constable: 'आरक्षी', 'head constable': 'मुख्य आरक्षी',
   si: 'उप निरीक्षक', 'sub inspector': 'उप निरीक्षक',
@@ -39,234 +28,187 @@ const RANK_MAP = {
   sp: 'पुलिस अधीक्षक',
   'circle officer': 'क्षेत्राधिकारी', co: 'क्षेत्राधिकारी',
 };
+
 const CENTER_TYPE_MAP = {
   'a++': 'अत्यति संवेदनशील', a: 'अति संवेदनशील',
   b: 'संवेदनशील', c: 'सामान्य',
 };
 
-const rh = (val) => RANK_MAP[(val || '').toLowerCase()] || val || '—';
-const v = (x) => (!x || x.toString().trim() === '') ? '—' : x.toString();
-const ct = (x) => CENTER_TYPE_MAP[(x || '').toLowerCase()] || x || '—';
+const DISTRICT_DUTY_LABELS = {
+  cluster_mobile: 'क्लस्टर मोबाईल',
+  thana_mobile: 'थाना मोबाईल',
+  thana_reserve: 'थाना रिजर्व',
+  thana_extra_mobile: 'थाना अतिरिक्त मोबाईल',
+  sector_pol_mag_mobile: 'सैक्टर पुलिस/मजिस्ट्रेट मोबाईल',
+  zonal_pol_mag_mobile: 'जोनल पुलिस/मजिस्ट्रेट मोबाईल',
+  sdm_co_mobile: 'एसडीएम/सीओ मोबाईल',
+  chowki_mobile: 'चौकी मोबाईल',
+  barrier_picket: 'बैरियर/पिकैट',
+  evm_security: 'ईवीएम सुरक्षा',
+  adm_sp_mobile: 'एडीएम/एसपी मोबाईल',
+  dm_sp_mobile: 'डीएम/एसपी मोबाईल',
+  observer_security: 'पर्यवेक्षक सुरक्षा',
+  hq_reserve: 'मुख्यालय रिजर्व',
+};
 
-const typeColor = (t) => {
+
+const HINDI_MONTHS = ['', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
+  'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'];
+
+const rh = (val) => RANK_MAP[(val || '').toString().toLowerCase()] || val || '—';
+const v = (x) => (!x || x.toString().trim() === '') ? '—' : x.toString();
+const ct = (x) => CENTER_TYPE_MAP[(x || '').toString().toLowerCase()] || x || '—';
+const dutyLabel = (key) => DISTRICT_DUTY_LABELS[key] || (key ? key.replace(/_/g, ' ') : '—');
+
+const formatHindiDate = (d) => {
+  if (!d) return '—';
+  try {
+    const dt = new Date(d);
+    if (isNaN(dt)) return d;
+    return `${dt.getDate()} ${HINDI_MONTHS[dt.getMonth() + 1]} ${dt.getFullYear()}`;
+  } catch { return d; }
+};
+
+const typeColorClass = (t) => {
   switch ((t || '').toUpperCase()) {
-    case 'A++': return '#6C3483';
-    case 'A': return C.error;
-    case 'B': return C.accent;
-    default: return C.info;
+    case 'A++': return { bg: 'bg-purple-600', text: 'text-purple-600', light: 'bg-purple-50', border: 'border-purple-200' };
+    case 'A': return { bg: 'bg-red-600', text: 'text-red-600', light: 'bg-red-50', border: 'border-red-200' };
+    case 'B': return { bg: 'bg-amber-600', text: 'text-amber-600', light: 'bg-amber-50', border: 'border-amber-200' };
+    default: return { bg: 'bg-blue-600', text: 'text-blue-600', light: 'bg-blue-50', border: 'border-blue-200' };
   }
 };
 
-// ── Nav config per role ───────────────────────────────────────────────────────
-const NAV_CONFIG = {
-  sector: [
-    { key: 'overview', label: 'डैशबोर्ड' },
-    { key: 'duty', label: 'ड्यूटी' },
-    { key: 'attendance', label: 'बूथ & उपस्थिति' },
-    { key: 'rules', label: 'मानक' },
-  ],
-  zone: [
-    { key: 'overview', label: 'डैशबोर्ड' },
-    { key: 'duty', label: 'ड्यूटी' },
-    { key: 'sectors', label: 'सेक्टर' },
-    { key: 'rules', label: 'मानक' },
-  ],
-  kshetra: [
-    { key: 'overview', label: 'डैशबोर्ड' },
-    { key: 'duty', label: 'ड्यूटी' },
-    { key: 'zones', label: 'जोन' },
-    { key: 'rules', label: 'मानक'},
-  ],
-  booth: [
-    { key: 'overview', label: 'डैशबोर्ड' },
-    { key: 'duty', label: 'ड्यूटी' },
-    { key: 'costaff', label: 'सहयोगी' },
-    { key: 'dutycard', label: 'ड्यूटी कार्ड' },
-  ],
-};
+// ═══════════════════════════════════════════════════════════════════════════════
+// SHARED COMPONENTS
+// ═══════════════════════════════════════════════════════════════════════════════
 
-// ── SVG Icons ─────────────────────────────────────────────────────────────────
-const Icon = ({ name, size = 16, color = 'currentColor', className = '' }) => {
-  const icons = {
-    dashboard: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>,
-    pin: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 10c0 7-9 13-9 13s-9-6-9-13a9 9 0 0118 0z" /><circle cx="12" cy="10" r="3" /></svg>,
-    users: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17 21v-2a4 4 0 00-4-4H5a4 4 0 00-4 4v2" /><circle cx="9" cy="7" r="4" /><path d="M23 21v-2a4 4 0 00-3-3.87" /><path d="M16 3.13a4 4 0 010 7.75" /></svg>,
-    badge: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 2l3.09 6.26L22 9.27l-5 4.87L18.18 21 12 17.77 5.82 21 7 14.14 2 9.27l6.91-1.01L12 2z" /></svg>,
-    key: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 11-7.778 7.778 5.5 5.5 0 017.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" /></svg>,
-    nav: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="3 11 22 2 13 21 11 13 3 11" /></svg>,
-    shield: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" /></svg>,
-    phone: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 16.92v3a2 2 0 01-2.18 2 19.79 19.79 0 01-8.63-3.07A19.5 19.5 0 013.07 8.8a19.79 19.79 0 01-3.07-8.63A2 2 0 012 0h3a2 2 0 012 1.72 12.84 12.84 0 00.7 2.81 2 2 0 01-.45 2.11L6.09 7.91a16 16 0 006 6l1.27-1.27a2 2 0 012.11-.45 12.84 12.84 0 002.81.7A2 2 0 0122 14.92z" /></svg>,
-    building: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M6 22V2l12 4v16" /><path d="M6 12h12" /><path d="M10 2v20M14 6v16" /></svg>,
-    check: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="20 6 9 17 4 12" /></svg>,
-    x: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" /></svg>,
-    refresh: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="23 4 23 10 17 10" /><path d="M20.49 15a9 9 0 11-2.12-9.36L23 10" /></svg>,
-    logout: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M9 21H5a2 2 0 01-2-2V5a2 2 0 012-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></svg>,
-    history: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="1 4 1 10 7 10" /><path d="M3.51 15a9 9 0 102.13-9.36L1 10" /></svg>,
-    map: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="1 6 1 22 8 18 16 22 23 18 23 2 16 6 8 2 1 6" /><line x1="8" y1="2" x2="8" y2="18" /><line x1="16" y1="6" x2="16" y2="22" /></svg>,
-    layers: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="12 2 2 7 12 12 22 7 12 2" /><polyline points="2 17 12 22 22 17" /><polyline points="2 12 12 17 22 12" /></svg>,
-    grid: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="3" width="7" height="7" /><rect x="14" y="3" width="7" height="7" /><rect x="14" y="14" width="7" height="7" /><rect x="3" y="14" width="7" height="7" /></svg>,
-    eye: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" /><circle cx="12" cy="12" r="3" /></svg>,
-    eyeoff: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M17.94 17.94A10.07 10.07 0 0112 20c-7 0-11-8-11-8a18.45 18.45 0 015.06-5.94M9.9 4.24A9.12 9.12 0 0112 4c7 0 11 8 11 8a18.5 18.5 0 01-2.16 3.19m-6.72-1.07a3 3 0 11-4.24-4.24" /><line x1="1" y1="1" x2="23" y2="23" /></svg>,
-    save: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M19 21H5a2 2 0 01-2-2V5a2 2 0 012-2h11l5 5v11a2 2 0 01-2 2z" /><polyline points="17 21 17 13 7 13 7 21" /><polyline points="7 3 7 8 15 8" /></svg>,
-    search: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="11" cy="11" r="8" /><line x1="21" y1="21" x2="16.65" y2="16.65" /></svg>,
-    bus: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M8 6v6" /><path d="M15 6v6" /><path d="M2 12h19.6" /><path d="M18 18h3s.5-1.7.8-2.8c.1-.4.2-.8.2-1.2 0-.4-.1-.8-.2-1.2l-1.4-5C20.1 6.8 19.1 6 18 6H4a2 2 0 00-2 2v10h3" /><circle cx="7" cy="18" r="2" /><path d="M9 18h5" /><circle cx="16" cy="18" r="2" /></svg>,
-    user: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2" /><circle cx="12" cy="7" r="4" /></svg>,
-    lock: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0110 0v4" /></svg>,
-    info: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10" /><line x1="12" y1="16" x2="12" y2="12" /><line x1="12" y1="8" x2="12.01" y2="8" /></svg>,
-    briefcase: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="2" y="7" width="20" height="14" rx="2" ry="2" /><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16" /></svg>,
-    home: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z" /><polyline points="9 22 9 12 15 12 15 22" /></svg>,
-    globe: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10" /><line x1="2" y1="12" x2="22" y2="12" /><path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z" /></svg>,
-    star: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2" /></svg>,
-    vote: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M9 11l3 3L22 4" /><path d="M21 12v7a2 2 0 01-2 2H5a2 2 0 01-2-2V5a2 2 0 012-2h11" /></svg>,
-    hash: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><line x1="4" y1="9" x2="20" y2="9" /><line x1="4" y1="15" x2="20" y2="15" /><line x1="10" y1="3" x2="8" y2="21" /><line x1="16" y1="3" x2="14" y2="21" /></svg>,
-    clipboard: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2" /><rect x="9" y="3" width="6" height="4" rx="1" /></svg>,
-    printer: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 01-2-2v-5a2 2 0 012-2h16a2 2 0 012 2v5a2 2 0 01-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></svg>,
-    alert: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><circle cx="12" cy="12" r="10" /><line x1="12" y1="8" x2="12" y2="12" /><line x1="12" y1="16" x2="12.01" y2="16" /></svg>,
-    checkcircle: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><path d="M22 11.08V12a10 10 0 11-5.93-9.14" /><polyline points="22 4 12 14.01 9 11.01" /></svg>,
-    loader: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={`${className} animate-spin`} style={{ animation: 'spin 1s linear infinite' }}><line x1="12" y1="2" x2="12" y2="6" /><line x1="12" y1="18" x2="12" y2="22" /><line x1="4.93" y1="4.93" x2="7.76" y2="7.76" /><line x1="16.24" y1="16.24" x2="19.07" y2="19.07" /><line x1="2" y1="12" x2="6" y2="12" /><line x1="18" y1="12" x2="22" y2="12" /><line x1="4.93" y1="19.07" x2="7.76" y2="16.24" /><line x1="16.24" y1="7.76" x2="19.07" y2="4.93" /></svg>,
-    cpu: <svg width={size} height={size} viewBox="0 0 24 24" fill="none" stroke={color} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}><rect x="9" y="9" width="6" height="6" /><rect x="2" y="2" width="20" height="20" rx="2" ry="2" /></svg>,
+function SectionCard({ icon: IconCmp, title, children, accent = 'amber', actions }) {
+  const accents = {
+    amber: 'from-amber-50 to-yellow-50 border-amber-200',
+    purple: 'from-purple-50 to-fuchsia-50 border-purple-200',
+    blue: 'from-blue-50 to-sky-50 border-blue-200',
+    green: 'from-emerald-50 to-green-50 border-emerald-200',
   };
-  return icons[name] || null;
-};
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  SHARED COMPONENTS
-// ═══════════════════════════════════════════════════════════════════════════════
-
-function SectionCard({ iconName, title, children }) {
   return (
-    <div style={{
-      borderRadius: 14, overflow: 'hidden', marginBottom: 16,
-      background: '#fff', border: `1px solid ${C.border}80`,
-      boxShadow: `0 3px 10px ${C.primary}0a`,
-    }}>
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 10, padding: '12px 16px',
-        background: `${C.surface}99`, borderBottom: `1px solid ${C.border}66`,
-      }}>
-        <div style={{
-          width: 28, height: 28, borderRadius: 8, display: 'flex',
-          alignItems: 'center', justifyContent: 'center', background: `${C.primary}1f`,
-        }}>
-          <Icon name={iconName} size={13} color={C.primary} />
+    <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden mb-4 hover:shadow-md transition-shadow">
+      <div className={`flex items-center justify-between gap-3 px-5 py-3.5 bg-gradient-to-r ${accents[accent]} border-b`}>
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-xl bg-white shadow-sm flex items-center justify-center">
+            <IconCmp className="w-4 h-4 text-amber-700" />
+          </div>
+          <h3 className="font-bold text-slate-800 text-sm tracking-wide">{title}</h3>
         </div>
-        <span style={{ fontWeight: 800, fontSize: 14, color: C.dark }}>{title}</span>
+        {actions}
       </div>
-      <div style={{ padding: 16 }}>{children}</div>
+      <div className="p-5">{children}</div>
     </div>
   );
 }
 
-function InfoTile({ iconName, label, value }) {
-  if (!value || value === '—') return null;
+function InfoTile({ icon: IconCmp, label, value }) {
+  if (!value || value === '—' || value === '') return null;
   return (
-    <div style={{
-      display: 'flex', alignItems: 'flex-start', gap: 12,
-      padding: '10px 0', borderBottom: `1px solid ${C.border}26`,
-    }}>
-      <div style={{
-        width: 28, height: 28, borderRadius: 8, display: 'flex',
-        alignItems: 'center', justifyContent: 'center', background: C.surface, flexShrink: 0, marginTop: 2,
-      }}>
-        <Icon name={iconName} size={12} color={C.primary} />
+    <div className="flex items-start gap-3 py-2.5 group">
+      <div className="w-8 h-8 rounded-lg bg-amber-50 group-hover:bg-amber-100 flex items-center justify-center flex-shrink-0 transition-colors">
+        <IconCmp className="w-3.5 h-3.5 text-amber-700" />
       </div>
-      <div>
-        <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 2, color: C.subtle }}>{label}</p>
-        <p style={{ fontSize: 13, fontWeight: 600, color: C.dark }}>{value}</p>
+      <div className="flex-1 min-w-0">
+        <p className="text-[10px] font-semibold uppercase tracking-wider text-slate-500 mb-0.5">{label}</p>
+        <p className="text-sm font-semibold text-slate-800 break-words">{value}</p>
       </div>
     </div>
   );
 }
 
-function StatCard({ iconName, label, value, color }) {
+function StatCard({ icon: IconCmp, label, value, color = 'amber', trend }) {
+  const colors = {
+    amber: 'from-amber-500 to-yellow-600 shadow-amber-200',
+    blue: 'from-blue-500 to-sky-600 shadow-blue-200',
+    green: 'from-emerald-500 to-green-600 shadow-emerald-200',
+    red: 'from-red-500 to-rose-600 shadow-red-200',
+    purple: 'from-purple-500 to-fuchsia-600 shadow-purple-200',
+    orange: 'from-orange-500 to-red-500 shadow-orange-200',
+    indigo: 'from-indigo-500 to-blue-600 shadow-indigo-200',
+  };
   return (
-    <div style={{
-      borderRadius: 14, padding: 14, display: 'flex', flexDirection: 'column',
-      background: '#fff', border: `1px solid ${C.border}80`,
-      boxShadow: `0 3px 8px ${color}12`,
-    }}>
-      <div style={{
-        width: 32, height: 32, borderRadius: 10, display: 'flex',
-        alignItems: 'center', justifyContent: 'center', marginBottom: 8,
-        background: `${color}1f`,
-      }}>
-        <Icon name={iconName} size={15} color={color} />
+    <div className="group bg-white rounded-2xl border border-slate-200 p-4 hover:shadow-lg hover:-translate-y-0.5 transition-all duration-200">
+      <div className={`w-11 h-11 rounded-xl bg-gradient-to-br ${colors[color]} shadow-md flex items-center justify-center mb-3 group-hover:scale-105 transition-transform`}>
+        <IconCmp className="w-5 h-5 text-white" />
       </div>
-      <p style={{ fontSize: 10, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 4, color: C.subtle }}>{label}</p>
-      <p style={{ fontSize: 13, fontWeight: 900, color: C.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</p>
+      <p className="text-[10px] font-bold uppercase tracking-wider text-slate-500 mb-1">{label}</p>
+      <p className="text-base font-extrabold text-slate-800 truncate" title={value}>{value}</p>
+    </div>
+  );
+}
+
+function HeroBadge({ icon: IconCmp, label }) {
+  return (
+    <div className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 bg-white/10 backdrop-blur-sm border border-white/20">
+      <IconCmp className="w-3 h-3 text-white/70" />
+      <span className="text-xs text-white/90 font-medium">{label}</span>
     </div>
   );
 }
 
 function HeroCard({ user, duty, subtitle, noDuty }) {
   return (
-    <div style={{
-      borderRadius: 16, padding: 22, marginBottom: 16, position: 'relative', overflow: 'hidden',
-      background: `linear-gradient(135deg, ${C.dark} 0%, #6B4E0A 100%)`,
-      boxShadow: `0 6px 16px ${C.dark}59`,
-    }}>
-      <div style={{
-        position: 'absolute', top: 0, right: 0, width: 128, height: 128,
-        borderRadius: '50%', background: C.border, opacity: 0.1,
-        transform: 'translate(40%, -40%)',
-      }} />
-      <div style={{ display: 'flex', alignItems: 'center', gap: 14, marginBottom: 16 }}>
-        <div style={{
-          width: 48, height: 48, borderRadius: '50%', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-          background: 'rgba(255,255,255,0.12)', border: `1px solid ${C.border}66`,
-        }}>
-          <Icon name="user" size={22} color="#fff" />
-        </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          {subtitle && <p style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', marginBottom: 2, color: C.border }}>{subtitle}</p>}
-          <p style={{ fontWeight: 900, color: '#fff', fontSize: 18, lineHeight: 1.2 }}>{user?.name || '—'}</p>
-          <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>PNO: {user?.pno || '—'}</p>
-        </div>
-      </div>
-      <div style={{ height: 1, background: 'rgba(255,255,255,0.15)', marginBottom: 12 }} />
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8 }}>
-        {user?.thana && <HeroBadge iconName="shield" label={user.thana} />}
-        {user?.district && <HeroBadge iconName="building" label={user.district} />}
-        <HeroBadge iconName="star" label={rh(user?.rank || user?.user_rank)} />
-      </div>
-      {!noDuty && duty?.centerName && (
-        <>
-          <div style={{ height: 1, background: 'rgba(255,255,255,0.15)', margin: '12px 0' }} />
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Icon name="vote" size={13} color="rgba(255,255,255,0.5)" />
-            <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.7)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              ड्यूटी: {duty.centerName || duty.sectorName || duty.zoneName || duty.superZoneName || '—'}
-            </p>
+    <div className="relative overflow-hidden rounded-2xl p-6 mb-5 bg-gradient-to-br from-amber-700 via-amber-800 to-yellow-900 shadow-xl shadow-amber-900/20">
+      {/* Decorative elements */}
+      <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-amber-400/20 blur-2xl" />
+      <div className="absolute -bottom-8 -left-8 w-40 h-40 rounded-full bg-yellow-500/10 blur-2xl" />
+
+      <div className="relative z-10">
+        <div className="flex items-center gap-4 mb-4">
+          <div className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm border border-white/30 flex items-center justify-center flex-shrink-0">
+            <User className="w-7 h-7 text-white" strokeWidth={2} />
           </div>
-        </>
-      )}
+          <div className="flex-1 min-w-0">
+            {subtitle && (
+              <p className="text-[10px] font-bold tracking-widest uppercase text-amber-200 mb-0.5">
+                {subtitle}
+              </p>
+            )}
+            <p className="text-xl font-extrabold text-white truncate">{user?.name || '—'}</p>
+            <p className="text-xs text-amber-100/70 mt-0.5">PNO: {user?.pno || '—'}</p>
+          </div>
+        </div>
+
+        <div className="h-px bg-white/15 mb-4" />
+
+        <div className="flex flex-wrap gap-2">
+          {user?.thana && <HeroBadge icon={Shield} label={user.thana} />}
+          {user?.district && <HeroBadge icon={Building2} label={user.district} />}
+          <HeroBadge icon={Star} label={rh(user?.rank || user?.user_rank)} />
+        </div>
+
+        {!noDuty && duty?.centerName && (
+          <>
+            <div className="h-px bg-white/15 my-4" />
+            <div className="flex items-center gap-2">
+              <Vote className="w-3.5 h-3.5 text-amber-200/70" />
+              <p className="text-xs text-amber-50/90 truncate">
+                ड्यूटी: {duty.centerName || duty.sectorName || duty.zoneName || duty.superZoneName || '—'}
+              </p>
+            </div>
+          </>
+        )}
+      </div>
     </div>
   );
 }
 
-function HeroBadge({ iconName, label }) {
+function NavButton({ icon: IconCmp, label, color = 'amber', onClick, fullWidth = true }) {
+  const colors = {
+    amber: 'bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 shadow-amber-500/30',
+    dark: 'bg-gradient-to-r from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black shadow-slate-700/30',
+    purple: 'bg-gradient-to-r from-purple-600 to-fuchsia-700 hover:from-purple-700 hover:to-fuchsia-800 shadow-purple-500/30',
+  };
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 5, borderRadius: 20,
-      padding: '5px 10px', background: 'rgba(255,255,255,0.1)',
-      border: '1px solid rgba(255,255,255,0.24)',
-    }}>
-      <Icon name={iconName} size={11} color="rgba(255,255,255,0.6)" />
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)' }}>{label}</span>
-    </div>
-  );
-}
-
-function NavButton({ iconName, label, color, onClick }) {
-  return (
-    <button onClick={onClick} style={{
-      width: '100%', borderRadius: 14, padding: '14px 0', display: 'flex',
-      alignItems: 'center', justifyContent: 'center', gap: 8, fontWeight: 700,
-      fontSize: 13, color: '#fff', border: 'none', cursor: 'pointer',
-      background: color, boxShadow: `0 4px 12px ${color}66`, marginBottom: 12,
-    }}>
-      <Icon name={iconName} size={15} color="#fff" />
+    <button
+      onClick={onClick}
+      className={`${fullWidth ? 'w-full' : ''} ${colors[color]} text-white py-3.5 px-6 rounded-xl font-bold text-sm flex items-center justify-center gap-2.5 shadow-lg hover:shadow-xl transition-all duration-200 hover:-translate-y-0.5 active:translate-y-0 mb-3`}
+    >
+      <IconCmp className="w-4 h-4" />
       {label}
     </button>
   );
@@ -274,56 +216,44 @@ function NavButton({ iconName, label, color, onClick }) {
 
 function OfficerCard({ label, officers = [] }) {
   return (
-    <SectionCard iconName="badge" title={label}>
-      {officers.map((o, i) => (
-        <div key={i} style={{
-          display: 'flex', alignItems: 'center', gap: 12,
-          padding: '10px 0',
-          borderBottom: i < officers.length - 1 ? `1px solid ${C.border}66` : 'none',
-        }}>
-          <div style={{
-            width: 36, height: 36, borderRadius: '50%', display: 'flex',
-            alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-            background: C.surface, border: `1px solid ${C.border}`,
-          }}>
-            <Icon name="user" size={17} color={C.primary} />
+    <SectionCard icon={ShieldCheck} title={label}>
+      <div className="space-y-2">
+        {officers.map((o, i) => (
+          <div key={i} className="flex items-center gap-3 py-3 px-3 rounded-xl hover:bg-amber-50/50 transition-colors group">
+            <div className="w-11 h-11 rounded-full bg-gradient-to-br from-amber-100 to-yellow-100 border border-amber-200 flex items-center justify-center flex-shrink-0">
+              <User className="w-5 h-5 text-amber-700" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-slate-800 text-sm truncate">{v(o.name)}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {rh(o.user_rank || o.rank)} · PNO: {v(o.pno)}
+              </p>
+            </div>
+            {o.mobile && (
+              <a
+                href={`tel:${o.mobile}`}
+                className="w-10 h-10 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center transition-colors group-hover:scale-105"
+                title={o.mobile}
+              >
+                <Phone className="w-4 h-4 text-emerald-700" />
+              </a>
+            )}
           </div>
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <p style={{ fontWeight: 700, fontSize: 13, color: C.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v(o.name)}</p>
-            <p style={{ fontSize: 10, color: C.subtle }}>{rh(o.user_rank || o.rank)} · PNO: {v(o.pno)}</p>
-          </div>
-          {o.mobile && (
-            <a href={`tel:${o.mobile}`} style={{
-              width: 36, height: 36, borderRadius: 10, display: 'flex',
-              alignItems: 'center', justifyContent: 'center', background: C.successBg, flexShrink: 0,
-            }}>
-              <Icon name="phone" size={14} color={C.success} />
-            </a>
-          )}
-        </div>
-      ))}
+        ))}
+      </div>
     </SectionCard>
   );
 }
 
-function NoDutyState() {
+function NoDutyState({ message = 'अभी तक ड्यूटी नहीं सौंपी गई', sub = 'व्यवस्थापक द्वारा ड्यूटी सौंपे जाने पर यहाँ दिखेगी।' }) {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', paddingTop: 64 }}>
-      <div style={{
-        borderRadius: 24, padding: 40, display: 'flex', flexDirection: 'column',
-        alignItems: 'center', textAlign: 'center',
-        background: '#fff', border: `1px solid ${C.border}80`,
-        boxShadow: `0 4px 16px ${C.primary}0d`,
-      }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: '50%', display: 'flex',
-          alignItems: 'center', justifyContent: 'center', marginBottom: 16,
-          background: C.surface, border: `1px solid ${C.border}`,
-        }}>
-          <Icon name="pin" size={28} color={C.primary} />
+    <div className="flex items-center justify-center py-16">
+      <div className="bg-white rounded-3xl p-10 max-w-md w-full shadow-sm border border-slate-200 text-center">
+        <div className="w-20 h-20 mx-auto rounded-full bg-gradient-to-br from-amber-100 to-yellow-100 border border-amber-200 flex items-center justify-center mb-5">
+          <MapPinned className="w-9 h-9 text-amber-700" />
         </div>
-        <p style={{ fontWeight: 900, fontSize: 16, marginBottom: 8, color: C.dark }}>अभी तक ड्यूटी नहीं सौंपी गई</p>
-        <p style={{ fontSize: 12, color: C.subtle }}>व्यवस्थापक द्वारा ड्यूटी सौंपे जाने पर यहाँ दिखेगी।</p>
+        <p className="font-extrabold text-lg text-slate-800 mb-2">{message}</p>
+        <p className="text-sm text-slate-500">{sub}</p>
       </div>
     </div>
   );
@@ -331,132 +261,218 @@ function NoDutyState() {
 
 function LoadingSpinner() {
   return (
-    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', padding: '80px 0' }}>
-      <div style={{
-        width: 36, height: 36, border: `3px solid ${C.border}`,
-        borderTopColor: C.primary, borderRadius: '50%',
-        animation: 'spin 0.8s linear infinite',
-      }} />
+    <div className="flex items-center justify-center py-24">
+      <div className="flex flex-col items-center gap-3">
+        <Loader2 className="w-10 h-10 text-amber-600 animate-spin" />
+        <p className="text-sm text-slate-500 font-medium">लोड हो रहा है...</p>
+      </div>
+    </div>
+  );
+}
+
+function ErrorState({ error, onRetry }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-20 px-6 text-center">
+      <div className="w-20 h-20 rounded-full bg-red-50 border border-red-200 flex items-center justify-center mb-5">
+        <AlertCircle className="w-10 h-10 text-red-600" />
+      </div>
+      <p className="font-extrabold text-lg text-slate-800 mb-2">डेटा लोड करने में त्रुटि</p>
+      <p className="text-sm text-slate-500 mb-6 max-w-md">{error}</p>
+      <button
+        onClick={onRetry}
+        className="bg-gradient-to-r from-amber-600 to-amber-700 hover:from-amber-700 hover:to-amber-800 text-white px-6 py-3 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg shadow-amber-500/30 transition-all hover:-translate-y-0.5"
+      >
+        <RefreshCw className="w-4 h-4" />
+        पुनः प्रयास करें
+      </button>
+    </div>
+  );
+}
+
+function PreviewRow({ label, value }) {
+  const display = (!value || value.toString().trim() === '') ? '—' : value.toString();
+  return (
+    <div className="flex items-center justify-between py-2.5 border-b border-slate-100 last:border-0">
+      <span className="text-xs text-slate-500 font-medium">{label}</span>
+      <span className="text-sm font-bold text-slate-800 text-right ml-4 truncate max-w-[60%]" title={display}>
+        {display}
+      </span>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  BOOTH — OVERVIEW
+// ELECTION CONFIG BANNER
+// ═══════════════════════════════════════════════════════════════════════════════
+function ElectionConfigBanner({ electionConfig }) {
+  if (!electionConfig) return null;
+  const ec = electionConfig;
+  const name = ec.election_name || '';
+  const type = ec.election_type || '';
+  const phase = ec.phase || '';
+  const pratah = ec.pratah_samay || '';
+  const saya = ec.saya_samay || '';
+  const date = formatHindiDate(ec.election_date);
+
+  return (
+    <div className="relative overflow-hidden bg-gradient-to-br from-indigo-700 via-indigo-800 to-blue-900 rounded-2xl p-5 mb-5 shadow-lg shadow-indigo-500/20">
+      <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-indigo-400/20 blur-2xl" />
+      <div className="relative z-10">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div className="flex items-center gap-3 min-w-0 flex-1">
+            <div className="w-10 h-10 rounded-xl bg-white/15 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+              <Vote className="w-5 h-5 text-white" />
+            </div>
+            <div className="min-w-0 flex-1">
+              {name && <p className="text-white font-extrabold text-sm truncate">{name}</p>}
+              {type && <p className="text-indigo-200 text-[11px]">{type}</p>}
+            </div>
+          </div>
+          {phase && (
+            <span className="flex-shrink-0 inline-flex items-center px-2.5 py-1 rounded-full bg-white/15 border border-white/20 text-white text-[10px] font-bold">
+              चरण {phase}
+            </span>
+          )}
+        </div>
+
+        <div className="h-px bg-white/15 mb-3" />
+
+        <div className="grid grid-cols-3 gap-2">
+          <ElectionInfoChip icon={Calendar} label="मतदान तिथि" value={date} />
+          {pratah && <ElectionInfoChip icon={Sun} label="प्रातः" value={pratah} />}
+          {saya && <ElectionInfoChip icon={Moon} label="सायं" value={saya} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function ElectionInfoChip({ icon: IconCmp, label, value }) {
+  return (
+    <div className="bg-white/10 backdrop-blur-sm rounded-lg px-2.5 py-2 flex items-center gap-2 min-w-0">
+      <IconCmp className="w-3.5 h-3.5 text-indigo-200 flex-shrink-0" />
+      <div className="min-w-0">
+        <p className="text-[9px] text-indigo-200 leading-tight">{label}</p>
+        <p className="text-[11px] text-white font-bold truncate">{value}</p>
+      </div>
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// STAFF ROW (shared)
+// ═══════════════════════════════════════════════════════════════════════════════
+function StaffRow({ index, total, staff, armed }) {
+  return (
+    <div className={`flex items-center gap-3 py-3 px-2 rounded-lg hover:bg-amber-50/40 transition-colors ${index < total - 1 ? 'border-b border-slate-100' : ''}`}>
+      <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 font-extrabold text-xs border ${armed ? 'bg-emerald-50 border-emerald-200 text-emerald-700' : 'bg-slate-50 border-slate-200 text-slate-700'}`}>
+        {index + 1}
+      </div>
+      <div className="flex-1 min-w-0">
+        <p className="font-bold text-sm text-slate-800 truncate">{v(staff.name)}</p>
+        <p className="text-[11px] text-slate-500 mt-0.5">{v(staff.pno)} · {v(staff.thana)}</p>
+        <div className="flex items-center gap-2 mt-1">
+          <span className="text-[10px] font-semibold text-amber-700">{rh(staff.user_rank || staff.rank)}</span>
+          <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${armed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+            {armed ? 'सशस्त्र' : 'निःशस्त्र'}
+          </span>
+        </div>
+      </div>
+      {staff.mobile && (
+        <a
+          href={`tel:${staff.mobile}`}
+          className="w-10 h-10 rounded-xl bg-emerald-50 hover:bg-emerald-100 border border-emerald-200 flex items-center justify-center transition-all hover:scale-105"
+        >
+          <Phone className="w-4 h-4 text-emerald-700" />
+        </a>
+      )}
+    </div>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// BOOTH SECTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 function BoothOverview({ duty, user, onGoToDutyCard, onOpenMap }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
+    <>
       <HeroCard user={user} duty={duty} noDuty={false} />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        <StatCard iconName="pin" label="मतदान केंद्र" value={v(duty.centerName)} color={C.primary} />
-        <StatCard iconName="bus" label="बस संख्या" value={duty.busNo ? `बस–${duty.busNo}` : '—'} color={C.info} />
-        <StatCard iconName="map" label="सेक्टर" value={v(duty.sectorName)} color={C.success} />
-        <StatCard iconName="users" label="सहयोगी कर्मी" value={`${(duty.allStaff || []).length} कर्मी`} color="#D84315" />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={MapPin} label="मतदान केंद्र" value={v(duty.centerName)} color="amber" />
+        <StatCard icon={Bus} label="बस संख्या" value={duty.busNo ? `बस–${duty.busNo}` : '—'} color="blue" />
+        <StatCard icon={Map} label="सेक्टर" value={v(duty.sectorName)} color="green" />
+        <StatCard icon={Users} label="सहयोगी कर्मी" value={`${(duty.allStaff || []).length} कर्मी`} color="orange" />
       </div>
-      <SectionCard iconName="info" title="संक्षिप्त विवरण">
-        <InfoTile iconName="shield" label="थाना" value={v(duty.thana)} />
-        <InfoTile iconName="building" label="ग्राम पंचायत" value={v(duty.gpName)} />
-        <InfoTile iconName="layers" label="जोन" value={v(duty.zoneName)} />
-        <InfoTile iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} />
-        <InfoTile iconName="hash" label="केंद्र प्रकार" value={ct(duty.centerType)} />
+      <SectionCard icon={Info} title="संक्षिप्त विवरण">
+        <InfoTile icon={Shield} label="थाना" value={v(duty.thana)} />
+        <InfoTile icon={Building2} label="ग्राम पंचायत" value={v(duty.gpName)} />
+        <InfoTile icon={Layers} label="जोन" value={v(duty.zoneName)} />
+        <InfoTile icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} />
+        <InfoTile icon={Hash} label="केंद्र प्रकार" value={ct(duty.centerType)} />
       </SectionCard>
-      <NavButton iconName="nav" label="Google Maps पर नेविगेट करें" color={C.primary} onClick={onOpenMap} />
-      <NavButton iconName="printer" label="ड्यूटी कार्ड प्रिंट करें" color={C.dark} onClick={onGoToDutyCard} />
-    </div>
+      <div className="grid sm:grid-cols-2 gap-3">
+        <NavButton icon={Navigation} label="Google Maps पर नेविगेट करें" color="amber" onClick={onOpenMap} fullWidth />
+        <NavButton icon={Printer} label="ड्यूटी कार्ड प्रिंट करें" color="dark" onClick={onGoToDutyCard} fullWidth />
+      </div>
+    </>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  BOOTH — DUTY DETAIL
-// ═══════════════════════════════════════════════════════════════════════════════
 function BoothDutyDetail({ duty, onOpenMap }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
-      <SectionCard iconName="pin" title="ड्यूटी स्थान">
-        <InfoTile iconName="vote" label="मतदान केंद्र" value={v(duty.centerName)} />
-        <InfoTile iconName="home" label="पता" value={v(duty.centerAddress)} />
-        <InfoTile iconName="hash" label="केंद्र प्रकार" value={ct(duty.centerType)} />
-        <InfoTile iconName="shield" label="थाना" value={v(duty.thana)} />
-        <InfoTile iconName="building" label="ग्राम पंचायत" value={v(duty.gpName)} />
+    <>
+      <SectionCard icon={MapPin} title="ड्यूटी स्थान">
+        <InfoTile icon={Vote} label="मतदान केंद्र" value={v(duty.centerName)} />
+        <InfoTile icon={Home} label="पता" value={v(duty.centerAddress)} />
+        <InfoTile icon={Hash} label="केंद्र प्रकार" value={ct(duty.centerType)} />
+        <InfoTile icon={Shield} label="थाना" value={v(duty.thana)} />
+        <InfoTile icon={Building2} label="ग्राम पंचायत" value={v(duty.gpName)} />
       </SectionCard>
-      <SectionCard iconName="map" title="प्रशासनिक विवरण">
-        <InfoTile iconName="map" label="सेक्टर" value={v(duty.sectorName)} />
-        <InfoTile iconName="layers" label="जोन" value={v(duty.zoneName)} />
-        <InfoTile iconName="home" label="जोन मुख्यालय" value={v(duty.zoneHq)} />
-        <InfoTile iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} />
-        <InfoTile iconName="bus" label="बस संख्या" value={duty.busNo ? `बस–${duty.busNo}` : null} />
-        <InfoTile iconName="user" label="नियुक्त किया" value={v(duty.assignedBy)} />
+      <SectionCard icon={Map} title="प्रशासनिक विवरण" accent="blue">
+        <InfoTile icon={Map} label="सेक्टर" value={v(duty.sectorName)} />
+        <InfoTile icon={Layers} label="जोन" value={v(duty.zoneName)} />
+        <InfoTile icon={Home} label="जोन मुख्यालय" value={v(duty.zoneHq)} />
+        <InfoTile icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} />
+        <InfoTile icon={Bus} label="बस संख्या" value={duty.busNo ? `बस–${duty.busNo}` : null} />
+        <InfoTile icon={User} label="नियुक्त किया" value={v(duty.assignedBy)} />
       </SectionCard>
       {(duty.sectorOfficers || []).length > 0 && <OfficerCard label="सेक्टर अधिकारी" officers={duty.sectorOfficers} />}
       {(duty.zonalOfficers || []).length > 0 && <OfficerCard label="जोनल अधिकारी" officers={duty.zonalOfficers} />}
       {(duty.superOfficers || []).length > 0 && <OfficerCard label="क्षेत्र अधिकारी" officers={duty.superOfficers} />}
-      <NavButton iconName="nav" label="Google Maps पर नेविगेट करें" color={C.primary} onClick={onOpenMap} />
-    </div>
+      <NavButton icon={Navigation} label="Google Maps पर नेविगेट करें" color="amber" onClick={onOpenMap} />
+    </>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  BOOTH — CO-STAFF
-// ═══════════════════════════════════════════════════════════════════════════════
 function BoothCoStaff({ duty }) {
   if (!duty) return <NoDutyState />;
   const staff = duty.allStaff || [];
   return (
-    <SectionCard iconName="users" title={`सहयोगी कर्मी (${staff.length})`}>
+    <SectionCard icon={Users} title={`सहयोगी कर्मी (${staff.length})`} accent="green">
       {staff.length === 0 ? (
-        <div style={{ padding: '32px 0', textAlign: 'center' }}>
-          <p style={{ fontSize: 13, color: C.subtle }}>कोई सहयोगी नहीं</p>
+        <div className="py-10 text-center">
+          <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">कोई सहयोगी नहीं</p>
         </div>
-      ) : staff.map((s, i) => {
-        const armed = s.is_armed === 1 || s.is_armed === true;
-        return (
-          <div key={i} style={{
-            display: 'flex', alignItems: 'center', gap: 12, padding: '12px 0',
-            borderBottom: i < staff.length - 1 ? `1px solid ${C.border}66` : 'none',
-          }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: '50%', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              fontSize: 13, fontWeight: 900,
-              background: `${armed ? C.armed : C.unarmed}1a`,
-              border: `1px solid ${armed ? C.armed : C.unarmed}4d`,
-              color: armed ? C.armed : C.unarmed,
-            }}>
-              {i + 1}
-            </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontWeight: 700, fontSize: 13, color: C.dark }}>{v(s.name)}</p>
-              <p style={{ fontSize: 10, color: C.subtle }}>{v(s.pno)} · {v(s.thana)}</p>
-              <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginTop: 2 }}>
-                <span style={{ fontSize: 10, fontWeight: 600, color: C.accent }}>{rh(s.user_rank || s.rank)}</span>
-                <span style={{
-                  borderRadius: 4, padding: '1px 5px', fontSize: 9, fontWeight: 700,
-                  background: `${armed ? C.armed : C.unarmed}1a`,
-                  color: armed ? C.armed : C.unarmed,
-                }}>{armed ? 'सशस्त्र' : 'निःशस्त्र'}</span>
-              </div>
-            </div>
-            {s.mobile && (
-              <a href={`tel:${s.mobile}`} style={{
-                width: 36, height: 36, borderRadius: 10, display: 'flex',
-                alignItems: 'center', justifyContent: 'center', background: C.successBg,
-              }}>
-                <Icon name="phone" size={14} color={C.success} />
-              </a>
-            )}
-          </div>
-        );
-      })}
+      ) : (
+        <div className="space-y-1">
+          {staff.map((s, i) => (
+            <StaffRow
+              key={i}
+              index={i}
+              total={staff.length}
+              staff={s}
+              armed={s.is_armed === 1 || s.is_armed === true}
+            />
+          ))}
+        </div>
+      )}
     </SectionCard>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  BOOTH — DUTY CARD
-// ═══════════════════════════════════════════════════════════════════════════════
 function BoothDutyCard({ duty, user }) {
   const [printing, setPrinting] = useState(false);
   const [hasMarked, setHasMarked] = useState(false);
@@ -465,134 +481,120 @@ function BoothDutyCard({ duty, user }) {
 
   const handlePrint = async () => {
     setPrinting(true);
+    const tId = toast.loading('कार्ड प्रिंट हो रहा है...');
     try {
       await printDutyCard(toAdminShape(duty, user));
-      await apiClient.post('/staff/mark-card-downloaded', {});
+      try {
+        await apiClient.post('/staff/mark-card-downloaded', {});
+      } catch (e) { console.error('mark-card-downloaded', e); }
       setHasMarked(true);
+      toast.success('ड्यूटी कार्ड डाउनलोड हो गया!', { id: tId });
     } catch (e) {
-      alert('प्रिंट त्रुटि: ' + e.message);
+      toast.error('प्रिंट त्रुटि: ' + (e.message || e), { id: tId });
     } finally {
       setPrinting(false);
     }
   };
 
   const sahyogi = duty.allStaff || [];
-  const rows = [
-    ['नाम', user?.name], ['PNO', user?.pno], ['पद', rh(user?.rank || user?.user_rank)],
-    ['केंद्र', duty.centerName], ['केंद्र प्रकार', ct(duty.centerType)],
-    ['बस', duty.busNo ? `बस–${duty.busNo}` : null],
-    ['सेक्टर', duty.sectorName], ['जोन', duty.zoneName],
-    ['सहयोगी', `${sahyogi.length} कर्मी`],
-  ];
 
   return (
-    <div>
-      <div style={{
-        borderRadius: 16, padding: 20, marginBottom: 12, position: 'relative', overflow: 'hidden',
-        background: `linear-gradient(135deg, ${C.dark} 0%, #5A3E08 100%)`,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{
-            width: 48, height: 48, borderRadius: 14, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.12)',
-          }}>
-            <Icon name="badge" size={22} color="#fff" />
+    <>
+      <div className="relative overflow-hidden rounded-2xl p-6 mb-4 bg-gradient-to-br from-slate-800 via-slate-900 to-amber-900 shadow-xl">
+        <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-amber-500/20 blur-2xl" />
+        <div className="relative z-10 flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+            <Badge className="w-7 h-7 text-white" />
           </div>
-          <div style={{ flex: 1 }}>
-            <p style={{ fontWeight: 900, color: '#fff', fontSize: 16 }}>ड्यूटी कार्ड</p>
-            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>आधिकारिक चुनाव ड्यूटी कार्ड</p>
+          <div className="flex-1 min-w-0">
+            <p className="font-extrabold text-white text-lg">ड्यूटी कार्ड</p>
+            <p className="text-xs text-amber-100/70">आधिकारिक चुनाव ड्यूटी कार्ड</p>
           </div>
-          <button onClick={handlePrint} disabled={printing} style={{
-            display: 'flex', alignItems: 'center', gap: 6, borderRadius: 12,
-            padding: '10px 16px', fontWeight: 700, fontSize: 12, color: '#fff',
-            border: 'none', cursor: printing ? 'not-allowed' : 'pointer',
-            background: printing ? `${C.primary}99` : C.primary,
-          }}>
-            {printing ? <div style={{ width: 14, height: 14, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><Icon name="printer" size={13} color="#fff" /> प्रिंट</>}
+          <button
+            onClick={handlePrint}
+            disabled={printing}
+            className="bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white px-5 py-3 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg transition-all hover:-translate-y-0.5"
+          >
+            {printing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+            {printing ? 'प्रिंट हो रहा है...' : 'प्रिंट'}
           </button>
         </div>
       </div>
 
       {hasMarked && (
-        <div style={{
-          borderRadius: 10, padding: '12px 16px', marginBottom: 12,
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: `${C.success}14`, border: `1px solid ${C.success}4d`,
-        }}>
-          <Icon name="checkcircle" size={17} color={C.success} />
-          <span style={{ fontSize: 13, fontWeight: 700, color: C.success }}>ड्यूटी कार्ड डाउनलोड हो गया ✓</span>
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 mb-4 flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+          <span className="text-sm font-bold text-emerald-700">ड्यूटी कार्ड डाउनलोड हो गया ✓</span>
         </div>
       )}
 
-      <SectionCard iconName="badge" title="कार्ड विवरण">
-        {rows.map(([label, value]) => value && (
-          <div key={label} style={{
-            display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-            padding: '10px 0', borderBottom: `1px solid ${C.border}26`,
-          }}>
-            <span style={{ fontSize: 12, color: C.subtle }}>{label}</span>
-            <span style={{ fontSize: 12, fontWeight: 700, color: C.dark }}>{value}</span>
-          </div>
-        ))}
+      <SectionCard icon={EyeIcon} title="कार्ड विवरण" accent="amber">
+        <PreviewRow label="नाम" value={user?.name} />
+        <PreviewRow label="PNO" value={user?.pno} />
+        <PreviewRow label="पद" value={rh(user?.rank || user?.user_rank)} />
+        <PreviewRow label="केंद्र" value={duty.centerName} />
+        <PreviewRow label="केंद्र प्रकार" value={ct(duty.centerType)} />
+        {duty.busNo && <PreviewRow label="बस" value={`बस–${duty.busNo}`} />}
+        <PreviewRow label="सेक्टर" value={duty.sectorName} />
+        <PreviewRow label="जोन" value={duty.zoneName} />
+        <PreviewRow label="सहयोगी" value={`${sahyogi.length} कर्मी`} />
       </SectionCard>
-    </div>
+    </>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  SECTOR — OVERVIEW
+// SECTOR SECTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 function SectorOverview({ duty, user }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
+    <>
       <HeroCard user={user} duty={duty} noDuty={false} subtitle="सेक्टर अधिकारी" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        <StatCard iconName="vote" label="कुल बूथ" value={`${duty.totalBooths || 0}`} color={C.primary} />
-        <StatCard iconName="users" label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} color={C.success} />
-        <StatCard iconName="building" label="ग्राम पंचायत" value={`${(duty.gramPanchayats || []).length}`} color={C.info} />
-        <StatCard iconName="map" label="जोन" value={v(duty.zoneName)} color={C.accent} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={Vote} label="कुल बूथ" value={`${duty.totalBooths || 0}`} color="amber" />
+        <StatCard icon={Users} label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} color="green" />
+        <StatCard icon={Building2} label="ग्राम पंचायत" value={`${(duty.gramPanchayats || []).length}`} color="blue" />
+        <StatCard icon={Map} label="जोन" value={v(duty.zoneName)} color="orange" />
       </div>
-      <SectionCard iconName="info" title="सेक्टर विवरण">
-        <InfoTile iconName="grid" label="सेक्टर" value={v(duty.sectorName)} />
-        <InfoTile iconName="home" label="मुख्यालय" value={v(duty.hqAddress)} />
-        <InfoTile iconName="layers" label="जोन" value={v(duty.zoneName)} />
-        <InfoTile iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} />
+      <SectionCard icon={Info} title="सेक्टर विवरण">
+        <InfoTile icon={Grid3x3} label="सेक्टर" value={v(duty.sectorName)} />
+        <InfoTile icon={Home} label="मुख्यालय" value={v(duty.hqAddress)} />
+        <InfoTile icon={Layers} label="जोन" value={v(duty.zoneName)} />
+        <InfoTile icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} />
       </SectionCard>
-    </div>
+    </>
   );
 }
 
 function SectorInfo({ duty }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
-      <SectionCard iconName="grid" title="सेक्टर जानकारी">
-        <InfoTile iconName="grid" label="सेक्टर" value={v(duty.sectorName)} />
-        <InfoTile iconName="home" label="HQ पता" value={v(duty.hqAddress)} />
-        <InfoTile iconName="map" label="जोन" value={v(duty.zoneName)} />
-        <InfoTile iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} />
+    <>
+      <SectionCard icon={Grid3x3} title="सेक्टर जानकारी">
+        <InfoTile icon={Grid3x3} label="सेक्टर" value={v(duty.sectorName)} />
+        <InfoTile icon={Home} label="HQ पता" value={v(duty.hqAddress)} />
+        <InfoTile icon={Map} label="जोन" value={v(duty.zoneName)} />
+        <InfoTile icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} />
       </SectionCard>
       {(duty.coOfficers || []).length > 0 && <OfficerCard label="सह-सेक्टर अधिकारी" officers={duty.coOfficers} />}
       {(duty.zonalOfficers || []).length > 0 && <OfficerCard label="जोनल अधिकारी (वरिष्ठ)" officers={duty.zonalOfficers} />}
-    </div>
+    </>
   );
 }
 
-// ═══════════════════════════════════════════════════════════════════════════════
-//  SECTOR — BOOTH ATTENDANCE
-// ═══════════════════════════════════════════════════════════════════════════════
 function SectorBoothAttendance({ duty, onRefresh }) {
   const [pendingUpdates, setPendingUpdates] = useState({});
   const [saving, setSaving] = useState(false);
   const [searchQ, setSearchQ] = useState('');
 
   if (!duty) return <NoDutyState />;
-
   const centers = duty.centers || [];
 
   const getAttended = (s) => {
-    if (pendingUpdates.hasOwnProperty(s.duty_id)) return pendingUpdates[s.duty_id];
+    if (s.duty_id != null && Object.prototype.hasOwnProperty.call(pendingUpdates, s.duty_id)) {
+      return pendingUpdates[s.duty_id];
+    }
     return s.attended === 1 || s.attended === true;
   };
 
@@ -600,13 +602,15 @@ function SectorBoothAttendance({ duty, onRefresh }) {
     setPendingUpdates(p => ({ ...p, [dutyId]: !current }));
   };
 
-  const filtered = searchQ
-    ? centers.filter(c =>
-      (c.name || '').toLowerCase().includes(searchQ.toLowerCase()) ||
-      (c.gp_name || '').toLowerCase().includes(searchQ.toLowerCase()) ||
-      (c.thana || '').toLowerCase().includes(searchQ.toLowerCase())
-    )
-    : centers;
+  const filtered = useMemo(() => {
+    if (!searchQ) return centers;
+    const q = searchQ.toLowerCase();
+    return centers.filter(c =>
+      (c.name || '').toLowerCase().includes(q) ||
+      (c.gp_name || '').toLowerCase().includes(q) ||
+      (c.thana || '').toLowerCase().includes(q)
+    );
+  }, [centers, searchQ]);
 
   let totalStaff = 0, presentStaff = 0;
   centers.forEach(c => (c.staff || []).forEach(s => {
@@ -617,132 +621,127 @@ function SectorBoothAttendance({ duty, onRefresh }) {
   const saveAll = async () => {
     if (!Object.keys(pendingUpdates).length) return;
     setSaving(true);
+    const tId = toast.loading('सेव हो रहा है...');
     try {
-      const updates = Object.entries(pendingUpdates).map(([dutyId, attended]) => ({ dutyId: Number(dutyId), attended }));
+      const updates = Object.entries(pendingUpdates).map(([dutyId, attended]) => ({
+        dutyId: Number(dutyId), attended,
+      }));
       await apiClient.post('/staff/attendance/bulk', { updates });
       setPendingUpdates({});
       onRefresh();
+      toast.success('उपस्थिति सेव हो गई ✓', { id: tId });
     } catch (e) {
-      alert('त्रुटि: ' + e.message);
+      toast.error('त्रुटि: ' + (e.message || e), { id: tId });
     } finally { setSaving(false); }
   };
 
   const pendingCount = Object.keys(pendingUpdates).length;
 
   return (
-    <div>
-      <div style={{
-        borderRadius: 14, padding: 16, marginBottom: 16,
-        background: `linear-gradient(135deg, ${C.dark} 0%, #5A3E08 100%)`,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: 12 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
-            <Icon name="vote" size={18} color="#fff" />
-            <span style={{ fontWeight: 900, color: '#fff', fontSize: 16 }}>बूथ उपस्थिति</span>
-          </div>
-          {pendingCount > 0 && (
-            <button onClick={saveAll} disabled={saving} style={{
-              display: 'flex', alignItems: 'center', gap: 6, borderRadius: 10,
-              padding: '8px 14px', fontWeight: 700, fontSize: 12, color: '#fff',
-              border: 'none', cursor: 'pointer', background: C.success,
-            }}>
-              {saving ? <div style={{ width: 13, height: 13, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <Icon name="save" size={13} color="#fff" />}
-              {saving ? '...' : `${pendingCount} सेव करें`}
-            </button>
-          )}
-        </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 8 }}>
-          {[['कुल स्टाफ', totalStaff, C.border], ['उपस्थित', presentStaff, '#4CAF50'], ['अनुपस्थित', totalStaff - presentStaff, '#ef5350']].map(([l, n, col]) => (
-            <div key={l} style={{ borderRadius: 10, padding: '12px 0', textAlign: 'center', background: 'rgba(255,255,255,0.1)' }}>
-              <p style={{ fontWeight: 900, fontSize: 20, color: col }}>{n}</p>
-              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.7)' }}>{l}</p>
+    <>
+      <div className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-amber-900 rounded-2xl p-5 mb-4 shadow-xl">
+        <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-amber-400/20 blur-2xl" />
+        <div className="relative z-10">
+          <div className="flex items-center justify-between gap-3 mb-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-white/15 flex items-center justify-center">
+                <Vote className="w-5 h-5 text-white" />
+              </div>
+              <div>
+                <p className="font-extrabold text-white text-lg">बूथ उपस्थिति</p>
+                <p className="text-xs text-amber-100/70">रियल-टाइम अपडेट</p>
+              </div>
             </div>
-          ))}
+            {pendingCount > 0 && (
+              <button
+                onClick={saveAll}
+                disabled={saving}
+                className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white px-4 py-2.5 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg transition-all"
+              >
+                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                {saving ? 'सेव...' : `${pendingCount} सेव करें`}
+              </button>
+            )}
+          </div>
+          <div className="grid grid-cols-3 gap-3">
+            <div className="bg-white/10 backdrop-blur-sm rounded-xl p-3 text-center">
+              <p className="text-2xl font-extrabold text-white">{totalStaff}</p>
+              <p className="text-[10px] text-amber-100/70 uppercase tracking-wider">कुल स्टाफ</p>
+            </div>
+            <div className="bg-emerald-500/20 backdrop-blur-sm border border-emerald-400/30 rounded-xl p-3 text-center">
+              <p className="text-2xl font-extrabold text-emerald-300">{presentStaff}</p>
+              <p className="text-[10px] text-emerald-200 uppercase tracking-wider">उपस्थित</p>
+            </div>
+            <div className="bg-red-500/20 backdrop-blur-sm border border-red-400/30 rounded-xl p-3 text-center">
+              <p className="text-2xl font-extrabold text-red-300">{totalStaff - presentStaff}</p>
+              <p className="text-[10px] text-red-200 uppercase tracking-wider">अनुपस्थित</p>
+            </div>
+          </div>
         </div>
       </div>
 
-      <div style={{ position: 'relative', marginBottom: 12 }}>
-        <div style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)' }}>
-          <Icon name="search" size={15} color={C.subtle} />
-        </div>
+      <div className="relative mb-4">
+        <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
         <input
-          style={{
-            width: '100%', borderRadius: 10, paddingLeft: 36, paddingRight: 12,
-            paddingTop: 10, paddingBottom: 10, fontSize: 13, outline: 'none',
-            background: '#fff', border: `1px solid ${C.border}`, color: C.dark, boxSizing: 'border-box',
-          }}
-          placeholder="बूथ/थाना/GP खोजें..."
-          value={searchQ} onChange={e => setSearchQ(e.target.value)}
+          type="text"
+          value={searchQ}
+          onChange={e => setSearchQ(e.target.value)}
+          placeholder="बूथ / थाना / ग्राम पंचायत खोजें..."
+          className="w-full bg-white border border-slate-200 rounded-xl pl-11 pr-4 py-3 text-sm focus:border-amber-500 focus:ring-2 focus:ring-amber-200 outline-none transition-all"
         />
       </div>
 
-      {filtered.map((center, ci) => {
+      {filtered.length === 0 ? (
+        <div className="py-16 text-center bg-white rounded-2xl border border-slate-200">
+          <Search className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">कोई बूथ नहीं मिला</p>
+        </div>
+      ) : filtered.map((center, ci) => {
         const staff = center.staff || [];
         const present = staff.filter(s => getAttended(s)).length;
-        const tc = typeColor(center.center_type);
+        const tc = typeColorClass(center.center_type);
+        const allPresent = present === staff.length && staff.length > 0;
         return (
-          <div key={ci} style={{
-            borderRadius: 14, overflow: 'hidden', marginBottom: 12,
-            background: '#fff', border: `1px solid ${C.border}66`,
-            boxShadow: `0 3px 8px ${C.primary}0a`,
-          }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 12, padding: '12px 14px',
-              background: `${tc}0f`, borderBottom: `1px solid ${tc}33`,
-            }}>
-              <span style={{
-                borderRadius: 6, padding: '4px 8px', fontWeight: 900, fontSize: 11,
-                color: '#fff', background: tc,
-              }}>{center.center_type || 'C'}</span>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontWeight: 700, fontSize: 13, color: C.dark, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{center.name || '—'}</p>
-                <p style={{ fontSize: 10, color: C.subtle }}>{center.gp_name || ''} · {center.thana || ''}</p>
+          <div key={ci} className="bg-white rounded-2xl border border-slate-200 overflow-hidden mb-3 shadow-sm hover:shadow-md transition-shadow">
+            <div className={`flex items-center gap-3 px-4 py-3 ${tc.light} border-b ${tc.border}`}>
+              <span className={`${tc.bg} text-white text-[11px] font-extrabold px-2.5 py-1 rounded-md`}>
+                {center.center_type || 'C'}
+              </span>
+              <div className="flex-1 min-w-0">
+                <p className="font-bold text-sm text-slate-800 truncate">{center.name || '—'}</p>
+                <p className="text-[11px] text-slate-500">{center.gp_name || ''} · {center.thana || ''}</p>
               </div>
-              <span style={{
-                borderRadius: 20, padding: '4px 10px', fontSize: 11, fontWeight: 900,
-                background: present === staff.length && staff.length > 0 ? `${C.success}1a` : `${C.subtle}14`,
-                color: present === staff.length && staff.length > 0 ? C.success : C.subtle,
-                border: `1px solid ${present === staff.length && staff.length > 0 ? C.success : C.border}4d`,
-              }}>{present}/{staff.length}</span>
+              <span className={`px-3 py-1 rounded-full text-[11px] font-extrabold border ${allPresent ? 'bg-emerald-50 text-emerald-700 border-emerald-200' : 'bg-slate-50 text-slate-600 border-slate-200'}`}>
+                {present}/{staff.length}
+              </span>
             </div>
             {staff.length === 0 ? (
-              <p style={{ textAlign: 'center', fontSize: 12, padding: '16px 0', color: C.subtle }}>कोई स्टाफ असाइन नहीं</p>
+              <p className="text-center text-sm text-slate-500 py-6">कोई स्टाफ असाइन नहीं</p>
             ) : staff.map((s, si) => {
               const attended = getAttended(s);
               const armed = s.is_armed === 1 || s.is_armed === true;
               return (
-                <div key={si} style={{
-                  display: 'flex', alignItems: 'center', gap: 12, padding: '10px 14px',
-                  borderBottom: si < staff.length - 1 ? `1px solid ${C.border}4d` : 'none',
-                }}>
-                  <div style={{
-                    width: 36, height: 36, borderRadius: '50%', display: 'flex',
-                    alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-                    background: `${armed ? C.armed : C.unarmed}1a`,
-                    border: `1px solid ${armed ? C.armed : C.unarmed}4d`,
-                  }}>
-                    {armed ? <Icon name="shield" size={14} color={C.armed} /> : <Icon name="user" size={14} color={C.unarmed} />}
+                <div key={si} className={`flex items-center gap-3 px-4 py-3 ${si < staff.length - 1 ? 'border-b border-slate-100' : ''}`}>
+                  <div className={`w-10 h-10 rounded-full flex items-center justify-center flex-shrink-0 border ${armed ? 'bg-emerald-50 border-emerald-200' : 'bg-slate-50 border-slate-200'}`}>
+                    {armed ? <Shield className="w-4 h-4 text-emerald-700" /> : <User className="w-4 h-4 text-slate-600" />}
                   </div>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <p style={{ fontWeight: 700, fontSize: 13, color: C.dark }}>{s.name || '—'}</p>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                      <span style={{ fontSize: 10, color: C.subtle }}>{rh(s.user_rank)}</span>
-                      <span style={{ fontSize: 10, color: C.subtle }}>·</span>
-                      <span style={{ fontSize: 10, color: C.subtle }}>{s.pno || ''}</span>
-                      <span style={{
-                        borderRadius: 4, padding: '0 4px', fontSize: 9, fontWeight: 700,
-                        background: `${armed ? C.armed : C.unarmed}1a`, color: armed ? C.armed : C.unarmed,
-                      }}>{armed ? 'सशस्त्र' : 'निःशस्त्र'}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-sm text-slate-800 truncate">{s.name || '—'}</p>
+                    <div className="flex items-center gap-2 flex-wrap mt-0.5">
+                      <span className="text-[11px] text-slate-500">{rh(s.user_rank)}</span>
+                      <span className="text-[11px] text-slate-400">·</span>
+                      <span className="text-[11px] text-slate-500">{s.pno || ''}</span>
+                      <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded ${armed ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-600'}`}>
+                        {armed ? 'सशस्त्र' : 'निःशस्त्र'}
+                      </span>
                     </div>
                   </div>
-                  <button onClick={() => s.duty_id && toggle(s.duty_id, attended)} style={{
-                    display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 4,
-                    borderRadius: 20, padding: '6px 12px', fontSize: 10, fontWeight: 700,
-                    width: 60, cursor: 'pointer', border: `1.5px solid ${attended ? C.success : `${C.error}66`}`,
-                    background: attended ? C.success : `${C.error}1a`,
-                    color: attended ? '#fff' : C.error,
-                  }}>
-                    {attended ? <><Icon name="check" size={11} color="#fff" />हाँ</> : <><Icon name="x" size={11} color={C.error} />नहीं</>}
+                  <button
+                    onClick={() => s.duty_id && toggle(s.duty_id, attended)}
+                    className={`flex items-center gap-1 px-3 py-1.5 rounded-full text-[11px] font-bold border transition-all hover:scale-105 ${attended ? 'bg-emerald-600 text-white border-emerald-600 shadow-sm' : 'bg-red-50 text-red-700 border-red-200'}`}
+                  >
+                    {attended ? <Check className="w-3 h-3" /> : <X className="w-3 h-3" />}
+                    {attended ? 'हाँ' : 'नहीं'}
                   </button>
                 </div>
               );
@@ -750,54 +749,48 @@ function SectorBoothAttendance({ duty, onRefresh }) {
           </div>
         );
       })}
-
-      {filtered.length === 0 && (
-        <div style={{ padding: '40px 0', textAlign: 'center' }}>
-          <p style={{ fontSize: 13, color: C.subtle }}>कोई बूथ नहीं मिला</p>
-        </div>
-      )}
-    </div>
+    </>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  ZONE
+// ZONE SECTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 function ZoneOverview({ duty, user }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
+    <>
       <HeroCard user={user} duty={duty} noDuty={false} subtitle="जोनल अधिकारी" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        <StatCard iconName="grid" label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} color={C.primary} />
-        <StatCard iconName="vote" label="कुल बूथ" value={`${duty.totalBooths || 0}`} color={C.info} />
-        <StatCard iconName="users" label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} color={C.success} />
-        <StatCard iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} color={C.accent} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={Grid3x3} label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} color="amber" />
+        <StatCard icon={Vote} label="कुल बूथ" value={`${duty.totalBooths || 0}`} color="blue" />
+        <StatCard icon={Users} label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} color="green" />
+        <StatCard icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} color="orange" />
       </div>
-      <SectionCard iconName="map" title="जोन विवरण">
-        <InfoTile iconName="map" label="जोन" value={v(duty.zoneName)} />
-        <InfoTile iconName="home" label="मुख्यालय" value={v(duty.hqAddress)} />
-        <InfoTile iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} />
+      <SectionCard icon={Map} title="जोन विवरण">
+        <InfoTile icon={Map} label="जोन" value={v(duty.zoneName)} />
+        <InfoTile icon={Home} label="मुख्यालय" value={v(duty.hqAddress)} />
+        <InfoTile icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} />
       </SectionCard>
-    </div>
+    </>
   );
 }
 
 function ZoneInfo({ duty }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
-      <SectionCard iconName="map" title="जोन विस्तार जानकारी">
-        <InfoTile iconName="map" label="जोन" value={v(duty.zoneName)} />
-        <InfoTile iconName="home" label="HQ" value={v(duty.hqAddress)} />
-        <InfoTile iconName="globe" label="सुपर जोन" value={v(duty.superZoneName)} />
-        <InfoTile iconName="grid" label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} />
-        <InfoTile iconName="vote" label="कुल बूथ" value={`${duty.totalBooths || 0}`} />
-        <InfoTile iconName="users" label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} />
+    <>
+      <SectionCard icon={Map} title="जोन विस्तार जानकारी">
+        <InfoTile icon={Map} label="जोन" value={v(duty.zoneName)} />
+        <InfoTile icon={Home} label="HQ" value={v(duty.hqAddress)} />
+        <InfoTile icon={Globe} label="सुपर जोन" value={v(duty.superZoneName)} />
+        <InfoTile icon={Grid3x3} label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} />
+        <InfoTile icon={Vote} label="कुल बूथ" value={`${duty.totalBooths || 0}`} />
+        <InfoTile icon={Users} label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} />
       </SectionCard>
       {(duty.coOfficers || []).length > 0 && <OfficerCard label="जोनल अधिकारी" officers={duty.coOfficers} />}
       {(duty.superOfficers || []).length > 0 && <OfficerCard label="क्षेत्र अधिकारी (वरिष्ठ)" officers={duty.superOfficers} />}
-    </div>
+    </>
   );
 }
 
@@ -805,31 +798,31 @@ function ZoneSectors({ duty }) {
   if (!duty) return <NoDutyState />;
   const sectors = duty.sectors || [];
   return (
-    <SectionCard iconName="grid" title={`सेक्टर (${sectors.length})`}>
+    <SectionCard icon={Grid3x3} title={`सेक्टर (${sectors.length})`}>
       {sectors.length === 0 ? (
-        <p style={{ textAlign: 'center', fontSize: 13, padding: '20px 0', color: C.subtle }}>कोई सेक्टर नहीं</p>
+        <div className="py-10 text-center">
+          <Grid3x3 className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">कोई सेक्टर नहीं</p>
+        </div>
       ) : sectors.map((s, i) => (
-        <div key={i} style={{ padding: '12px 0', borderBottom: i < sectors.length - 1 ? `1px solid ${C.border}66` : 'none' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, display: 'flex',
-              alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              background: `${C.primary}1a`,
-            }}>
-              <Icon name="grid" size={14} color={C.primary} />
+        <div key={i} className={`py-3 ${i < sectors.length - 1 ? 'border-b border-slate-100' : ''}`}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0">
+              <Grid3x3 className="w-4 h-4 text-amber-700" />
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontWeight: 700, fontSize: 13, color: C.dark }}>{s.name || '—'}</p>
-              <p style={{ fontSize: 11, color: C.subtle }}>{s.gp_count || 0} GP · {s.center_count || 0} बूथ · {s.staff_assigned || 0} स्टाफ</p>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm text-slate-800">{s.name || '—'}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {s.gp_count || 0} GP · {s.center_count || 0} बूथ · {s.staff_assigned || 0} स्टाफ
+              </p>
             </div>
           </div>
           {(s.officers || []).length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+            <div className="flex flex-wrap gap-2 mt-3 ml-13">
               {(s.officers || []).map((o, j) => (
-                <span key={j} style={{
-                  borderRadius: 20, padding: '4px 10px', fontSize: 10, fontWeight: 600,
-                  background: `${C.primary}14`, border: `1px solid ${C.primary}33`, color: C.primary,
-                }}>{o.name} ({rh(o.user_rank || o.rank)})</span>
+                <span key={j} className="bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-semibold px-2.5 py-1 rounded-full">
+                  {o.name} ({rh(o.user_rank || o.rank)})
+                </span>
               ))}
             </div>
           )}
@@ -840,43 +833,43 @@ function ZoneSectors({ duty }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  KSHETRA
+// KSHETRA SECTIONS
 // ═══════════════════════════════════════════════════════════════════════════════
 function KshetraOverview({ duty, user }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
+    <>
       <HeroCard user={user} duty={duty} noDuty={false} subtitle="क्षेत्र अधिकारी" />
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, marginBottom: 16 }}>
-        <StatCard iconName="map" label="कुल जोन" value={`${duty.totalZones || 0}`} color={C.primary} />
-        <StatCard iconName="grid" label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} color={C.info} />
-        <StatCard iconName="vote" label="कुल बूथ" value={`${duty.totalBooths || 0}`} color={C.success} />
-        <StatCard iconName="users" label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} color={C.accent} />
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={Map} label="कुल जोन" value={`${duty.totalZones || 0}`} color="amber" />
+        <StatCard icon={Grid3x3} label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} color="blue" />
+        <StatCard icon={Vote} label="कुल बूथ" value={`${duty.totalBooths || 0}`} color="green" />
+        <StatCard icon={Users} label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} color="orange" />
       </div>
-      <SectionCard iconName="layers" title="क्षेत्र विवरण">
-        <InfoTile iconName="layers" label="सुपर जोन" value={v(duty.superZoneName)} />
-        <InfoTile iconName="building" label="जिला" value={v(duty.district)} />
-        <InfoTile iconName="briefcase" label="ब्लॉक" value={v(duty.block)} />
+      <SectionCard icon={Layers} title="क्षेत्र विवरण">
+        <InfoTile icon={Layers} label="सुपर जोन" value={v(duty.superZoneName)} />
+        <InfoTile icon={Building2} label="जिला" value={v(duty.district)} />
+        <InfoTile icon={Briefcase} label="ब्लॉक" value={v(duty.block)} />
       </SectionCard>
-    </div>
+    </>
   );
 }
 
 function KshetraInfo({ duty }) {
   if (!duty) return <NoDutyState />;
   return (
-    <div>
-      <SectionCard iconName="layers" title="क्षेत्र जानकारी">
-        <InfoTile iconName="layers" label="सुपर जोन" value={v(duty.superZoneName)} />
-        <InfoTile iconName="building" label="जिला" value={v(duty.district)} />
-        <InfoTile iconName="briefcase" label="ब्लॉक" value={v(duty.block)} />
-        <InfoTile iconName="map" label="कुल जोन" value={`${duty.totalZones || 0}`} />
-        <InfoTile iconName="grid" label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} />
-        <InfoTile iconName="vote" label="कुल बूथ" value={`${duty.totalBooths || 0}`} />
-        <InfoTile iconName="users" label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} />
+    <>
+      <SectionCard icon={Layers} title="क्षेत्र जानकारी">
+        <InfoTile icon={Layers} label="सुपर जोन" value={v(duty.superZoneName)} />
+        <InfoTile icon={Building2} label="जिला" value={v(duty.district)} />
+        <InfoTile icon={Briefcase} label="ब्लॉक" value={v(duty.block)} />
+        <InfoTile icon={Map} label="कुल जोन" value={`${duty.totalZones || 0}`} />
+        <InfoTile icon={Grid3x3} label="कुल सेक्टर" value={`${duty.totalSectors || 0}`} />
+        <InfoTile icon={Vote} label="कुल बूथ" value={`${duty.totalBooths || 0}`} />
+        <InfoTile icon={Users} label="असाइन स्टाफ" value={`${duty.totalAssigned || 0}`} />
       </SectionCard>
       {(duty.coOfficers || []).length > 0 && <OfficerCard label="सह-क्षेत्र अधिकारी" officers={duty.coOfficers} />}
-    </div>
+    </>
   );
 }
 
@@ -884,32 +877,32 @@ function KshetraZones({ duty }) {
   if (!duty) return <NoDutyState />;
   const zones = duty.zones || [];
   return (
-    <SectionCard iconName="map" title={`जोन (${zones.length})`}>
+    <SectionCard icon={Map} title={`जोन (${zones.length})`}>
       {zones.length === 0 ? (
-        <p style={{ textAlign: 'center', fontSize: 13, padding: '20px 0', color: C.subtle }}>कोई जोन नहीं</p>
+        <div className="py-10 text-center">
+          <Map className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">कोई जोन नहीं</p>
+        </div>
       ) : zones.map((z, i) => (
-        <div key={i} style={{ padding: '12px 0', borderBottom: i < zones.length - 1 ? `1px solid ${C.border}66` : 'none' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <div style={{
-              width: 36, height: 36, borderRadius: 10, display: 'flex',
-              alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              background: `${C.info}1a`,
-            }}>
-              <Icon name="map" size={14} color={C.info} />
+        <div key={i} className={`py-3 ${i < zones.length - 1 ? 'border-b border-slate-100' : ''}`}>
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-blue-50 border border-blue-200 flex items-center justify-center flex-shrink-0">
+              <Map className="w-4 h-4 text-blue-700" />
             </div>
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontWeight: 700, fontSize: 13, color: C.dark }}>{z.name || '—'}</p>
-              <p style={{ fontSize: 11, color: C.subtle }}>{z.sector_count || 0} सेक्टर · {z.center_count || 0} बूथ · {z.staff_assigned || 0} स्टाफ</p>
-              {z.hq_address && <p style={{ fontSize: 10, color: C.subtle }}>HQ: {z.hq_address}</p>}
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-sm text-slate-800">{z.name || '—'}</p>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                {z.sector_count || 0} सेक्टर · {z.center_count || 0} बूथ · {z.staff_assigned || 0} स्टाफ
+              </p>
+              {z.hq_address && <p className="text-[10px] text-slate-400 mt-0.5">HQ: {z.hq_address}</p>}
             </div>
           </div>
           {(z.officers || []).length > 0 && (
-            <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, marginTop: 8 }}>
+            <div className="flex flex-wrap gap-2 mt-3">
               {(z.officers || []).map((o, j) => (
-                <span key={j} style={{
-                  borderRadius: 20, padding: '4px 10px', fontSize: 10, fontWeight: 600,
-                  background: `${C.primary}14`, border: `1px solid ${C.primary}33`, color: C.primary,
-                }}>{o.name} ({rh(o.user_rank || o.rank)})</span>
+                <span key={j} className="bg-amber-50 border border-amber-200 text-amber-700 text-[10px] font-semibold px-2.5 py-1 rounded-full">
+                  {o.name} ({rh(o.user_rank || o.rank)})
+                </span>
               ))}
             </div>
           )}
@@ -920,13 +913,253 @@ function KshetraZones({ duty }) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  RULES
+// DISTRICT DUTY SECTIONS
+// ═══════════════════════════════════════════════════════════════════════════════
+function DistrictOverview({ duty, user, electionConfig, onGoToDutyCard }) {
+  const dutyType = duty.dutyType || '';
+  const batchNo = duty.batchNo;
+  const busNo = duty.busNo || '';
+  const note = duty.note || '';
+  const batchStaff = duty.batchStaff || [];
+
+  return (
+    <>
+      <ElectionConfigBanner electionConfig={electionConfig} />
+
+      <div className="relative overflow-hidden rounded-2xl p-6 mb-5 bg-gradient-to-br from-purple-700 via-purple-800 to-fuchsia-900 shadow-xl shadow-purple-500/30">
+        <div className="absolute -top-12 -right-12 w-48 h-48 rounded-full bg-purple-400/20 blur-2xl" />
+        <div className="absolute -bottom-8 -left-8 w-40 h-40 rounded-full bg-fuchsia-500/10 blur-2xl" />
+
+        <div className="relative z-10">
+          <div className="flex items-center gap-4 mb-4">
+            <div className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm border border-white/30 flex items-center justify-center flex-shrink-0">
+              <ShieldCheck className="w-7 h-7 text-white" />
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-[10px] font-bold tracking-widest uppercase text-purple-200 mb-0.5">जनपदीय ड्यूटी</p>
+              <p className="text-xl font-extrabold text-white">{dutyLabel(dutyType)}</p>
+            </div>
+            <span className="px-3 py-1.5 rounded-full bg-white/15 border border-white/20 text-white text-xs font-extrabold flex-shrink-0">
+              बैच {batchNo ?? '—'}
+            </span>
+          </div>
+
+          {(busNo || note) && (
+            <>
+              <div className="h-px bg-white/15 my-3" />
+              {busNo && (
+                <div className="flex items-center gap-2 mb-1.5">
+                  <Bus className="w-3.5 h-3.5 text-purple-200" />
+                  <p className="text-xs text-purple-50">बस: {busNo}</p>
+                </div>
+              )}
+              {note && (
+                <div className="flex items-start gap-2">
+                  <FileText className="w-3.5 h-3.5 text-purple-200 mt-0.5 flex-shrink-0" />
+                  <p className="text-xs text-purple-50/90">{note}</p>
+                </div>
+              )}
+            </>
+          )}
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 mb-5">
+        <StatCard icon={ShieldCheck} label="ड्यूटी प्रकार" value={dutyLabel(dutyType)} color="purple" />
+        <StatCard icon={TicketCheck} label="बैच संख्या" value={`बैच ${batchNo ?? '—'}`} color="amber" />
+        <StatCard icon={Users} label="बैच कर्मी" value={`${batchStaff.length} कर्मी`} color="green" />
+        <StatCard icon={Bus} label="बस संख्या" value={busNo || '—'} color="blue" />
+      </div>
+
+      <SectionCard icon={User} title="कर्मी विवरण" accent="purple">
+        <InfoTile icon={User} label="नाम" value={user?.name} />
+        <InfoTile icon={Hash} label="PNO" value={user?.pno} />
+        <InfoTile icon={Star} label="पद" value={rh(user?.rank || user?.user_rank)} />
+        <InfoTile icon={Shield} label="थाना" value={user?.thana} />
+        <InfoTile icon={Building2} label="जनपद" value={user?.district || electionConfig?.district} />
+      </SectionCard>
+
+      <NavButton icon={Printer} label="ड्यूटी कार्ड प्रिंट करें" color="purple" onClick={onGoToDutyCard} />
+    </>
+  );
+}
+
+function DistrictDetail({ duty }) {
+  const dutyType = duty.dutyType || '';
+  const batchNo = duty.batchNo;
+  const busNo = duty.busNo || '';
+  const note = duty.note || '';
+  const district = duty.district || '';
+  const assignedAt = duty.assignedAt || '';
+
+  return (
+    <>
+      <SectionCard icon={ShieldCheck} title="जनपदीय ड्यूटी विवरण" accent="purple">
+        <InfoTile icon={Briefcase} label="ड्यूटी प्रकार" value={dutyLabel(dutyType)} />
+        <InfoTile icon={TicketCheck} label="बैच संख्या" value={`बैच ${batchNo ?? '—'}`} />
+        {busNo && <InfoTile icon={Bus} label="बस संख्या" value={busNo} />}
+        {district && <InfoTile icon={Building2} label="जनपद" value={district} />}
+        {note && <InfoTile icon={FileText} label="विशेष नोट" value={note} />}
+        {assignedAt && <InfoTile icon={Clock} label="नियुक्ति समय" value={assignedAt} />}
+      </SectionCard>
+
+      <div className="bg-purple-50/60 border border-purple-200 rounded-2xl p-5">
+        <div className="flex items-center gap-2 mb-3">
+          <Info className="w-4 h-4 text-purple-700" />
+          <h3 className="font-extrabold text-sm text-purple-800">ड्यूटी जानकारी</h3>
+        </div>
+        <p className="text-sm text-purple-700/80 leading-relaxed">
+          आप <strong>"{dutyLabel(dutyType)}"</strong> ड्यूटी पर बैच <strong>{batchNo}</strong> में तैनात हैं।
+          यह जनपद स्तरीय ड्यूटी है जो व्यवस्थापक द्वारा सौंपी गई है।
+        </p>
+      </div>
+    </>
+  );
+}
+
+function DistrictBatchStaff({ duty }) {
+  const staff = duty.batchStaff || [];
+  const batchNo = duty.batchNo;
+
+  return (
+    <SectionCard icon={Users} title={`बैच ${batchNo} के सहयोगी कर्मी (${staff.length})`} accent="purple">
+      {staff.length === 0 ? (
+        <div className="py-10 text-center">
+          <Users className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+          <p className="text-sm text-slate-500">कोई सहयोगी नहीं</p>
+        </div>
+      ) : (
+        <div className="space-y-1">
+          {staff.map((s, i) => (
+            <StaffRow
+              key={i}
+              index={i}
+              total={staff.length}
+              staff={s}
+              armed={s.is_armed === 1 || s.is_armed === true}
+            />
+          ))}
+        </div>
+      )}
+    </SectionCard>
+  );
+}
+
+function DistrictDutyCard({ duty, user, electionConfig }) {
+  const [printing, setPrinting] = useState(false);
+  const [hasMarked, setHasMarked] = useState(false);
+
+  const toAdminShapeDistrict = () => {
+    const ec = electionConfig || {};
+    const batchStaff = duty.batchStaff || [];
+    return {
+      name: user?.name || '',
+      pno: user?.pno || '',
+      mobile: user?.mobile || '',
+      rank: user?.rank || user?.user_rank || '',
+      user_rank: user?.rank || user?.user_rank || '',
+      isArmed: user?.isArmed || false,
+      staffThana: user?.thana || '',
+      thana: user?.thana || '',
+      district: user?.district || ec.district || '',
+      centerName: dutyLabel(duty.dutyType),
+      centerType: 'district',
+      gpName: '',
+      sectorName: '',
+      zoneName: '',
+      superZoneName: '',
+      busNo: duty.busNo || '',
+      bus_no: duty.busNo || '',
+      zonalOfficers: [],
+      sectorOfficers: [],
+      superOfficers: [],
+      sahyogi: batchStaff,
+      allStaff: batchStaff,
+      electionName: ec.election_name || '',
+      electionType: ec.election_type || '',
+      electionDate: ec.election_date || '',
+      phase: ec.phase || '',
+      pratahSamay: ec.pratah_samay || '',
+      sayaSamay: ec.saya_samay || '',
+      batchNo: duty.batchNo?.toString() || '',
+    };
+  };
+
+  const handlePrint = async () => {
+    setPrinting(true);
+    const tId = toast.loading('कार्ड प्रिंट हो रहा है...');
+    try {
+      await printDutyCard(toAdminShapeDistrict());
+      try {
+        await apiClient.post('/staff/mark-card-downloaded', {});
+      } catch (e) { console.error('mark-card-downloaded', e); }
+      setHasMarked(true);
+      toast.success('ड्यूटी कार्ड डाउनलोड हो गया!', { id: tId });
+    } catch (e) {
+      toast.error('प्रिंट त्रुटि: ' + (e.message || e), { id: tId });
+    } finally {
+      setPrinting(false);
+    }
+  };
+
+  const ec = electionConfig || {};
+
+  return (
+    <>
+      <div className="relative overflow-hidden rounded-2xl p-6 mb-4 bg-gradient-to-br from-purple-700 via-purple-800 to-fuchsia-900 shadow-xl">
+        <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-fuchsia-500/20 blur-2xl" />
+        <div className="relative z-10 flex items-center gap-4">
+          <div className="w-14 h-14 rounded-2xl bg-white/15 backdrop-blur-sm flex items-center justify-center flex-shrink-0">
+            <Badge className="w-7 h-7 text-white" />
+          </div>
+          <div className="flex-1 min-w-0">
+            <p className="font-extrabold text-white text-lg">जनपदीय ड्यूटी कार्ड</p>
+            <p className="text-xs text-purple-100/70">District Duty Card</p>
+          </div>
+          <button
+            onClick={handlePrint}
+            disabled={printing}
+            className="bg-amber-600 hover:bg-amber-700 disabled:opacity-60 text-white px-5 py-3 rounded-xl font-bold text-sm flex items-center gap-2 shadow-lg transition-all hover:-translate-y-0.5"
+          >
+            {printing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Printer className="w-4 h-4" />}
+            {printing ? 'प्रिंट हो रहा है...' : 'प्रिंट'}
+          </button>
+        </div>
+      </div>
+
+      {hasMarked && (
+        <div className="bg-emerald-50 border border-emerald-200 rounded-xl px-4 py-3 mb-4 flex items-center gap-3">
+          <CheckCircle2 className="w-5 h-5 text-emerald-600 flex-shrink-0" />
+          <span className="text-sm font-bold text-emerald-700">ड्यूटी कार्ड डाउनलोड हो गया ✓</span>
+        </div>
+      )}
+
+      <SectionCard icon={EyeIcon} title="कार्ड विवरण" accent="purple">
+        <PreviewRow label="नाम" value={user?.name} />
+        <PreviewRow label="PNO" value={user?.pno} />
+        <PreviewRow label="पद" value={rh(user?.rank || user?.user_rank)} />
+        <PreviewRow label="ड्यूटी प्रकार" value={dutyLabel(duty.dutyType)} />
+        <PreviewRow label="बैच संख्या" value={`बैच ${duty.batchNo ?? '—'}`} />
+        {duty.busNo && <PreviewRow label="बस" value={duty.busNo} />}
+        <PreviewRow label="जनपद" value={user?.district || ec.district} />
+        {ec.election_name && <PreviewRow label="चुनाव" value={ec.election_name} />}
+        {ec.election_date && <PreviewRow label="मतदान तिथि" value={ec.election_date} />}
+        {ec.pratah_samay && <PreviewRow label="प्रातः समय" value={ec.pratah_samay} />}
+        {ec.saya_samay && <PreviewRow label="सायं समय" value={ec.saya_samay} />}
+        <PreviewRow label="सहयोगी" value={`${(duty.batchStaff || []).length} कर्मी`} />
+      </SectionCard>
+    </>
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// RULES SECTION
 // ═══════════════════════════════════════════════════════════════════════════════
 const RULES_CONFIG = {
-  'A++': { label: 'अत्यति संवेदनशील', color: '#6C3483' },
-  A: { label: 'अति संवेदनशील', color: C.error },
-  B: { label: 'संवेदनशील', color: C.accent },
-  C: { label: 'सामान्य', color: C.info },
+  'A++': { label: 'अत्यति संवेदनशील', color: 'purple', bg: 'bg-purple-600', text: 'text-purple-700', light: 'bg-purple-50', border: 'border-purple-200' },
+  A: { label: 'अति संवेदनशील', color: 'red', bg: 'bg-red-600', text: 'text-red-700', light: 'bg-red-50', border: 'border-red-200' },
+  B: { label: 'संवेदनशील', color: 'amber', bg: 'bg-amber-600', text: 'text-amber-700', light: 'bg-amber-50', border: 'border-amber-200' },
+  C: { label: 'सामान्य', color: 'blue', bg: 'bg-blue-600', text: 'text-blue-700', light: 'bg-blue-50', border: 'border-blue-200' },
 };
 
 function RulesSection({ rules = [] }) {
@@ -938,58 +1171,53 @@ function RulesSection({ rules = [] }) {
   });
 
   return (
-    <div>
-      <div style={{
-        borderRadius: 14, padding: 16, marginBottom: 16,
-        background: `linear-gradient(135deg, ${C.dark} 0%, #5A3E08 100%)`,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <Icon name="clipboard" size={18} color="#fff" />
+    <>
+      <div className="relative overflow-hidden bg-gradient-to-br from-slate-800 via-slate-900 to-amber-900 rounded-2xl p-5 mb-4 shadow-xl">
+        <div className="absolute -top-8 -right-8 w-40 h-40 rounded-full bg-amber-400/20 blur-2xl" />
+        <div className="relative z-10 flex items-center gap-3">
+          <div className="w-12 h-12 rounded-xl bg-white/15 flex items-center justify-center flex-shrink-0">
+            <ClipboardList className="w-6 h-6 text-white" />
+          </div>
           <div>
-            <p style={{ fontWeight: 900, color: '#fff', fontSize: 16 }}>बूथ स्टाफ मानक</p>
-            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>संवेदनशीलता के अनुसार आवश्यक स्टाफ</p>
+            <p className="font-extrabold text-white text-lg">बूथ स्टाफ मानक</p>
+            <p className="text-xs text-amber-100/70">संवेदनशीलता के अनुसार आवश्यक स्टाफ</p>
           </div>
         </div>
       </div>
 
       {rules.length === 0 ? (
-        <SectionCard iconName="info" title="मानक">
-          <p style={{ textAlign: 'center', fontSize: 13, padding: '20px 0', color: C.subtle }}>कोई मानक सेट नहीं है</p>
+        <SectionCard icon={Info} title="मानक">
+          <div className="py-10 text-center">
+            <ClipboardList className="w-12 h-12 text-slate-300 mx-auto mb-3" />
+            <p className="text-sm text-slate-500">कोई मानक सेट नहीं है</p>
+          </div>
         </SectionCard>
       ) : ['A++', 'A', 'B', 'C'].filter(s => grouped[s]).map(s => {
-        const { label, color } = RULES_CONFIG[s] || { label: s, color: C.primary };
+        const config = RULES_CONFIG[s] || RULES_CONFIG.C;
         const list = grouped[s];
         const total = list.reduce((a, r) => a + ((r.count || 0)), 0);
         return (
-          <div key={s} style={{
-            borderRadius: 14, overflow: 'hidden', marginBottom: 12,
-            background: '#fff', border: `1px solid ${color}4d`,
-          }}>
-            <div style={{
-              display: 'flex', alignItems: 'center', gap: 12, padding: '12px 16px',
-              background: `${color}12`, borderBottom: `1px solid ${color}33`,
-            }}>
-              <span style={{ borderRadius: 6, padding: '4px 10px', fontWeight: 900, fontSize: 12, color: '#fff', background: color }}>{s}</span>
-              <span style={{ flex: 1, fontWeight: 700, fontSize: 13, color }}>{label}</span>
-              <span style={{ fontWeight: 900, fontSize: 13, color }}>{total} कर्मी</span>
+          <div key={s} className={`bg-white rounded-2xl border ${config.border} mb-3 overflow-hidden shadow-sm hover:shadow-md transition-shadow`}>
+            <div className={`flex items-center gap-3 px-4 py-3 ${config.light} border-b ${config.border}`}>
+              <span className={`${config.bg} text-white px-2.5 py-1 rounded-md font-extrabold text-xs`}>{s}</span>
+              <span className={`flex-1 font-bold ${config.text} text-sm`}>{config.label}</span>
+              <span className={`font-extrabold ${config.text} text-sm`}>{total} कर्मी</span>
             </div>
-            <div style={{ padding: 12, display: 'flex', flexDirection: 'column', gap: 8 }}>
+            <div className="p-3 space-y-2">
               {list.map((r, i) => {
                 const isArmed = r.isArmed === true || r.is_armed === 1;
                 return (
-                  <div key={i} style={{
-                    display: 'flex', alignItems: 'center', gap: 12, borderRadius: 10,
-                    padding: '10px 12px', background: C.bg, border: `1px solid ${C.border}66`,
-                  }}>
-                    {isArmed ? <Icon name="shield" size={14} color={C.armed} /> : <Icon name="user" size={14} color={C.unarmed} />}
-                    <div style={{ flex: 1, minWidth: 0 }}>
-                      <p style={{ fontWeight: 700, fontSize: 13, color: C.dark }}>{rh(r.rank)}</p>
-                      <p style={{ fontSize: 10, color: isArmed ? C.armed : C.unarmed }}>{isArmed ? 'सशस्त्र' : 'निःशस्त्र'}</p>
+                  <div key={i} className="flex items-center gap-3 bg-amber-50/30 border border-amber-100 rounded-xl px-4 py-3">
+                    {isArmed ? <Shield className="w-4 h-4 text-emerald-700 flex-shrink-0" /> : <User className="w-4 h-4 text-slate-600 flex-shrink-0" />}
+                    <div className="flex-1 min-w-0">
+                      <p className="font-bold text-sm text-slate-800">{rh(r.rank)}</p>
+                      <p className={`text-[10px] ${isArmed ? 'text-emerald-700' : 'text-slate-500'}`}>
+                        {isArmed ? 'सशस्त्र' : 'निःशस्त्र'}
+                      </p>
                     </div>
-                    <span style={{
-                      borderRadius: 20, padding: '6px 12px', fontWeight: 900, fontSize: 14,
-                      background: `${color}1a`, border: `1px solid ${color}4d`, color,
-                    }}>{r.count}</span>
+                    <span className={`px-3 py-1.5 rounded-full text-sm font-extrabold ${config.light} ${config.text} border ${config.border}`}>
+                      {r.count}
+                    </span>
                   </div>
                 );
               })}
@@ -997,609 +1225,573 @@ function RulesSection({ rules = [] }) {
           </div>
         );
       })}
-    </div>
+    </>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  CHANGE PASSWORD
+// POST ELECTION VIEW
 // ═══════════════════════════════════════════════════════════════════════════════
-function ChangePassword() {
-  const [form, setForm] = useState({ currentPassword: '', newPassword: '', confirmPassword: '' });
-  const [show, setShow] = useState({ cur: false, new_: false, conf: false });
-  const [saving, setSaving] = useState(false);
-  const [done, setDone] = useState(false);
-
-  const strength = (() => {
-    const p = form.newPassword;
-    return (p.length >= 6 ? 1 : 0) + (p.length >= 10 ? 1 : 0)
-      + (/[A-Z0-9]/.test(p) ? 1 : 0) + (/[^A-Za-z0-9]/.test(p) ? 1 : 0);
-  })();
-  const strengthColor = [null, '#ef5350', '#FFA726', '#FFD700', C.success][strength] || 'transparent';
-  const strengthLabel = ['', 'बहुत छोटा', 'ठीक है', 'अच्छा', 'बहुत मजबूत'][strength];
-
-  const handleSubmit = async () => {
-    if (!form.currentPassword || !form.newPassword || !form.confirmPassword) return;
-    if (form.newPassword.length < 6) return;
-    if (form.newPassword !== form.confirmPassword) return;
-    setSaving(true);
-    try {
-      await apiClient.post('/staff/change-password', {
-        currentPassword: form.currentPassword, newPassword: form.newPassword,
-      });
-      setDone(true);
-      setForm({ currentPassword: '', newPassword: '', confirmPassword: '' });
-    } catch (e) {
-      alert('त्रुटि: ' + e.message);
-    } finally { setSaving(false); }
-  };
-
-  const fields = [
-    ['currentPassword', 'वर्तमान पासवर्ड *', 'cur', 'मौजूदा पासवर्ड'],
-    ['newPassword', 'नया पासवर्ड *', 'new_', 'न्यूनतम 6 अक्षर'],
-    ['confirmPassword', 'पासवर्ड दोबारा डालें *', 'conf', 'पुष्टि करें'],
-  ];
+function PostElectionView({ user, electionConfig, onOpenHistory }) {
+  const ec = electionConfig || {};
+  const dateStr = formatHindiDate(ec.election_date);
+  const eName = ec.election_name || '';
+  const phase = ec.phase || '';
 
   return (
-    <div>
-      <div style={{
-        borderRadius: 16, padding: 20, marginBottom: 16, position: 'relative', overflow: 'hidden',
-        background: `linear-gradient(135deg, ${C.dark} 0%, #5A3E08 100%)`,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 14 }}>
-          <div style={{
-            width: 44, height: 44, borderRadius: 14, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.12)',
-          }}>
-            <Icon name="lock" size={20} color="#fff" />
+    <div className="max-w-3xl mx-auto">
+      <div className="relative overflow-hidden rounded-3xl p-8 mb-6 bg-gradient-to-br from-emerald-700 via-emerald-800 to-green-900 shadow-2xl shadow-emerald-500/30">
+        <div className="absolute -top-12 -right-12 w-56 h-56 rounded-full bg-emerald-400/20 blur-3xl" />
+        <div className="absolute -bottom-12 -left-12 w-56 h-56 rounded-full bg-green-500/20 blur-3xl" />
+        <div className="relative z-10 text-center">
+          <div className="w-20 h-20 mx-auto mb-5 rounded-full bg-white/15 backdrop-blur-sm border-2 border-white/30 flex items-center justify-center">
+            <Vote className="w-10 h-10 text-white" />
           </div>
-          <div>
-            <p style={{ fontWeight: 900, color: '#fff', fontSize: 16 }}>पासवर्ड बदलें</p>
-            <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.6)' }}>अपना लॉगिन पासवर्ड अपडेट करें</p>
-          </div>
+          <p className="text-white font-extrabold text-2xl mb-2">चुनाव सम्पन्न हो गया</p>
+          {eName && <p className="text-emerald-100/90 text-sm mb-1">{eName}</p>}
+          {dateStr !== '—' && <p className="text-emerald-200/70 text-xs mb-1">तिथि: {dateStr}</p>}
+          {phase && <p className="text-emerald-200/70 text-xs mb-3">चरण: {phase}</p>}
+          <p className="text-emerald-100/80 text-sm mt-4 max-w-md mx-auto">
+            {user?.name || ''} जी, आपकी ड्यूटी का रिकॉर्ड इतिहास में सुरक्षित है।
+          </p>
         </div>
       </div>
 
-      {done && (
-        <div style={{
-          borderRadius: 10, padding: '12px 16px', marginBottom: 12,
-          display: 'flex', alignItems: 'center', gap: 8,
-          background: C.successBg, border: `1px solid ${C.success}4d`,
-        }}>
-          <Icon name="checkcircle" size={15} color={C.success} />
-          <span style={{ fontSize: 13, fontWeight: 600, color: C.success }}>पासवर्ड सफलतापूर्वक बदल दिया गया!</span>
+      <div className="bg-white rounded-2xl p-5 mb-5 border border-slate-200 shadow-sm flex items-center gap-4">
+        <div className="w-14 h-14 rounded-full bg-amber-50 border border-amber-200 flex items-center justify-center flex-shrink-0">
+          <User className="w-7 h-7 text-amber-700" />
         </div>
-      )}
-
-      <SectionCard iconName="key" title="नया पासवर्ड">
-        {fields.map(([key, label, showKey, placeholder]) => (
-          <div key={key} style={{ marginBottom: 16 }}>
-            <label style={{ display: 'block', fontSize: 11, fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 6, color: C.subtle }}>{label}</label>
-            <div style={{ position: 'relative' }}>
-              <input
-                type={show[showKey] ? 'text' : 'password'}
-                value={form[key]}
-                onChange={e => setForm(p => ({ ...p, [key]: e.target.value }))}
-                placeholder={placeholder}
-                style={{
-                  width: '100%', borderRadius: 12, padding: '12px 40px 12px 14px',
-                  fontSize: 13, outline: 'none', boxSizing: 'border-box',
-                  background: C.bg, border: `1px solid ${C.border}80`, color: C.dark,
-                }}
-              />
-              <button type="button" onClick={() => setShow(p => ({ ...p, [showKey]: !p[showKey] }))} style={{
-                position: 'absolute', right: 12, top: '50%', transform: 'translateY(-50%)',
-                background: 'none', border: 'none', cursor: 'pointer', padding: 0,
-              }}>
-                <Icon name={show[showKey] ? 'eyeoff' : 'eye'} size={16} color={C.subtle} />
-              </button>
-            </div>
-            {key === 'newPassword' && form.newPassword && (
-              <div style={{ marginTop: 8 }}>
-                <div style={{ display: 'flex', gap: 4, marginBottom: 4 }}>
-                  {[0, 1, 2, 3].map(i => (
-                    <div key={i} style={{
-                      flex: 1, height: 4, borderRadius: 2,
-                      background: i < strength ? strengthColor : `${C.border}40`,
-                    }} />
-                  ))}
-                </div>
-                <p style={{ fontSize: 10, fontWeight: 600, color: strengthColor }}>{strengthLabel}</p>
-              </div>
-            )}
-          </div>
-        ))}
-        <button onClick={handleSubmit} disabled={saving} style={{
-          width: '100%', borderRadius: 12, padding: '14px 0', fontWeight: 900,
-          fontSize: 13, color: '#fff', border: 'none', cursor: saving ? 'not-allowed' : 'pointer',
-          display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8,
-          background: saving ? `${C.primary}99` : C.primary,
-          boxShadow: `0 4px 10px ${C.primary}59`,
-        }}>
-          {saving ? <div style={{ width: 16, height: 16, border: '2px solid #fff', borderTopColor: 'transparent', borderRadius: '50%', animation: 'spin 0.8s linear infinite' }} /> : <><Icon name="key" size={14} color="#fff" />पासवर्ड बदलें</>}
-        </button>
-      </SectionCard>
-    </div>
-  );
-}
-
-// ═══════════════════════════════════════════════════════════════════════════════
-//  POST ELECTION VIEW
-// ═══════════════════════════════════════════════════════════════════════════════
-function PostElectionView({ user, electionDate, onOpenHistory }) {
-  return (
-    <div style={{ padding: '0 0 24px' }}>
-      <div style={{
-        padding: 24, borderRadius: 18, marginBottom: 20,
-        background: 'linear-gradient(135deg, #1B5E20 0%, #2E7D32 100%)',
-        boxShadow: `0 6px 16px ${C.success}4d`,
-        textAlign: 'center',
-      }}>
-        <div style={{
-          width: 64, height: 64, borderRadius: '50%', margin: '0 auto 16px',
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: 'rgba(255,255,255,0.15)', border: '2px solid rgba(255,255,255,0.3)',
-        }}>
-          <Icon name="vote" size={32} color="#fff" />
-        </div>
-        <p style={{ color: '#fff', fontSize: 20, fontWeight: 900, marginBottom: 6 }}>चुनाव सम्पन्न हो गया</p>
-        {electionDate && <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 13, marginBottom: 8 }}>तिथि: {electionDate}</p>}
-        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 12 }}>{user?.name || ''} जी, आपकी ड्यूटी का रिकॉर्ड इतिहास में सुरक्षित है।</p>
-      </div>
-
-      <div style={{
-        padding: 18, borderRadius: 16, marginBottom: 16,
-        background: '#fff', border: `1px solid ${C.border}80`,
-        boxShadow: `0 3px 10px ${C.primary}0a`,
-        display: 'flex', alignItems: 'center', gap: 14,
-      }}>
-        <div style={{
-          width: 50, height: 50, borderRadius: '50%', flexShrink: 0,
-          display: 'flex', alignItems: 'center', justifyContent: 'center',
-          background: C.surface, border: `1px solid ${C.border}`,
-        }}>
-          <Icon name="user" size={24} color={C.primary} />
-        </div>
-        <div>
-          <p style={{ fontWeight: 900, fontSize: 16, color: C.dark }}>{user?.name || '—'}</p>
-          <p style={{ fontSize: 11, color: C.subtle }}>PNO: {user?.pno || '—'} · {rh(user?.rank || user?.user_rank)}</p>
-          <p style={{ fontSize: 11, color: C.subtle }}>{user?.thana || ''}{user?.district ? ` · ${user.district}` : ''}</p>
+        <div className="min-w-0">
+          <p className="font-extrabold text-slate-800 text-base truncate">{user?.name || '—'}</p>
+          <p className="text-xs text-slate-500 mt-0.5">PNO: {user?.pno || '—'} · {rh(user?.rank || user?.user_rank)}</p>
+          <p className="text-xs text-slate-500">{user?.thana || ''}{user?.district ? ` · ${user.district}` : ''}</p>
         </div>
       </div>
 
-      <button onClick={onOpenHistory} style={{
-        width: '100%', padding: '18px 0', borderRadius: 16, border: 'none', cursor: 'pointer',
-        background: `linear-gradient(135deg, ${C.dark} 0%, #5A3E08 100%)`,
-        boxShadow: `0 5px 14px ${C.dark}66`,
-        display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 8,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{
-            width: 40, height: 40, borderRadius: 12, display: 'flex',
-            alignItems: 'center', justifyContent: 'center', background: 'rgba(255,255,255,0.12)',
-          }}>
-            <Icon name="history" size={22} color="#fff" />
+      <button
+        onClick={onOpenHistory}
+        className="w-full bg-gradient-to-br from-slate-800 to-slate-900 hover:from-slate-900 hover:to-black text-white p-5 rounded-2xl shadow-xl shadow-slate-700/30 transition-all hover:-translate-y-0.5 mb-5 group"
+      >
+        <div className="flex items-center justify-center gap-3 mb-2">
+          <div className="w-12 h-12 rounded-xl bg-white/12 flex items-center justify-center group-hover:scale-110 transition-transform">
+            <History className="w-6 h-6 text-white" />
           </div>
-          <div style={{ textAlign: 'left' }}>
-            <p style={{ color: '#fff', fontSize: 16, fontWeight: 900 }}>ड्यूटी इतिहास देखें</p>
-            <p style={{ color: 'rgba(255,255,255,0.54)', fontSize: 11 }}>Duty History</p>
+          <div className="text-left">
+            <p className="text-white font-extrabold text-lg">ड्यूटी इतिहास देखें</p>
+            <p className="text-slate-400 text-xs">Duty History</p>
           </div>
         </div>
-        <div style={{
-          padding: '5px 14px', borderRadius: 20,
-          background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.24)',
-        }}>
-          <p style={{ color: 'rgba(255,255,255,0.7)', fontSize: 11 }}>सभी ड्यूटी रिकॉर्ड देखने के लिए क्लिक करें</p>
+        <div className="inline-flex items-center px-4 py-1.5 rounded-full bg-white/10 border border-white/20">
+          <p className="text-slate-200 text-xs">सभी ड्यूटी रिकॉर्ड देखने के लिए क्लिक करें</p>
         </div>
       </button>
 
-      <div style={{
-        padding: 14, borderRadius: 12, marginTop: 16,
-        background: `${C.info}0f`, border: `1px solid ${C.info}33`,
-        display: 'flex', gap: 8, alignItems: 'flex-start',
-      }}>
-        <Icon name="info" size={16} color={C.info} />
-        <p style={{ fontSize: 12, color: C.info }}>चुनाव समाप्त हो जाने के बाद यहाँ कोई सक्रिय ड्यूटी नहीं दिखाई जाती। आपकी सभी पुरानी ड्यूटियाँ "इतिहास" में उपलब्ध हैं।</p>
+      <div className="bg-blue-50/60 border border-blue-200 rounded-2xl p-4 flex items-start gap-3">
+        <Info className="w-5 h-5 text-blue-600 flex-shrink-0 mt-0.5" />
+        <p className="text-sm text-blue-700 leading-relaxed">
+          चुनाव समाप्त हो जाने के बाद यहाँ कोई सक्रिय ड्यूटी नहीं दिखाई जाती।
+          आपकी सभी पुरानी ड्यूटियाँ <strong>"इतिहास"</strong> में उपलब्ध हैं।
+        </p>
       </div>
     </div>
   );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  LOGOUT DIALOG
+// LOGOUT DIALOG
 // ═══════════════════════════════════════════════════════════════════════════════
 function LogoutDialog({ onConfirm, onCancel }) {
   return (
-    <div style={{
-      position: 'fixed', inset: 0, zIndex: 50, display: 'flex',
-      alignItems: 'center', justifyContent: 'center', padding: 16,
-      background: 'rgba(0,0,0,0.5)',
-    }}>
-      <div style={{
-        borderRadius: 16, padding: 24, width: '100%', maxWidth: 360,
-        background: C.bg, border: `1.5px solid ${C.error}`,
-      }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 12 }}>
-          <Icon name="logout" size={18} color={C.error} />
-          <p style={{ fontWeight: 900, fontSize: 16, color: C.error }}>लॉग आउट</p>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 backdrop-blur-sm">
+      <div className="bg-white rounded-2xl p-6 w-full max-w-sm shadow-2xl border border-red-200 animate-[fadeIn_0.2s_ease-out]">
+        <div className="flex items-center gap-3 mb-4">
+          <div className="w-11 h-11 rounded-xl bg-red-50 flex items-center justify-center">
+            <LogOut className="w-5 h-5 text-red-600" />
+          </div>
+          <p className="font-extrabold text-lg text-red-700">लॉग आउट</p>
         </div>
-        <p style={{ fontSize: 13, marginBottom: 20, color: C.dark }}>क्या आप लॉग आउट करना चाहते हैं?</p>
-        <div style={{ display: 'flex', gap: 12 }}>
-          <button onClick={onCancel} style={{
-            flex: 1, borderRadius: 12, padding: '10px 0', fontWeight: 700, fontSize: 13,
-            color: C.subtle, border: `1px solid ${C.border}`, background: 'transparent', cursor: 'pointer',
-          }}>रद्द</button>
-          <button onClick={onConfirm} style={{
-            flex: 1, borderRadius: 12, padding: '10px 0', fontWeight: 700, fontSize: 13,
-            color: '#fff', border: 'none', background: C.error, cursor: 'pointer',
-          }}>लॉग आउट</button>
+        <p className="text-sm text-slate-700 mb-6">क्या आप वाकई लॉग आउट करना चाहते हैं?</p>
+        <div className="flex gap-3">
+          <button
+            onClick={onCancel}
+            className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-slate-600 border border-slate-300 hover:bg-slate-50 transition-colors"
+          >
+            रद्द करें
+          </button>
+          <button
+            onClick={onConfirm}
+            className="flex-1 px-4 py-3 rounded-xl font-bold text-sm text-white bg-red-600 hover:bg-red-700 shadow-lg shadow-red-500/30 transition-all"
+          >
+            लॉग आउट
+          </button>
         </div>
       </div>
     </div>
   );
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// NAV CONFIG
+// ═══════════════════════════════════════════════════════════════════════════════
+const buildNavItems = ({ isAfterElection, hasDistrictDuty, roleType }) => {
+  if (isAfterElection) {
+    return [{ key: 'history', label: 'इतिहास', icon: History }];
+  }
+  if (hasDistrictDuty && roleType === 'none') {
+    return [
+      { key: 'overview', label: 'डैशबोर्ड', icon: LayoutDashboard },
+      { key: 'duty', label: 'ड्यूटी', icon: MapPin },
+      { key: 'costaff', label: 'सहयोगी', icon: Users },
+      { key: 'dutycard', label: 'ड्यूटी कार्ड', icon: Badge },
+    ];
+  }
+  switch (roleType) {
+    case 'sector':
+      return [
+        { key: 'overview', label: 'डैशबोर्ड', icon: LayoutDashboard },
+        { key: 'duty', label: 'ड्यूटी', icon: MapPin },
+        { key: 'attendance', label: 'बूथ & उपस्थिति', icon: Vote },
+        { key: 'rules', label: 'मानक', icon: ClipboardList },
+      ];
+    case 'zone':
+      return [
+        { key: 'overview', label: 'डैशबोर्ड', icon: LayoutDashboard },
+        { key: 'duty', label: 'ड्यूटी', icon: MapPin },
+        { key: 'sectors', label: 'सेक्टर', icon: Grid3x3 },
+        { key: 'rules', label: 'मानक', icon: ClipboardList },
+      ];
+    case 'kshetra':
+      return [
+        { key: 'overview', label: 'डैशबोर्ड', icon: LayoutDashboard },
+        { key: 'duty', label: 'ड्यूटी', icon: MapPin },
+        { key: 'zones', label: 'जोन', icon: Map },
+        { key: 'rules', label: 'मानक', icon: ClipboardList },
+      ];
+    default:
+      return [
+        { key: 'overview', label: 'डैशबोर्ड', icon: LayoutDashboard },
+        { key: 'duty', label: 'ड्यूटी', icon: MapPin },
+        { key: 'costaff', label: 'सहयोगी', icon: Users },
+        { key: 'dutycard', label: 'ड्यूटी कार्ड', icon: Badge },
+      ];
+  }
+};
 
+const roleIconMap = {
+  sector: Grid3x3,
+  zone: Map,
+  kshetra: Layers,
+  booth: Vote,
+};
+const districtRoleIcon = ShieldCheck;
+
+const roleLabelMap = {
+  sector: 'सेक्टर अधिकारी',
+  zone: 'जोनल अधिकारी',
+  kshetra: 'क्षेत्र अधिकारी',
+  booth: 'बूथ स्टाफ',
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
-//  MAIN DASHBOARD
+// MAIN DASHBOARD
 // ═══════════════════════════════════════════════════════════════════════════════
 export default function StaffDashboardPage() {
   const [activeTab, setActiveTab] = useState('overview');
   const [duty, setDuty] = useState(null);
   const [user, setUser] = useState(null);
+  const [districtDuty, setDistrictDuty] = useState(null);
+  const [electionConfig, setElectionConfig] = useState(null);
+  const [roleType, setRoleType] = useState('none');
+  const [isAfterElection, setIsAfterElection] = useState(false);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
-  const [roleType, setRoleType] = useState('booth');
-  const [electionDate, setElectionDate] = useState(null);
-  const [isAfterElection, setIsAfterElection] = useState(false);
   const [showLogout, setShowLogout] = useState(false);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false);
   const nav = useNavigate();
+
+  // Normalize duty data (snake_case -> camelCase)
+  const normalizeDuty = (d) => {
+    if (!d || typeof d !== 'object' || Array.isArray(d)) return d;
+    return {
+      ...d,
+      centerName: d.centerName || d.center_name,
+      centerAddress: d.centerAddress || d.center_address,
+      centerType: d.centerType || d.center_type,
+      superZoneName: d.superZoneName || d.super_zone_name,
+      zoneName: d.zoneName || d.zone_name,
+      zoneHq: d.zoneHq || d.zone_hq,
+      sectorName: d.sectorName || d.sector_name,
+      busNo: d.busNo || d.bus_no,
+      gpName: d.gpName || d.gp_name,
+      hqAddress: d.hqAddress || d.hq_address,
+      assignedBy: d.assignedBy || d.assigned_by,
+      totalBooths: d.totalBooths || d.total_booths,
+      totalSectors: d.totalSectors || d.total_sectors,
+      totalZones: d.totalZones || d.total_zones,
+      totalAssigned: d.totalAssigned || d.total_assigned,
+      gramPanchayats: d.gramPanchayats || d.gram_panchayats || [],
+      allStaff: d.allStaff || d.all_staff || [],
+      sectorOfficers: d.sectorOfficers || d.sector_officers || [],
+      zonalOfficers: d.zonalOfficers || d.zonal_officers || [],
+      superOfficers: d.superOfficers || d.super_officers || [],
+      coOfficers: d.coOfficers || d.co_officers || [],
+      boothRules: d.boothRules || d.booth_rules || [],
+      sectors: d.sectors || [],
+      zones: d.zones || [],
+      centers: d.centers || [],
+    };
+  };
 
   const loadData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const [userRes, dutyRes, electionRes] = await Promise.all([
+      const [userRes, dutyRes, electionRes, districtRes] = await Promise.all([
         apiClient.get('/staff/profile'),
         apiClient.get('/staff/my-duty'),
-        apiClient.get('/staff/election-date'),
+        apiClient.get('/staff/election-config').catch(() => null),
+        apiClient.get('/staff/district-duty').catch(() => null),
       ]);
 
       const userData = userRes?.data || userRes || {};
-      let dutyData = dutyRes?.data || dutyRes || null;
-      if (dutyData && typeof dutyData === 'object' && !Array.isArray(dutyData)) {
-        dutyData = {
-          ...dutyData,
-          centerName: dutyData.centerName || dutyData.center_name,
-          centerAddress: dutyData.centerAddress || dutyData.center_address,
-          centerType: dutyData.centerType || dutyData.center_type,
-          superZoneName: dutyData.superZoneName || dutyData.super_zone_name,
-          zoneName: dutyData.zoneName || dutyData.zone_name,
-          sectorName: dutyData.sectorName || dutyData.sector_name,
-          busNo: dutyData.busNo || dutyData.bus_no,
-          allStaff: dutyData.allStaff || dutyData.all_staff || [],
-          sectorOfficers: dutyData.sectorOfficers || dutyData.sector_officers || [],
-          zonalOfficers: dutyData.zonalOfficers || dutyData.zonal_officers || [],
-          superOfficers: dutyData.superOfficers || dutyData.super_officers || [],
-          coOfficers: dutyData.coOfficers || dutyData.co_officers || [],
-          boothRules: dutyData.boothRules || dutyData.booth_rules || [],
-        };
-      }
+      const rawDuty = dutyRes?.data || dutyRes || null;
+      const dutyData = normalizeDuty(rawDuty);
+      const role = (dutyData?.roleType || dutyData?.role_type || 'none').toString().toLowerCase();
 
-      const role = (dutyData?.roleType || dutyData?.role_type || 'booth').toString().toLowerCase();
-      const ed = electionRes?.data || electionRes;
+      const ec = electionRes?.data || electionRes || null;
+      const electionDateStr = ec?.election_date;
       let isAfter = false;
-      if (ed) {
-        const parsed = new Date(ed);
+      if (electionDateStr) {
+        const parsed = new Date(electionDateStr);
         if (!isNaN(parsed)) isAfter = new Date() > parsed;
       }
+
+      const dd = districtRes?.data || districtRes || null;
 
       setUser(userData);
       setDuty(dutyData);
       setRoleType(role);
-      setElectionDate(ed);
+      setElectionConfig(ec);
+      setDistrictDuty(dd);
       setIsAfterElection(isAfter);
+      setActiveTab('overview');
     } catch (e) {
       setError(e.message || 'Error loading data');
+      toast.error('डेटा लोड करने में त्रुटि');
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => { loadData(); }, [loadData]);
-  useEffect(() => { setActiveTab('overview'); }, [roleType]);
 
   const handleLogout = () => {
-    localStorage.clear();
-    sessionStorage.clear();
-    window.location.href = '/login';
+    setShowLogout(false);
+    try {
+      localStorage.clear();
+      sessionStorage.clear();
+    } catch {}
+    toast.success('लॉग आउट हो गया');
+    setTimeout(() => { window.location.href = '/login'; }, 400);
   };
 
   const openMap = () => {
     if (!duty?.latitude || !duty?.longitude) {
-      alert('इस केंद्र की GPS लोकेशन अभी तक दर्ज नहीं है।');
+      toast.error('इस केंद्र की GPS लोकेशन अभी तक दर्ज नहीं है।');
       return;
     }
-    window.open(`https://www.google.com/maps/dir/?api=1&destination=${duty.latitude},${duty.longitude}&travelmode=driving`, '_blank');
+    window.open(
+      `https://www.google.com/maps/dir/?api=1&destination=${duty.latitude},${duty.longitude}&travelmode=driving`,
+      '_blank',
+    );
   };
 
-  const navItems = NAV_CONFIG[roleType] || NAV_CONFIG.booth;
+  const hasDistrictDuty = !!districtDuty;
+  const navItems = useMemo(
+    () => buildNavItems({ isAfterElection, hasDistrictDuty, roleType }),
+    [isAfterElection, hasDistrictDuty, roleType],
+  );
 
-  const roleLabel = { sector: 'सेक्टर अधिकारी', zone: 'जोनल अधिकारी', kshetra: 'क्षेत्र अधिकारी', booth: 'बूथ स्टाफ' }[roleType] || 'सक्रिय';
-
-  const roleIconName = { sector: 'grid', zone: 'map', kshetra: 'layers', booth: 'vote' }[roleType] || 'vote';
+  const RoleIcon = hasDistrictDuty && roleType === 'none' ? districtRoleIcon : (roleIconMap[roleType] || Vote);
+  const roleLabel = hasDistrictDuty && roleType === 'none' ? 'जनपदीय ड्यूटी' : (roleLabelMap[roleType] || 'सक्रिय');
+  const roleAccent = hasDistrictDuty && roleType === 'none' ? 'purple' : 'emerald';
 
   const renderSection = () => {
     if (loading) return <LoadingSpinner />;
-    if (error) return (
-      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', padding: '64px 16px', textAlign: 'center' }}>
-        <Icon name="alert" size={48} color={C.error} />
-        <p style={{ fontWeight: 900, fontSize: 16, marginTop: 16, marginBottom: 8, color: C.dark }}>डेटा लोड करने में त्रुटि</p>
-        <p style={{ fontSize: 12, marginBottom: 20, color: C.subtle }}>{error}</p>
-        <button onClick={loadData} style={{
-          display: 'flex', alignItems: 'center', gap: 8, borderRadius: 12,
-          padding: '10px 20px', fontWeight: 700, fontSize: 13, color: '#fff',
-          border: 'none', cursor: 'pointer', background: C.primary,
-        }}>
-          <Icon name="refresh" size={14} color="#fff" /> पुनः प्रयास करें
-        </button>
-      </div>
-    );
-
+    if (error) return <ErrorState error={error} onRetry={loadData} />;
     if (isAfterElection) {
-      return <PostElectionView user={user} electionDate={electionDate} onOpenHistory={() => nav('/staff/history')} />;
+      return <PostElectionView user={user} electionConfig={electionConfig} onOpenHistory={() => nav('/staff/history')} />;
     }
 
-    if (roleType === 'sector') {
+    // District duty takes priority if no other role
+    if (hasDistrictDuty && roleType === 'none') {
       switch (activeTab) {
-        case 'overview': return <SectorOverview duty={duty} user={user} />;
-        case 'duty': return <SectorInfo duty={duty} />;
-        case 'attendance': return <SectorBoothAttendance duty={duty} onRefresh={loadData} />;
-        case 'rules': return <RulesSection rules={duty?.boothRules || []} />;
-      }
-    } else if (roleType === 'zone') {
-      switch (activeTab) {
-        case 'overview': return <ZoneOverview duty={duty} user={user} />;
-        case 'duty': return <ZoneInfo duty={duty} />;
-        case 'sectors': return <ZoneSectors duty={duty} />;
-        case 'rules': return <RulesSection rules={duty?.boothRules || []} />;
-      }
-    } else if (roleType === 'kshetra') {
-      switch (activeTab) {
-        case 'overview': return <KshetraOverview duty={duty} user={user} />;
-        case 'duty': return <KshetraInfo duty={duty} />;
-        case 'zones': return <KshetraZones duty={duty} />;
-        case 'rules': return <RulesSection rules={duty?.boothRules || []} />;
-      }
-    } else {
-      switch (activeTab) {
-        case 'overview': return <BoothOverview duty={duty} user={user} noDuty={!duty} onGoToDutyCard={() => setActiveTab('dutycard')} onOpenMap={openMap} />;
-        case 'duty': return <BoothDutyDetail duty={duty} onOpenMap={openMap} />;
-        case 'costaff': return <BoothCoStaff duty={duty} />;
-        case 'dutycard': return <BoothDutyCard duty={duty} user={user} />;
+        case 'overview': return <DistrictOverview duty={districtDuty} user={user} electionConfig={electionConfig} onGoToDutyCard={() => setActiveTab('dutycard')} />;
+        case 'duty': return <DistrictDetail duty={districtDuty} />;
+        case 'costaff': return <DistrictBatchStaff duty={districtDuty} />;
+        case 'dutycard': return <DistrictDutyCard duty={districtDuty} user={user} electionConfig={electionConfig} />;
+        default: return null;
       }
     }
-    return null;
+
+    switch (roleType) {
+      case 'sector':
+        switch (activeTab) {
+          case 'overview': return <SectorOverview duty={duty} user={user} />;
+          case 'duty': return <SectorInfo duty={duty} />;
+          case 'attendance': return <SectorBoothAttendance duty={duty} onRefresh={loadData} />;
+          case 'rules': return <RulesSection rules={duty?.boothRules || []} />;
+          default: return null;
+        }
+      case 'zone':
+        switch (activeTab) {
+          case 'overview': return <ZoneOverview duty={duty} user={user} />;
+          case 'duty': return <ZoneInfo duty={duty} />;
+          case 'sectors': return <ZoneSectors duty={duty} />;
+          case 'rules': return <RulesSection rules={duty?.boothRules || []} />;
+          default: return null;
+        }
+      case 'kshetra':
+        switch (activeTab) {
+          case 'overview': return <KshetraOverview duty={duty} user={user} />;
+          case 'duty': return <KshetraInfo duty={duty} />;
+          case 'zones': return <KshetraZones duty={duty} />;
+          case 'rules': return <RulesSection rules={duty?.boothRules || []} />;
+          default: return null;
+        }
+      default:
+        switch (activeTab) {
+          case 'overview': return <BoothOverview duty={duty} user={user} onGoToDutyCard={() => setActiveTab('dutycard')} onOpenMap={openMap} />;
+          case 'duty': return <BoothDutyDetail duty={duty} onOpenMap={openMap} />;
+          case 'costaff': return <BoothCoStaff duty={duty} />;
+          case 'dutycard': return <BoothDutyCard duty={duty} user={user} />;
+          default: return null;
+        }
+    }
   };
+
+  const currentTab = navItems.find(n => n.key === activeTab) || navItems[0];
 
   return (
     <>
+      <Toaster
+        position="top-right"
+        toastOptions={{
+          style: {
+            fontFamily: "'Noto Sans Devanagari', sans-serif",
+            borderRadius: '12px',
+            background: '#1e293b',
+            color: '#fff',
+            fontSize: '13px',
+            fontWeight: 600,
+          },
+          success: { iconTheme: { primary: '#10b981', secondary: '#fff' } },
+          error: { iconTheme: { primary: '#ef4444', secondary: '#fff' } },
+        }}
+      />
+
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Devanagari:wght@400;500;600;700;800;900&display=swap');
-        * { margin: 0; padding: 0; box-sizing: border-box; }
-        body { font-family: 'Noto Sans Devanagari', sans-serif; }
-        @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-        ::-webkit-scrollbar { width: 6px; }
-        ::-webkit-scrollbar-track { background: ${C.surface}; }
-        ::-webkit-scrollbar-thumb { background: ${C.border}; border-radius: 3px; }
-        ::-webkit-scrollbar-thumb:hover { background: ${C.primary}; }
-        button { font-family: 'Noto Sans Devanagari', sans-serif; }
-        input { font-family: 'Noto Sans Devanagari', sans-serif; }
-        a { text-decoration: none; }
+        body { font-family: 'Noto Sans Devanagari', sans-serif; background: #fafaf5; }
+        @keyframes fadeIn { from { opacity: 0; transform: scale(0.95); } to { opacity: 1; transform: scale(1); } }
+        @keyframes slideIn { from { opacity: 0; transform: translateX(-20px); } to { opacity: 1; transform: translateX(0); } }
+        .animate-slideIn { animation: slideIn 0.25s ease-out; }
+        ::-webkit-scrollbar { width: 8px; height: 8px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #d4a843; border-radius: 4px; }
+        ::-webkit-scrollbar-thumb:hover { background: #b8860b; }
       `}</style>
 
-      <div style={{
-        display: 'flex', height: '100vh', background: C.bg,
-        fontFamily: "'Noto Sans Devanagari', sans-serif",
-      }}>
+      <div className="flex h-screen overflow-hidden bg-gradient-to-br from-amber-50/30 via-yellow-50/20 to-stone-50 font-['Noto_Sans_Devanagari',sans-serif]">
+
+        {/* Mobile sidebar overlay */}
+        {sidebarOpen && (
+          <div
+            className="fixed inset-0 z-30 bg-black/50 lg:hidden backdrop-blur-sm"
+            onClick={() => setSidebarOpen(false)}
+          />
+        )}
 
         {/* ── SIDEBAR ── */}
-        <div style={{
-          width: sidebarCollapsed ? 64 : 240, flexShrink: 0,
-          background: C.dark, display: 'flex', flexDirection: 'column',
-          transition: 'width 0.25s ease', overflow: 'hidden',
-          boxShadow: `4px 0 20px ${C.dark}40`,
-        }}>
-          {/* Sidebar Header */}
-          <div style={{
-            padding: sidebarCollapsed ? '20px 0' : 20,
-            borderBottom: `1px solid rgba(255,255,255,0.1)`,
-            display: 'flex', alignItems: 'center', gap: 12,
-            justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-          }}>
-            <div style={{
-              width: 40, height: 40, borderRadius: '50%', display: 'flex',
-              alignItems: 'center', justifyContent: 'center', flexShrink: 0,
-              background: C.primary, border: `1px solid ${C.border}`,
-            }}>
-              <Icon name={roleIconName} size={18} color="#fff" />
-            </div>
-            {!sidebarCollapsed && (
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <p style={{ fontWeight: 900, color: '#fff', fontSize: 14, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                  {user?.name || 'Staff Portal'}
-                </p>
-                <div style={{ display: 'flex', alignItems: 'center', gap: 5, marginTop: 2 }}>
-                  <div style={{ width: 6, height: 6, borderRadius: '50%', background: C.success }} />
-                  <span style={{ fontSize: 10, fontWeight: 700, color: C.success }}>{roleLabel}</span>
+        <aside className={`
+          ${sidebarOpen ? 'translate-x-0' : '-translate-x-full'}
+          ${sidebarCollapsed ? 'lg:w-20' : 'lg:w-72'}
+          lg:translate-x-0
+          fixed lg:relative inset-y-0 left-0 z-40 w-72 flex-shrink-0
+          bg-gradient-to-b from-slate-900 via-slate-900 to-amber-950
+          flex flex-col
+          transition-all duration-300 ease-in-out
+          shadow-2xl shadow-slate-900/40
+        `}>
+          {/* Header */}
+          <div className={`p-4 border-b border-white/10 ${sidebarCollapsed ? 'lg:px-2' : ''}`}>
+            <div className={`flex items-center gap-3 ${sidebarCollapsed ? 'lg:justify-center' : ''}`}>
+              <div className={`w-12 h-12 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-700 border border-amber-400/50 flex items-center justify-center flex-shrink-0 shadow-lg shadow-amber-500/30`}>
+                <RoleIcon className="w-6 h-6 text-white" />
+              </div>
+              {!sidebarCollapsed && (
+                <div className="min-w-0 flex-1">
+                  <p className="font-extrabold text-white text-sm truncate">{user?.name || 'Staff Portal'}</p>
+                  <div className="flex items-center gap-1.5 mt-1">
+                    <div className={`w-1.5 h-1.5 rounded-full ${roleAccent === 'purple' ? 'bg-purple-400' : 'bg-emerald-400'} animate-pulse`} />
+                    <span className={`text-[10px] font-bold ${roleAccent === 'purple' ? 'text-purple-300' : 'text-emerald-300'}`}>
+                      {roleLabel}
+                    </span>
+                  </div>
                 </div>
+              )}
+            </div>
+
+            {!sidebarCollapsed && user?.pno && (
+              <div className="mt-3 px-3 py-2 rounded-lg bg-white/5 border border-white/10">
+                <p className="text-[10px] uppercase tracking-wider text-amber-200/60 font-bold">PNO</p>
+                <p className="text-xs text-white font-bold">{user.pno}</p>
               </div>
             )}
           </div>
 
-          {/* Role Switcher */}
-          {!sidebarCollapsed && (
-            <div style={{ padding: '12px 16px', borderBottom: `1px solid rgba(255,255,255,0.08)` }}>
-              <p style={{ fontSize: 9, fontWeight: 700, color: 'rgba(255,255,255,0.4)', textTransform: 'uppercase', letterSpacing: '0.1em', marginBottom: 6 }}>भूमिका</p>
-              <select
-                value={roleType}
-                onChange={e => setRoleType(e.target.value)}
-                style={{
-                  width: '100%', borderRadius: 8, padding: '6px 10px', fontSize: 12,
-                  background: 'rgba(255,255,255,0.1)', border: `1px solid rgba(255,255,255,0.2)`,
-                  color: '#fff', cursor: 'pointer', outline: 'none',
-                  fontFamily: "'Noto Sans Devanagari', sans-serif",
-                }}
-              >
-                <option value="booth" style={{ background: C.dark }}>बूथ स्टाफ</option>
-                <option value="sector" style={{ background: C.dark }}>सेक्टर अधिकारी</option>
-                <option value="zone" style={{ background: C.dark }}>जोनल अधिकारी</option>
-                <option value="kshetra" style={{ background: C.dark }}>क्षेत्र अधिकारी</option>
-              </select>
+          {/* Election badge */}
+          {!sidebarCollapsed && electionConfig?.election_date && (
+            <div className="px-4 pt-4">
+              <div className={`px-3 py-2 rounded-xl border ${isAfterElection ? 'bg-emerald-500/10 border-emerald-500/30' : 'bg-blue-500/10 border-blue-500/30'} flex items-center gap-2`}>
+                {isAfterElection ? <CheckCircle2 className="w-4 h-4 text-emerald-400 flex-shrink-0" /> : <Calendar className="w-4 h-4 text-blue-400 flex-shrink-0" />}
+                <div className="min-w-0">
+                  <p className={`text-[9px] uppercase tracking-wider font-bold ${isAfterElection ? 'text-emerald-300' : 'text-blue-300'}`}>
+                    {isAfterElection ? 'चुनाव संपन्न' : 'मतदान तिथि'}
+                  </p>
+                  <p className="text-[11px] text-white font-bold truncate">{formatHindiDate(electionConfig.election_date)}</p>
+                </div>
+              </div>
             </div>
           )}
 
           {/* Nav Items */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: '8px 0' }}>
-            {navItems.map(({ key, label, icon }) => {
-              const active = activeTab === key;
-              return (
-                <button key={key} onClick={() => setActiveTab(key)} title={sidebarCollapsed ? label : ''} style={{
-                  width: '100%', display: 'flex', alignItems: 'center',
-                  gap: sidebarCollapsed ? 0 : 12,
-                  justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-                  padding: sidebarCollapsed ? '12px 0' : '12px 20px',
-                  background: active ? `${C.primary}33` : 'transparent',
-                  borderLeft: `3px solid ${active ? C.border : 'transparent'}`,
-                  border: 'none', cursor: 'pointer', transition: 'all 0.15s',
-                }}>
-                  <span style={{ fontSize: 18, lineHeight: 1 }}>{icon}</span>
-                  {!sidebarCollapsed && (
-                    <span style={{
-                      fontSize: 13, fontWeight: active ? 700 : 400,
-                      color: active ? '#fff' : 'rgba(255,255,255,0.6)',
-                      fontFamily: "'Noto Sans Devanagari', sans-serif",
-                    }}>{label}</span>
-                  )}
-                  {active && !sidebarCollapsed && (
-                    <div style={{ marginLeft: 'auto', width: 6, height: 6, borderRadius: '50%', background: C.border }} />
-                  )}
-                </button>
-              );
-            })}
-          </div>
+          <nav className="flex-1 overflow-y-auto py-4 px-3">
+            {!sidebarCollapsed && (
+              <p className="px-3 text-[10px] uppercase tracking-wider text-amber-200/40 font-bold mb-2">मेनू</p>
+            )}
+            <div className="space-y-1">
+              {navItems.map(({ key, label, icon: ItemIcon }) => {
+                const active = activeTab === key;
+                return (
+                  <button
+                    key={key}
+                    onClick={() => {
+                      if (key === 'history') {
+                        nav('/staff/history');
+                        return;
+                      }
+                      setActiveTab(key);
+                      setSidebarOpen(false);
+                    }}
+                    title={sidebarCollapsed ? label : ''}
+                    className={`
+                      w-full flex items-center gap-3 px-3 py-2.5 rounded-xl
+                      transition-all duration-200 group
+                      ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}
+                      ${active
+                        ? 'bg-gradient-to-r from-amber-600/30 to-amber-500/10 border border-amber-500/30 shadow-lg shadow-amber-500/10'
+                        : 'hover:bg-white/5 border border-transparent'
+                      }
+                    `}
+                  >
+                    <ItemIcon className={`w-5 h-5 flex-shrink-0 ${active ? 'text-amber-400' : 'text-slate-400 group-hover:text-white'}`} />
+                    {!sidebarCollapsed && (
+                      <>
+                        <span className={`text-sm font-bold flex-1 text-left ${active ? 'text-white' : 'text-slate-300 group-hover:text-white'}`}>
+                          {label}
+                        </span>
+                        {active && <ChevronRight className="w-4 h-4 text-amber-400" />}
+                      </>
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+          </nav>
 
-          {/* Sidebar Footer */}
-          <div style={{ borderTop: `1px solid rgba(255,255,255,0.1)`, padding: '8px 0' }}>
-            {/* History */}
-            <button onClick={() => nav('/staff/history')} title={sidebarCollapsed ? 'इतिहास' : ''} style={{
-              width: '100%', display: 'flex', alignItems: 'center',
-              gap: sidebarCollapsed ? 0 : 12,
-              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-              padding: sidebarCollapsed ? '10px 0' : '10px 20px',
-              background: 'transparent', border: 'none', cursor: 'pointer',
-            }}>
-              <Icon name="history" size={18} color="rgba(255,255,255,0.6)" />
-              {!sidebarCollapsed && <span style={{ fontSize: 13, color: 'rgba(255,255,255,0.6)', fontFamily: "'Noto Sans Devanagari', sans-serif" }}>इतिहास</span>}
+          {/* Footer */}
+          <div className="border-t border-white/10 p-3 space-y-1">
+            <button
+              onClick={() => nav('/staff/history')}
+              title={sidebarCollapsed ? 'इतिहास' : ''}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-white/5 transition-colors group ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`}
+            >
+              <History className="w-5 h-5 text-slate-400 group-hover:text-white flex-shrink-0" />
+              {!sidebarCollapsed && <span className="text-sm font-bold text-slate-300 group-hover:text-white">इतिहास</span>}
             </button>
-
-            {/* Logout */}
-            <button onClick={() => setShowLogout(true)} title={sidebarCollapsed ? 'लॉग आउट' : ''} style={{
-              width: '100%', display: 'flex', alignItems: 'center',
-              gap: sidebarCollapsed ? 0 : 12,
-              justifyContent: sidebarCollapsed ? 'center' : 'flex-start',
-              padding: sidebarCollapsed ? '10px 0' : '10px 20px',
-              background: 'transparent', border: 'none', cursor: 'pointer',
-            }}>
-              <Icon name="logout" size={18} color={`${C.error}cc`} />
-              {!sidebarCollapsed && <span style={{ fontSize: 13, color: `${C.error}cc`, fontFamily: "'Noto Sans Devanagari', sans-serif" }}>लॉग आउट</span>}
+            <button
+              onClick={() => setShowLogout(true)}
+              title={sidebarCollapsed ? 'लॉग आउट' : ''}
+              className={`w-full flex items-center gap-3 px-3 py-2.5 rounded-xl hover:bg-red-500/10 transition-colors group ${sidebarCollapsed ? 'lg:justify-center lg:px-2' : ''}`}
+            >
+              <LogOut className="w-5 h-5 text-red-400 flex-shrink-0" />
+              {!sidebarCollapsed && <span className="text-sm font-bold text-red-300 group-hover:text-red-200">लॉग आउट</span>}
             </button>
           </div>
-        </div>
+        </aside>
 
         {/* ── MAIN AREA ── */}
-        <div style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-
+        <div className="flex-1 flex flex-col min-w-0">
           {/* Top Bar */}
-          <div style={{
-            display: 'flex', alignItems: 'center', gap: 12, padding: '0 24px',
-            height: 60, flexShrink: 0, background: C.dark,
-            borderBottom: `1px solid rgba(255,255,255,0.1)`,
-            boxShadow: `0 2px 8px ${C.dark}40`,
-          }}>
-            {/* Collapse Toggle */}
-            <button onClick={() => setSidebarCollapsed(p => !p)} style={{
-              width: 34, height: 34, borderRadius: 8, display: 'flex',
-              alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(255,255,255,0.08)', border: `1px solid rgba(255,255,255,0.15)`,
-              cursor: 'pointer', flexShrink: 0,
-            }}>
-              <svg width={16} height={16} viewBox="0 0 24 24" fill="none" stroke="rgba(255,255,255,0.7)" strokeWidth="2" strokeLinecap="round">
-                <line x1="3" y1="6" x2="21" y2="6" /><line x1="3" y1="12" x2="21" y2="12" /><line x1="3" y1="18" x2="21" y2="18" />
-              </svg>
+          <header className="bg-white/95 backdrop-blur-sm border-b border-slate-200 px-4 lg:px-6 h-16 flex items-center gap-3 flex-shrink-0 shadow-sm sticky top-0 z-20">
+            <button
+              onClick={() => setSidebarOpen(true)}
+              className="lg:hidden w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 flex items-center justify-center transition-colors"
+            >
+              <Menu className="w-5 h-5 text-slate-700" />
             </button>
 
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <p style={{ fontWeight: 900, color: '#fff', fontSize: 15 }}>
-                {navItems.find(n => n.key === activeTab)?.label || 'डैशबोर्ड'}
-              </p>
-              <p style={{ fontSize: 10, color: 'rgba(255,255,255,0.5)' }}>
-                {user?.name || ''} · {roleLabel}
-              </p>
+            <button
+              onClick={() => setSidebarCollapsed(p => !p)}
+              className="hidden lg:flex w-10 h-10 rounded-xl bg-slate-100 hover:bg-slate-200 items-center justify-center transition-colors"
+              title="साइडबार टॉगल करें"
+            >
+              <Menu className="w-5 h-5 text-slate-700" />
+            </button>
+
+            <div className="flex items-center gap-3 min-w-0 flex-1">
+              {currentTab && (
+                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-amber-100 to-yellow-100 border border-amber-200 flex items-center justify-center flex-shrink-0">
+                  <currentTab.icon className="w-5 h-5 text-amber-700" />
+                </div>
+              )}
+              <div className="min-w-0">
+                <p className="font-extrabold text-slate-800 text-base truncate">
+                  {isAfterElection ? 'ड्यूटी इतिहास' : (currentTab?.label || 'डैशबोर्ड')}
+                </p>
+                <p className="text-[11px] text-slate-500 truncate">{user?.name || 'Loading...'} · {roleLabel}</p>
+              </div>
             </div>
 
-            {/* Election banner inline */}
-            {electionDate && (
-              <div style={{
-                display: 'flex', alignItems: 'center', gap: 8, borderRadius: 20,
-                padding: '5px 12px',
-                background: isAfterElection ? `${C.success}22` : `${C.info}22`,
-                border: `1px solid ${isAfterElection ? C.success : C.info}44`,
-              }}>
-                <Icon name={isAfterElection ? 'checkcircle' : 'history'} size={13} color={isAfterElection ? C.success : C.info} />
-                <span style={{ fontSize: 11, fontWeight: 600, color: isAfterElection ? C.success : C.info }}>
-                  {isAfterElection ? 'चुनाव संपन्न' : `चुनाव: ${electionDate}`}
-                </span>
-              </div>
-            )}
-
-            {/* PNO badge */}
-            {user?.pno && (
-              <div style={{
-                borderRadius: 8, padding: '4px 10px',
-                background: 'rgba(255,255,255,0.08)', border: `1px solid rgba(255,255,255,0.15)`,
-              }}>
-                <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.7)', fontWeight: 600 }}>PNO: {user.pno}</span>
-              </div>
-            )}
-
-            {/* Refresh */}
-            <button onClick={loadData} style={{
-              width: 34, height: 34, borderRadius: 8, display: 'flex',
-              alignItems: 'center', justifyContent: 'center',
-              background: 'rgba(255,255,255,0.08)', border: `1px solid rgba(255,255,255,0.15)`,
-              cursor: 'pointer',
-            }}>
-              <div style={loading ? { animation: 'spin 0.8s linear infinite' } : {}}>
-                <Icon name="refresh" size={15} color="rgba(255,255,255,0.7)" />
-              </div>
+            <button
+              onClick={loadData}
+              className="w-10 h-10 rounded-xl bg-slate-100 hover:bg-amber-100 flex items-center justify-center transition-colors group"
+              title="रीफ्रेश"
+            >
+              <RefreshCw className={`w-4 h-4 text-slate-700 group-hover:text-amber-700 ${loading ? 'animate-spin' : ''}`} />
             </button>
-          </div>
+
+            <button
+              onClick={() => setShowLogout(true)}
+              className="hidden sm:flex w-10 h-10 rounded-xl bg-red-50 hover:bg-red-100 items-center justify-center transition-colors"
+              title="लॉग आउट"
+            >
+              <LogOut className="w-4 h-4 text-red-600" />
+            </button>
+          </header>
 
           {/* Content */}
-          <div style={{ flex: 1, overflowY: 'auto', padding: 24 }}>
-            <div style={{ maxWidth: 720, margin: '0 auto' }}>
+          <main className="flex-1 overflow-y-auto">
+            <div className="max-w-6xl mx-auto p-4 lg:p-6 animate-slideIn" key={activeTab}>
               {renderSection()}
             </div>
-          </div>
+          </main>
         </div>
       </div>
 
-      {showLogout && (
-        <LogoutDialog onConfirm={handleLogout} onCancel={() => setShowLogout(false)} />
-      )}
+      {showLogout && <LogoutDialog onConfirm={handleLogout} onCancel={() => setShowLogout(false)} />}
     </>
   );
 }
