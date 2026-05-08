@@ -24,6 +24,7 @@ const kSuccessBg = Color(0xFFE6F2DF);
 const kInfo      = Color(0xFF1A5276);
 const kArmed     = Color(0xFF1B5E20);
 const kUnarmed   = Color(0xFF37474F);
+const kDistrict  = Color(0xFF4A148C); // purple for district duty
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 const _rankMap = {
@@ -58,6 +59,27 @@ Color _typeColor(String? t) {
   }
 }
 
+// ── District duty label map ──────────────────────────────────────────────────
+const _districtDutyLabels = {
+  'cluster_mobile':        'क्लस्टर मोबाईल',
+  'thana_mobile':          'थाना मोबाईल',
+  'thana_reserve':         'थाना रिजर्व',
+  'thana_extra_mobile':    'थाना अतिरिक्त मोबाईल',
+  'sector_pol_mag_mobile': 'सैक्टर पुलिस/मजिस्ट्रेट मोबाईल',
+  'zonal_pol_mag_mobile':  'जोनल पुलिस/मजिस्ट्रेट मोबाईल',
+  'sdm_co_mobile':         'एसडीएम/सीओ मोबाईल',
+  'chowki_mobile':         'चौकी मोबाईल',
+  'barrier_picket':        'बैरियर/पिकैट',
+  'evm_security':          'ईवीएम सुरक्षा',
+  'adm_sp_mobile':         'एडीएम/एसपी मोबाईल',
+  'dm_sp_mobile':          'डीएम/एसपी मोबाईल',
+  'observer_security':     'पर्यवेक्षक सुरक्षा',
+  'hq_reserve':            'मुख्यालय रिजर्व',
+};
+
+String dutyLabel(String? key) =>
+    _districtDutyLabels[key] ?? key?.replaceAll('_', ' ') ?? '—';
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN DASHBOARD
 // ══════════════════════════════════════════════════════════════════════════════
@@ -71,7 +93,10 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     with TickerProviderStateMixin {
   int _navIdx = 0;
 
-  Map? _duty, _user;
+  Map<dynamic, dynamic>? _duty;
+  Map<dynamic, dynamic>? _user;
+  Map<dynamic, dynamic>? _districtDuty;
+  Map<dynamic, dynamic>? _electionConfig;
   bool _loading = true;
   String? _error;
   String _roleType = 'none';
@@ -98,24 +123,32 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     try {
       final token = await AuthService.getToken();
       final results = await Future.wait([
-        ApiService.get('/staff/profile',       token: token),
-        ApiService.get('/staff/my-duty',       token: token),
-        ApiService.get('/staff/election-date', token: token),
+        ApiService.get('/staff/profile',         token: token),
+        ApiService.get('/staff/my-duty',         token: token),
+        ApiService.get('/staff/election-config', token: token),
+        ApiService.get('/staff/district-duty',   token: token),
       ]);
 
       final userResp     = results[0];
       final resp         = results[1];
       final electionResp = results[2];
+      final districtResp = results[3];
 
-      Map? dutyData;
+      Map<dynamic, dynamic>? dutyData;
       if (resp is Map) {
         dutyData = resp.containsKey('data')
-            ? (resp['data'] is Map ? resp['data'] as Map : null)
-            : resp;
+            ? (resp['data'] is Map ? resp['data'] as Map<dynamic, dynamic> : null)
+            : resp as Map<dynamic, dynamic>;
       }
 
-      final roleType    = (dutyData?['roleType'] ?? 'none').toString();
-      final electionDate = electionResp['data']?.toString();
+      final roleType = (dutyData?['roleType'] ?? 'none').toString();
+
+      // Full election config
+      Map<dynamic, dynamic>? electionConfig;
+      if (electionResp is Map && electionResp['data'] is Map) {
+        electionConfig = electionResp['data'] as Map<dynamic, dynamic>;
+      }
+      final electionDate = electionConfig?['election_date']?.toString();
 
       bool isAfter = false;
       if (electionDate != null) {
@@ -123,9 +156,19 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
         if (ed != null) isAfter = DateTime.now().isAfter(ed);
       }
 
+      // District duty
+      Map<dynamic, dynamic>? districtDuty;
+      if (districtResp is Map && districtResp['data'] is Map) {
+        districtDuty = districtResp['data'] as Map<dynamic, dynamic>;
+      }
+
       setState(() {
-        _user            = userResp['data'] is Map ? userResp['data'] as Map : {};
+        _user            = userResp['data'] is Map
+            ? userResp['data'] as Map<dynamic, dynamic>
+            : <dynamic, dynamic>{};
         _duty            = dutyData;
+        _electionConfig  = electionConfig;
+        _districtDuty    = districtDuty;
         _roleType        = roleType;
         _electionDate    = electionDate;
         _isAfterElection = isAfter;
@@ -147,45 +190,52 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
         MaterialPageRoute(builder: (_) => const DutyHistoryPage()));
   }
 
-  // ── Nav items — NO password tab, adjusted per role ───────────────────────
-  // POST election: only History tab shown
-  // PRE election: normal tabs (no password)
+  // ── Nav items ─────────────────────────────────────────────────────────────
   List<_NavItem> get _navItems {
-    // After election — single tab: history
     if (_isAfterElection) {
       return [
         _NavItem('इतिहास', Icons.history_outlined, Icons.history),
       ];
     }
 
+    // If district duty assigned
+    if (_districtDuty != null && _roleType == 'none') {
+      return [
+        _NavItem('डैशबोर्ड', Icons.dashboard_outlined,       Icons.dashboard),
+        _NavItem('ड्यूटी',   Icons.location_on_outlined,      Icons.location_on),
+        _NavItem('सहयोगी',   Icons.groups_outlined,           Icons.groups),
+        _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,        Icons.badge),
+      ];
+    }
+
     switch (_roleType) {
       case 'sector':
         return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined, Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined, Icons.location_on),
-          _NavItem('बूथ',      Icons.how_to_vote_outlined, Icons.how_to_vote),
-          _NavItem('मानक',     Icons.rule_folder_outlined, Icons.rule_folder),
+          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
+          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
+          _NavItem('बूथ',      Icons.how_to_vote_outlined,   Icons.how_to_vote),
+          _NavItem('मानक',     Icons.rule_folder_outlined,   Icons.rule_folder),
         ];
       case 'zone':
         return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined, Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined, Icons.location_on),
-          _NavItem('सेक्टर',   Icons.grid_view_outlined,   Icons.grid_view),
-          _NavItem('मानक',     Icons.rule_folder_outlined, Icons.rule_folder),
+          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
+          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
+          _NavItem('सेक्टर',   Icons.grid_view_outlined,     Icons.grid_view),
+          _NavItem('मानक',     Icons.rule_folder_outlined,   Icons.rule_folder),
         ];
       case 'kshetra':
         return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined, Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined, Icons.location_on),
-          _NavItem('जोन',      Icons.map_outlined,          Icons.map),
-          _NavItem('मानक',     Icons.rule_folder_outlined, Icons.rule_folder),
+          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
+          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
+          _NavItem('जोन',      Icons.map_outlined,           Icons.map),
+          _NavItem('मानक',     Icons.rule_folder_outlined,   Icons.rule_folder),
         ];
       default: // booth
         return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined, Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined, Icons.location_on),
-          _NavItem('सहयोगी',   Icons.groups_outlined,      Icons.groups),
-          _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,  Icons.badge),
+          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
+          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
+          _NavItem('सहयोगी',   Icons.groups_outlined,        Icons.groups),
+          _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,     Icons.badge),
         ];
     }
   }
@@ -287,7 +337,6 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
       ])),
     ]),
     actions: [
-      // ── Prominent HISTORY button (always visible) ─────────────────────
       GestureDetector(
         onTap: _openHistory,
         child: Container(
@@ -300,33 +349,34 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
                 color: _isAfterElection ? kSuccess : Colors.white30, width: 1.2),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(Icons.history_rounded, color: Colors.white, size: 14),
+            const Icon(Icons.history_rounded, color: Colors.white, size: 14),
             const SizedBox(width: 4),
             const Text('इतिहास', style: TextStyle(
                 color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
           ]),
         ),
       ),
-
-      // Role badge
       if (!_isAfterElection)
         Container(
           margin: const EdgeInsets.only(right: 4),
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
           decoration: BoxDecoration(
-            color: kSuccessBg.withOpacity(0.2),
+            color: (_districtDuty != null ? kDistrict : kSuccessBg).withOpacity(0.2),
             borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: kSuccess.withOpacity(0.4)),
+            border: Border.all(color: (_districtDuty != null ? kDistrict : kSuccess).withOpacity(0.4)),
           ),
           child: Row(mainAxisSize: MainAxisSize.min, children: [
             Container(width: 6, height: 6,
-                decoration: const BoxDecoration(color: kSuccess, shape: BoxShape.circle)),
+                decoration: BoxDecoration(
+                  color: _districtDuty != null ? kDistrict : kSuccess,
+                  shape: BoxShape.circle)),
             const SizedBox(width: 4),
             Text(_roleLabel(),
-                style: const TextStyle(color: kSuccess, fontSize: 9, fontWeight: FontWeight.w700)),
+                style: TextStyle(
+                  color: _districtDuty != null ? kDistrict : kSuccess,
+                  fontSize: 9, fontWeight: FontWeight.w700)),
           ]),
         ),
-
       IconButton(
           icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 20),
           onPressed: _loadData),
@@ -337,6 +387,7 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
   );
 
   IconData _roleIcon() {
+    if (_districtDuty != null) return Icons.shield_outlined;
     switch (_roleType) {
       case 'sector':  return Icons.grid_view;
       case 'zone':    return Icons.map;
@@ -346,6 +397,7 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
   }
 
   String _roleLabel() {
+    if (_districtDuty != null) return 'जनपदीय ड्यूटी';
     switch (_roleType) {
       case 'sector':  return 'सेक्टर अधिकारी';
       case 'zone':    return 'जोनल अधिकारी';
@@ -356,19 +408,17 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  //  BODY — post-election shows full-screen history card
+  //  BODY
   // ══════════════════════════════════════════════════════════════════════════
   Widget _buildBody() {
-    // ── POST ELECTION: full-screen "election done" + history ──────────────
     if (_isAfterElection) {
       return _PostElectionView(
         user: _user,
-        electionDate: _electionDate,
+        electionConfig: _electionConfig,
         onOpenHistory: _openHistory,
       );
     }
 
-    // ── PRE ELECTION: normal sections ─────────────────────────────────────
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: ConstrainedBox(
@@ -379,11 +429,31 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
   }
 
   Widget _buildSection() {
+    // District duty takes priority if no other role
+    if (_districtDuty != null && _roleType == 'none') {
+      return _buildDistrictDutySection();
+    }
     switch (_roleType) {
       case 'sector':  return _buildSectorSection();
       case 'zone':    return _buildZoneSection();
       case 'kshetra': return _buildKshetraSection();
       default:        return _buildBoothSection();
+    }
+  }
+
+  // ── DISTRICT DUTY sections ────────────────────────────────────────────────
+  Widget _buildDistrictDutySection() {
+    // FIX: use Map<dynamic,dynamic> cast via Map.from to satisfy non-nullable parameter
+    final dd = Map<dynamic, dynamic>.from(_districtDuty!);
+    switch (_navIdx) {
+      case 0: return _DistrictOverviewSection(
+          duty: dd, user: _user ?? {}, electionConfig: _electionConfig,
+          onGoToDutyCard: () => _goTo(3));
+      case 1: return _DistrictDetailSection(duty: dd);
+      case 2: return _DistrictBatchStaffSection(duty: dd);
+      case 3: return _DistrictDutyCardSection(
+          duty: dd, user: _user ?? {}, electionConfig: _electionConfig);
+      default: return const SizedBox();
     }
   }
 
@@ -474,22 +544,540 @@ class _NavItem {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  POST-ELECTION VIEW — shown when election date has passed
+//  ELECTION CONFIG BANNER — reusable across sections
 // ══════════════════════════════════════════════════════════════════════════════
-class _PostElectionView extends StatelessWidget {
-  final Map? user;
-  final String? electionDate;
-  final VoidCallback onOpenHistory;
-  const _PostElectionView(
-      {required this.user, required this.electionDate, required this.onOpenHistory});
+class _ElectionConfigBanner extends StatelessWidget {
+  final Map? electionConfig;
+  const _ElectionConfigBanner({this.electionConfig});
+
+  String _fmt(String? d) {
+    if (d == null) return '—';
+    try {
+      final dt = DateTime.parse(d);
+      const m = ['', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
+                  'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'];
+      return '${dt.day} ${m[dt.month]} ${dt.year}';
+    } catch (_) { return d; }
+  }
 
   @override
   Widget build(BuildContext context) {
+    if (electionConfig == null) return const SizedBox.shrink();
+    final ec = electionConfig!;
+    final name  = ec['election_name']?.toString() ?? '';
+    final type  = ec['election_type']?.toString() ?? '';
+    final phase = ec['phase']?.toString() ?? '';
+    final pratah = ec['pratah_samay']?.toString() ?? '';
+    final saya   = ec['saya_samay']?.toString() ?? '';
+    final date   = _fmt(ec['election_date']?.toString());
+
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.only(bottom: 14),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF1A237E), Color(0xFF283593)],
+          begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [BoxShadow(color: const Color(0xFF1A237E).withOpacity(0.3),
+            blurRadius: 12, offset: const Offset(0, 4))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Container(width: 32, height: 32,
+            decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(8)),
+            child: const Icon(Icons.how_to_vote_outlined, color: Colors.white, size: 18)),
+          const SizedBox(width: 10),
+          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (name.isNotEmpty)
+              Text(name, style: const TextStyle(color: Colors.white,
+                  fontSize: 13, fontWeight: FontWeight.w800), maxLines: 2),
+            if (type.isNotEmpty)
+              Text(type, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+          ])),
+          if (phase.isNotEmpty)
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white24)),
+              child: Text('चरण $phase',
+                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+            ),
+        ]),
+        const SizedBox(height: 10),
+        const Divider(color: Colors.white24, height: 1),
+        const SizedBox(height: 10),
+        Row(children: [
+          Expanded(child: _ElecInfoChip(Icons.calendar_today_outlined, 'मतदान तिथि', date)),
+          if (pratah.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(child: _ElecInfoChip(Icons.wb_sunny_outlined, 'प्रातः', pratah)),
+          ],
+          if (saya.isNotEmpty) ...[
+            const SizedBox(width: 8),
+            Expanded(child: _ElecInfoChip(Icons.nights_stay_outlined, 'सायं', saya)),
+          ],
+        ]),
+      ]),
+    );
+  }
+}
+
+class _ElecInfoChip extends StatelessWidget {
+  final IconData icon; final String label, value;
+  const _ElecInfoChip(this.icon, this.label, this.value);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+    decoration: BoxDecoration(
+      color: Colors.white.withOpacity(0.1),
+      borderRadius: BorderRadius.circular(8),
+    ),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, color: Colors.white60, size: 12),
+      const SizedBox(width: 5),
+      Flexible(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9)),
+        Text(value, style: const TextStyle(color: Colors.white, fontSize: 11,
+            fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+      ])),
+    ]),
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — OVERVIEW
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictOverviewSection extends StatelessWidget {
+  final Map<dynamic, dynamic> duty;
+  final Map<dynamic, dynamic> user;
+  final Map? electionConfig;
+  final VoidCallback onGoToDutyCard;
+  const _DistrictOverviewSection({
+    required this.duty,
+    required this.user,
+    this.electionConfig,
+    required this.onGoToDutyCard,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final dutyType   = duty['dutyType']?.toString() ?? '';
+    final batchNo    = duty['batchNo'];
+    final busNo      = duty['busNo']?.toString() ?? '';
+    final note       = duty['note']?.toString() ?? '';
+    final batchStaff = (duty['batchStaff'] as List? ?? []);
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // Election config banner
+      _ElectionConfigBanner(electionConfig: electionConfig),
+
+      // Duty type hero card
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+            colors: [kDistrict, Color(0xFF6A1B9A)],
+            begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: kDistrict.withOpacity(0.35),
+              blurRadius: 16, offset: const Offset(0, 6))],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(width: 48, height: 48,
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                shape: BoxShape.circle,
+                border: Border.all(color: Colors.white30, width: 2)),
+              child: const Icon(Icons.shield_outlined, color: Colors.white, size: 24)),
+            const SizedBox(width: 14),
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('जनपदीय ड्यूटी', style: TextStyle(
+                  color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w600,
+                  letterSpacing: 1)),
+              Text(dutyLabel(dutyType), style: const TextStyle(
+                  color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
+                  maxLines: 2),
+            ])),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.15),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(color: Colors.white24)),
+              child: Text('बैच ${batchNo ?? '—'}',
+                  style: const TextStyle(color: Colors.white,
+                      fontSize: 11, fontWeight: FontWeight.w800)),
+            ),
+          ]),
+          if (busNo.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(height: 1, color: Colors.white.withOpacity(0.15)),
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.directions_bus_outlined, color: Colors.white54, size: 14),
+              const SizedBox(width: 6),
+              Text('बस: $busNo', style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ]),
+          ],
+          if (note.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(children: [
+              const Icon(Icons.notes_outlined, color: Colors.white54, size: 14),
+              const SizedBox(width: 6),
+              Expanded(child: Text(note, style: const TextStyle(color: Colors.white70, fontSize: 12))),
+            ]),
+          ],
+        ]),
+      ),
+
+      const SizedBox(height: 14),
+
+      // Stats row
+      GridView.count(
+        crossAxisCount: 2, shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45,
+        children: [
+          _StatCard(icon: Icons.shield_outlined,   label: 'ड्यूटी प्रकार',
+              value: dutyLabel(dutyType), color: kDistrict),
+          _StatCard(icon: Icons.confirmation_number_outlined, label: 'बैच संख्या',
+              value: 'बैच ${batchNo ?? '—'}', color: kPrimary),
+          _StatCard(icon: Icons.groups_outlined,   label: 'बैच कर्मी',
+              value: '${batchStaff.length} कर्मी', color: kSuccess),
+          _StatCard(icon: Icons.directions_bus_outlined, label: 'बस संख्या',
+              value: busNo.isNotEmpty ? busNo : '—', color: kInfo),
+        ],
+      ),
+
+      const SizedBox(height: 14),
+
+      // Staff info
+      _HeroCard(user: user, duty: null, noDuty: false, subtitle: 'जनपदीय ड्यूटी कर्मी'),
+
+      const SizedBox(height: 14),
+
+      // Duty card button
+      _NavButton(icon: Icons.print_outlined, label: 'ड्यूटी कार्ड प्रिंट करें',
+          color: kDark, onTap: onGoToDutyCard),
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — DETAIL
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictDetailSection extends StatelessWidget {
+  final Map<dynamic, dynamic> duty;
+  const _DistrictDetailSection({required this.duty});
+
+  @override
+  Widget build(BuildContext context) {
+    final dutyType   = duty['dutyType']?.toString() ?? '';
+    final batchNo    = duty['batchNo'];
+    final busNo      = duty['busNo']?.toString() ?? '';
+    final note       = duty['note']?.toString() ?? '';
+    final district   = duty['district']?.toString() ?? '';
+    final assignedAt = duty['assignedAt']?.toString() ?? '';
+
+    return Column(children: [
+      _SectionCard(icon: Icons.shield_outlined, title: 'जनपदीय ड्यूटी विवरण',
+        child: Column(children: [
+          _InfoTile(Icons.work_outline,            'ड्यूटी प्रकार',  dutyLabel(dutyType)),
+          _InfoTile(Icons.confirmation_number_outlined, 'बैच संख्या', 'बैच $batchNo'),
+          if (busNo.isNotEmpty)
+            _InfoTile(Icons.directions_bus_outlined, 'बस संख्या',    busNo),
+          if (district.isNotEmpty)
+            _InfoTile(Icons.location_city_outlined,  'जनपद',         district),
+          if (note.isNotEmpty)
+            _InfoTile(Icons.notes_outlined,          'विशेष नोट',    note),
+          if (assignedAt.isNotEmpty)
+            _InfoTile(Icons.schedule_outlined,       'नियुक्ति समय', assignedAt),
+        ]),
+      ),
+      const SizedBox(height: 14),
+
+      // District duty type info card
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: kDistrict.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kDistrict.withOpacity(0.25))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.info_outline_rounded, color: kDistrict, size: 16),
+            const SizedBox(width: 8),
+            Text('ड्यूटी जानकारी',
+                style: TextStyle(color: kDistrict, fontSize: 13, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            'आप "${ dutyLabel(dutyType) }" ड्यूटी पर बैच $batchNo में तैनात हैं। '
+            'यह जनपद स्तरीय ड्यूटी है जो व्यवस्थापक द्वारा सौंपी गई है।',
+            style: TextStyle(color: kDistrict.withOpacity(0.8), fontSize: 12),
+          ),
+        ]),
+      ),
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — BATCH STAFF
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictBatchStaffSection extends StatelessWidget {
+  final Map<dynamic, dynamic> duty;
+  const _DistrictBatchStaffSection({required this.duty});
+
+  @override
+  Widget build(BuildContext context) {
+    final staff   = (duty['batchStaff'] as List? ?? []);
+    final batchNo = duty['batchNo'];
+
+    return _SectionCard(
+      icon: Icons.groups_outlined,
+      title: 'बैच $batchNo के सहयोगी कर्मी (${staff.length})',
+      child: staff.isEmpty
+          ? const Padding(
+              padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(child: Text('कोई सहयोगी नहीं',
+                  style: TextStyle(color: kSubtle, fontSize: 13))))
+          : Column(children: staff.asMap().entries.map((e) {
+              final i = e.key;
+              final s = e.value is Map ? e.value as Map : {};
+              final armed = s['is_armed'] == 1 || s['is_armed'] == true;
+              return _StaffRow(index: i, staff: s, total: staff.length, armed: armed);
+            }).toList()),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — DUTY CARD
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictDutyCardSection extends StatefulWidget {
+  final Map<dynamic, dynamic> duty;
+  final Map<dynamic, dynamic> user;
+  final Map? electionConfig;
+  const _DistrictDutyCardSection({
+    required this.duty,
+    required this.user,
+    this.electionConfig,
+  });
+  @override
+  State<_DistrictDutyCardSection> createState() => _DistrictDutyCardSectionState();
+}
+
+class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
+  bool _printing = false;
+  bool _hasMarked = false;
+
+  /// Convert district duty data to the admin card shape
+  Map<String, dynamic> _toAdminShape() {
+    final d  = widget.duty;
+    final u  = widget.user;
+    final ec = widget.electionConfig ?? {};
+
+    final batchStaff = (d['batchStaff'] as List? ?? []);
+
+    return {
+      // Staff info
+      'name':       u['name'] ?? '',
+      'pno':        u['pno']  ?? '',
+      'mobile':     u['mobile'] ?? '',
+      'rank':       u['rank']  ?? u['user_rank'] ?? '',
+      'user_rank':  u['rank']  ?? u['user_rank'] ?? '',
+      'isArmed':    u['isArmed'] ?? false,
+      'staffThana': u['thana'] ?? '',
+      'thana':      u['thana'] ?? '',
+      'district':   u['district'] ?? ec['district'] ?? '',
+
+      // Duty location — district duty uses dutyType as centerName
+      'centerName':     dutyLabel(d['dutyType']?.toString()),
+      'centerType':     'district',
+      'gpName':         '',
+      'sectorName':     '',
+      'zoneName':       '',
+      'superZoneName':  '',
+      'busNo':          d['busNo'] ?? '',
+      'bus_no':         d['busNo'] ?? '',
+
+      // Officers empty for district duty
+      'zonalOfficers':  [],
+      'sectorOfficers': [],
+      'superOfficers':  [],
+
+      // Batch staff as sahyogi
+      'sahyogi':  batchStaff,
+      'allStaff': batchStaff,
+
+      // Election details
+      'electionName':  ec['election_name']  ?? '',
+      'electionType':  ec['election_type']  ?? '',
+      'electionDate':  ec['election_date']  ?? '',
+      'phase':         ec['phase']          ?? '',
+      'pratahSamay':   ec['pratah_samay']   ?? '',
+      'sayaSamay':     ec['saya_samay']     ?? '',
+      'batchNo':       d['batchNo']?.toString() ?? '',
+    };
+  }
+
+  Future<void> _printCard() async {
+    setState(() => _printing = true);
+    try {
+      final font = await PdfGoogleFonts.notoSansDevanagariRegular();
+      final bold = await PdfGoogleFonts.notoSansDevanagariBold();
+      final doc  = pw.Document();
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.a6.landscape,
+        margin: const pw.EdgeInsets.all(4),
+        build: (_) => buildDutyCardPdf(_toAdminShape(), font, bold),
+      ));
+      await Printing.layoutPdf(onLayout: (_) async => doc.save());
+
+      try {
+        final token = await AuthService.getToken();
+        await ApiService.post('/staff/mark-card-downloaded', {}, token: token);
+      } catch (e) { debugPrint('mark-card-downloaded error: $e'); }
+
+      if (mounted) setState(() => _hasMarked = true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('प्रिंट त्रुटि: $e'),
+          backgroundColor: kError, behavior: SnackBarBehavior.floating));
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d  = widget.duty;
+    final u  = widget.user;
+    final ec = widget.electionConfig ?? {};
+
+    return Column(children: [
+      // Header
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+              colors: [kDistrict, Color(0xFF6A1B9A)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(children: [
+          Container(width: 48, height: 48,
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14)),
+              child: const Icon(Icons.badge_outlined, color: Colors.white, size: 24)),
+          const SizedBox(width: 14),
+          const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('जनपदीय ड्यूटी कार्ड',
+                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+            Text('District Duty Card',
+                style: TextStyle(color: Colors.white60, fontSize: 11)),
+          ])),
+          GestureDetector(
+            onTap: _printing ? null : _printCard,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                  color: _printing ? kPrimary.withOpacity(0.6) : kPrimary,
+                  borderRadius: BorderRadius.circular(12)),
+              child: _printing
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                  : const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.print_outlined, color: Colors.white, size: 15),
+                      SizedBox(width: 6),
+                      Text('प्रिंट', style: TextStyle(
+                          color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                    ]),
+            ),
+          ),
+        ]),
+      ),
+
+      const SizedBox(height: 12),
+
+      if (_hasMarked)
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+              color: kSuccess.withOpacity(0.08), borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kSuccess.withOpacity(0.3))),
+          child: const Row(children: [
+            Icon(Icons.check_circle_rounded, color: kSuccess, size: 18),
+            SizedBox(width: 8),
+            Expanded(child: Text('ड्यूटी कार्ड डाउनलोड हो गया ✓',
+                style: TextStyle(color: kSuccess, fontSize: 13, fontWeight: FontWeight.w700))),
+          ]),
+        ),
+
+      // Preview card
+      _SectionCard(icon: Icons.preview_outlined, title: 'कार्ड विवरण',
+          child: Column(children: [
+            _PreviewRow('नाम',           u['name']),
+            _PreviewRow('PNO',           u['pno']),
+            _PreviewRow('पद',            rh(u['rank'] ?? u['user_rank'])),
+            _PreviewRow('ड्यूटी प्रकार', dutyLabel(d['dutyType']?.toString())),
+            _PreviewRow('बैच संख्या',    'बैच ${d['batchNo'] ?? '—'}'),
+            if ((d['busNo']?.toString() ?? '').isNotEmpty)
+              _PreviewRow('बस',          d['busNo']),
+            _PreviewRow('जनपद',          u['district'] ?? ec['district']),
+            if ((ec['election_name']?.toString() ?? '').isNotEmpty)
+              _PreviewRow('चुनाव',       ec['election_name']),
+            if ((ec['election_date']?.toString() ?? '').isNotEmpty)
+              _PreviewRow('मतदान तिथि',  ec['election_date']),
+            if ((ec['pratah_samay']?.toString() ?? '').isNotEmpty)
+              _PreviewRow('प्रातः समय',  ec['pratah_samay']),
+            if ((ec['saya_samay']?.toString() ?? '').isNotEmpty)
+              _PreviewRow('सायं समय',    ec['saya_samay']),
+            _PreviewRow('सहयोगी',       '${(d['batchStaff'] as List? ?? []).length} कर्मी'),
+          ])),
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  POST-ELECTION VIEW
+// ══════════════════════════════════════════════════════════════════════════════
+class _PostElectionView extends StatelessWidget {
+  final Map? user;
+  final Map? electionConfig;
+  final VoidCallback onOpenHistory;
+  const _PostElectionView(
+      {required this.user, required this.electionConfig, required this.onOpenHistory});
+
+  String _fmt(String? d) {
+    if (d == null) return '';
+    try {
+      final dt = DateTime.parse(d);
+      const m = ['', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
+                  'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'];
+      return '${dt.day} ${m[dt.month]} ${dt.year}';
+    } catch (_) { return d; }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final ec = electionConfig ?? {};
+    final dateStr = _fmt(ec['election_date']?.toString());
+    final eName   = ec['election_name']?.toString() ?? '';
+    final phase   = ec['phase']?.toString() ?? '';
+
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(children: [
 
-        // ── Election completed banner ────────────────────────────────────
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
@@ -515,9 +1103,12 @@ class _PostElectionView extends StatelessWidget {
             const Text('चुनाव सम्पन्न हो गया', style: TextStyle(
                 color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
             const SizedBox(height: 6),
-            if (electionDate != null)
-              Text('तिथि: $electionDate', style: const TextStyle(
-                  color: Colors.white70, fontSize: 13)),
+            if (eName.isNotEmpty)
+              Text(eName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            if (dateStr.isNotEmpty)
+              Text('तिथि: $dateStr', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+            if (phase.isNotEmpty)
+              Text('चरण: $phase', style: const TextStyle(color: Colors.white60, fontSize: 12)),
             const SizedBox(height: 8),
             Text('${user?['name'] ?? ''} जी, आपकी ड्यूटी का रिकॉर्ड इतिहास में सुरक्षित है।',
                 style: const TextStyle(color: Colors.white60, fontSize: 12),
@@ -527,7 +1118,6 @@ class _PostElectionView extends StatelessWidget {
 
         const SizedBox(height: 20),
 
-        // ── Staff info card ──────────────────────────────────────────────
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(18),
@@ -560,7 +1150,6 @@ class _PostElectionView extends StatelessWidget {
 
         const SizedBox(height: 16),
 
-        // ── Large history button ─────────────────────────────────────────
         GestureDetector(
           onTap: onOpenHistory,
           child: Container(
@@ -607,7 +1196,6 @@ class _PostElectionView extends StatelessWidget {
 
         const SizedBox(height: 16),
 
-        // ── Info note ────────────────────────────────────────────────────
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
@@ -619,7 +1207,8 @@ class _PostElectionView extends StatelessWidget {
             Icon(Icons.info_outline_rounded, color: kInfo, size: 16),
             SizedBox(width: 8),
             Expanded(child: Text(
-              'चुनाव समाप्त हो जाने के बाद यहाँ कोई सक्रिय ड्यूटी नहीं दिखाई जाती। आपकी सभी पुरानी ड्यूटियाँ "इतिहास" में उपलब्ध हैं।',
+              'चुनाव समाप्त हो जाने के बाद यहाँ कोई सक्रिय ड्यूटी नहीं दिखाई जाती। '
+              'आपकी सभी पुरानी ड्यूटियाँ "इतिहास" में उपलब्ध हैं।',
               style: TextStyle(color: kInfo, fontSize: 12),
             )),
           ]),
@@ -765,7 +1354,7 @@ class _CoStaffSection extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BOOTH — DUTY CARD  (format unchanged)
+//  BOOTH — DUTY CARD
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutyCardSection extends StatefulWidget {
   final Map? duty, user;
@@ -908,7 +1497,7 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  SECTOR OFFICER — OVERVIEW
+//  SECTOR OFFICER — OVERVIEW / INFO / BOOTH ATTENDANCE
 // ══════════════════════════════════════════════════════════════════════════════
 class _SectorOverviewSection extends StatelessWidget {
   final Map? duty, user;
@@ -947,17 +1536,14 @@ class _SectorOverviewSection extends StatelessWidget {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  SECTOR OFFICER — INFO
-// ══════════════════════════════════════════════════════════════════════════════
 class _SectorInfoSection extends StatelessWidget {
   final Map? duty;
   const _SectorInfoSection({required this.duty});
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
-    final co     = (duty!['coOfficers']   as List? ?? []);
-    final zonal  = (duty!['zonalOfficers'] as List? ?? []);
+    final co    = (duty!['coOfficers']   as List? ?? []);
+    final zonal = (duty!['zonalOfficers'] as List? ?? []);
     return Column(children: [
       _SectionCard(icon: Icons.grid_view_outlined, title: 'सेक्टर जानकारी',
         child: Column(children: [
@@ -975,9 +1561,6 @@ class _SectorInfoSection extends StatelessWidget {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  SECTOR OFFICER — BOOTH ATTENDANCE
-// ══════════════════════════════════════════════════════════════════════════════
 class _SectorBoothAttendanceSection extends StatefulWidget {
   final Map? duty;
   final VoidCallback onRefresh;
@@ -1229,7 +1812,7 @@ class _BoothAttendanceCard extends StatelessWidget {
                   ]),
                 ])),
                 GestureDetector(
-                  onTap: dutyId != null ? () => _onToggle(dutyId, attended) : null,
+                  onTap: dutyId != null ? () => onToggle(dutyId, attended) : null,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     width: 56, height: 30,
@@ -1255,8 +1838,6 @@ class _BoothAttendanceCard extends StatelessWidget {
       ]),
     );
   }
-
-  void _onToggle(int dutyId, bool attended) => onToggle(dutyId, attended);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════

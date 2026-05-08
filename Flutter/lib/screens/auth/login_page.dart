@@ -909,7 +909,7 @@ class _LoginPageState extends State<LoginPage>
             msg.contains('Connection refused') ||
             msg.contains('Failed host lookup')) {
           _errorText =
-              'Cannot reach server. Check your network or server IP in constants.dart.';
+              'Cannot reach server. Check your network ';
         } else if (msg.contains('TimeoutException') ||
             msg.contains('timed out')) {
           _errorText =
