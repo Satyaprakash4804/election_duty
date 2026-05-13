@@ -15,7 +15,8 @@ from app.routes.admin       import admin_bp
 from app.routes.staff       import staff_bp
 from app.routes.hierarchy   import hierarchy
 from app.routes.hierarchyweb import hierarchy_bp
-
+from app.routes.election_finalize import finalize_bp
+from app.routes.election_history_report_routes import history_report_bp
 # 🆕 API request logging hooks
 from app.routes import start_request_timer, log_request_end, log_exception
 
@@ -52,6 +53,8 @@ def create_app():
     app.register_blueprint(staff_bp)
     app.register_blueprint(hierarchy)
     app.register_blueprint(hierarchy_bp)
+    app.register_blueprint(finalize_bp)
+    app.register_blueprint(history_report_bp)
 
     # ── Health ping ───────────────────────────────────────────────────────────
     @app.route("/ping")

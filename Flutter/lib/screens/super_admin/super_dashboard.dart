@@ -967,7 +967,7 @@ class _SuperDashboardState extends State<SuperDashboard>
             // Map View
             GestureDetector(
               onTap: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const MapViewPage())),
+                  MaterialPageRoute(builder: (_) => const MapViewPage(role: 'super_admin'))),
               child: Container(
                 padding: const EdgeInsets.all(16),
                 decoration: BoxDecoration(

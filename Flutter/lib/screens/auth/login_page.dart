@@ -918,7 +918,7 @@ class _LoginPageState extends State<LoginPage>
           _errorText = 'Server error. Please contact the developer.';
         } else {
           _errorText =
-              'Login failed. Please try again or contact support.';
+              'Login failed. Incurrect UserID or Password, Please try again or contact support.';
         }
       });
     } finally {

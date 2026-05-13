@@ -121,6 +121,10 @@ def _insert_officer(cur, table: str, fk_col: str, fk_val: int, o: dict):
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  FULL HIERARCHY TREE  (Tab 1 / 2 / 3 data source)
+#
+#  Role-based filtering:
+#    - master: optional ?district=... query param. If absent → ALL districts.
+#    - admin / super_admin: ALWAYS forced to their own user.district.
 # ══════════════════════════════════════════════════════════════════════════════
 
 @hierarchy.route("/full", methods=["GET", "OPTIONS"])
@@ -132,24 +136,27 @@ def get_full_hierarchy():
         with conn.cursor() as cur:
 
             user = request.user
-            role = user.get("role")
+            role = (user.get("role") or "").lower()
 
             print("USER 👉", user)
             print("ROLE 👉", role)
 
             # 🔥 ROLE-BASED FILTER
-            if role == "admin":
-                district = user.get("district")
-
-                cur.execute("""
-                    SELECT * FROM super_zones
-                    WHERE TRIM(LOWER(district)) = TRIM(LOWER(%s))
-                    ORDER BY id
-                """, (district,))
-
+            # master:        ?district=... (optional). No district → all super_zones.
+            # admin / super: hard-locked to user.district (cannot be overridden).
+            if role == "master":
+                req_district = (request.args.get("district") or "").strip()
+                if req_district:
+                    cur.execute("""
+                        SELECT * FROM super_zones
+                        WHERE TRIM(LOWER(district)) = TRIM(LOWER(%s))
+                        ORDER BY id
+                    """, (req_district,))
+                else:
+                    cur.execute("SELECT * FROM super_zones ORDER BY id")
             else:
-                district = user.get("district")
-
+                # admin / super_admin → locked to their own district
+                district = user.get("district") or ""
                 cur.execute("""
                     SELECT * FROM super_zones
                     WHERE TRIM(LOWER(district)) = TRIM(LOWER(%s))
@@ -265,6 +272,30 @@ def get_full_hierarchy():
     finally:
         conn.close()
 
+
+# ══════════════════════════════════════════════════════════════════════════════
+#  DISTRICTS LIST  (for Master dashboard dropdown)
+#  GET /api/admin/hierarchy/districts
+#  Returns distinct districts that actually have super_zones.
+# ══════════════════════════════════════════════════════════════════════════════
+
+@hierarchy.route("/districts", methods=["GET"])
+@admin_required
+def list_districts():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT DISTINCT TRIM(district) AS district
+                FROM super_zones
+                WHERE district IS NOT NULL AND TRIM(district) <> ''
+                ORDER BY district
+            """)
+            rows = cur.fetchall()
+            districts = [r["district"] for r in rows if r.get("district")]
+    finally:
+        conn.close()
+    return jsonify({"data": districts})
 
 
 # ══════════════════════════════════════════════════════════════════════════════
@@ -394,10 +425,6 @@ def delete_sthal(ms_id):
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  KSHETRA OFFICERS  (super zone level)
-#  GET  /hierarchy/super-zones/<sz_id>/officers
-#  POST /hierarchy/super-zones/<sz_id>/officers
-#  PUT  /hierarchy/kshetra-officers/<o_id>
-#  DEL  /hierarchy/kshetra-officers/<o_id>
 # ══════════════════════════════════════════════════════════════════════════════
 
 @hierarchy.route("/super-zones/<int:sz_id>/officers", methods=["GET"])
@@ -443,10 +470,6 @@ def delete_kshetra_officer(o_id):
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  ZONAL OFFICERS  (zone level)
-#  GET  /hierarchy/zones/<z_id>/officers
-#  POST /hierarchy/zones/<z_id>/officers
-#  PUT  /hierarchy/zonal-officers/<o_id>
-#  DEL  /hierarchy/zonal-officers/<o_id>
 # ══════════════════════════════════════════════════════════════════════════════
 
 @hierarchy.route("/zones/<int:z_id>/officers", methods=["GET"])
@@ -492,10 +515,6 @@ def delete_zonal_officer(o_id):
 
 # ══════════════════════════════════════════════════════════════════════════════
 #  SECTOR OFFICERS  (sector level)
-#  GET  /hierarchy/sectors/<s_id>/officers
-#  POST /hierarchy/sectors/<s_id>/officers
-#  PUT  /hierarchy/sector-officers/<o_id>
-#  DEL  /hierarchy/sector-officers/<o_id>
 # ══════════════════════════════════════════════════════════════════════════════
 
 @hierarchy.route("/sectors/<int:s_id>/officers", methods=["GET"])
@@ -540,15 +559,7 @@ def delete_sector_officer(o_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  REPLACE ALL OFFICERS for a node  (Flutter _OfficersDialog calls this)
-#
-#  POST /hierarchy/super-zones/<sz_id>/officers/replace
-#  POST /hierarchy/zones/<z_id>/officers/replace
-#  POST /hierarchy/sectors/<s_id>/officers/replace
-#
-#  Body: { "officers": [ {name, pno, mobile, user_rank}, ... ] }
-#
-#  Deletes existing officers then inserts the new list in one transaction.
+#  REPLACE ALL OFFICERS for a node
 # ══════════════════════════════════════════════════════════════════════════════
 
 def _replace_officers(table: str, fk_col: str, fk_val: int, officers: list):
@@ -589,9 +600,7 @@ def replace_sector_officers(s_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  DUTY ASSIGNMENTS   (Tab 3 / _PaginatedStaffDialog)
-#  POST /hierarchy/duties          assign staff to sthal
-#  DELETE /hierarchy/duties/<id>   remove a duty assignment
+#  DUTY ASSIGNMENTS
 # ══════════════════════════════════════════════════════════════════════════════
 
 @hierarchy.route("/duties", methods=["POST"])
@@ -634,17 +643,12 @@ def remove_duty(duty_id):
 
 
 # ══════════════════════════════════════════════════════════════════════════════
-#  AVAILABLE STAFF  (unassigned)  — _PaginatedStaffDialog paginated search
-#  GET /hierarchy/staff/available?page=1&limit=30&q=search_term&assigned=no
+#  AVAILABLE STAFF  (unassigned)
 # ══════════════════════════════════════════════════════════════════════════════
 
 @hierarchy.route("/staff/available", methods=["GET"])
 @admin_required
 def get_available_staff():
-    """
-    Paginated, searchable list of staff NOT yet assigned to any booth or officer role.
-    Mirrors /admin/staff?assigned=no but lives here for clean separation.
-    """
     q     = (request.args.get("q", "") or "").strip()
     page  = max(1, request.args.get("page",  1,  type=int))
     limit = min(200, max(1, request.args.get("limit", 30, type=int)))
@@ -659,11 +663,23 @@ def get_available_staff():
         )
     """
     user = request.user
-    district = user.get("district")
+    role = (user.get("role") or "").lower()
+
+    # master can optionally filter by ?district=; otherwise no district lock
+    if role == "master":
+        district = (request.args.get("district") or "").strip()
+    else:
+        district = user.get("district") or ""
+
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            params = [district]
+            params = []
+            district_clause = ""
+            if district:
+                district_clause = "AND TRIM(LOWER(u.district)) = TRIM(LOWER(%s))"
+                params.append(district)
+
             search_clause = ""
             if q:
                 search_clause = "AND (u.name LIKE %s OR u.pno LIKE %s OR u.thana LIKE %s)"
@@ -672,7 +688,7 @@ def get_available_staff():
 
             cur.execute(
                 f"SELECT COUNT(*) AS cnt FROM users u "
-                f"WHERE u.role='staff' AND u.is_active=1 AND TRIM(LOWER(u.district)) = TRIM(LOWER(%s)) AND {NOT_ASSIGNED} {search_clause}",
+                f"WHERE u.role='staff' AND u.is_active=1 {district_clause} AND {NOT_ASSIGNED} {search_clause}",
                 params
             )
             total = cur.fetchone()["cnt"]
@@ -680,7 +696,7 @@ def get_available_staff():
             cur.execute(
                 f"""SELECT u.id, u.name, u.pno, u.mobile, u.thana, u.user_rank
                     FROM users u
-                    WHERE u.role='staff' AND u.is_active=1 AND TRIM(LOWER(u.district)) = TRIM(LOWER(%s)) AND {NOT_ASSIGNED} {search_clause}
+                    WHERE u.role='staff' AND u.is_active=1 {district_clause} AND {NOT_ASSIGNED} {search_clause}
                     ORDER BY u.name
                     LIMIT %s OFFSET %s""",
                 params + [limit, offset]
@@ -706,7 +722,7 @@ def get_available_staff():
         "total":      total,
         "page":       page,
         "limit":      limit,
-        "totalPages": -(-total // limit),
+        "totalPages": -(-total // limit) if total else 1,
     })
 
 

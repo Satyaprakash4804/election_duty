@@ -27,7 +27,6 @@ def create_database_if_not_exists():
     finally:
         conn.close()
 
-# 🔥 CREATE DATABASE FIRST
 create_database_if_not_exists()
 
 # ── Optional connection pool ──────────────────────────────────────────────────
@@ -123,24 +122,24 @@ def init_db():
             # ── users ─────────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS users (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    name        VARCHAR(150)  NOT NULL,
-                    username    VARCHAR(100)  NOT NULL,
-                    password    VARCHAR(255)  NOT NULL,
-                    mobile      VARCHAR(15)   DEFAULT '',
-                    role        ENUM('master','super_admin','admin','staff') NOT NULL DEFAULT 'staff',
-                    district    VARCHAR(100)  DEFAULT '',
-                    thana       VARCHAR(100)  DEFAULT '',
-                    pno         VARCHAR(50)   DEFAULT NULL,
-                    user_rank   VARCHAR(100)  DEFAULT '',
-                    is_armed TINYINT(1) NOT NULL DEFAULT 0,
-                    is_active   TINYINT(1)    NOT NULL DEFAULT 1,
-                    created_by  INT           DEFAULT NULL,
-                    assigned_by INT           DEFAULT NULL,
-                    super_admin_id INT        DEFAULT NULL,
-                    created_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at  DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                              ON UPDATE CURRENT_TIMESTAMP,
+                    id             INT AUTO_INCREMENT PRIMARY KEY,
+                    name           VARCHAR(150)  NOT NULL,
+                    username       VARCHAR(100)  NOT NULL,
+                    password       VARCHAR(255)  NOT NULL,
+                    mobile         VARCHAR(15)   DEFAULT '',
+                    role           ENUM('master','super_admin','admin','staff') NOT NULL DEFAULT 'staff',
+                    district       VARCHAR(100)  DEFAULT '',
+                    thana          VARCHAR(100)  DEFAULT '',
+                    pno            VARCHAR(50)   DEFAULT NULL,
+                    user_rank      VARCHAR(100)  DEFAULT '',
+                    is_armed       TINYINT(1)    NOT NULL DEFAULT 0,
+                    is_active      TINYINT(1)    NOT NULL DEFAULT 1,
+                    created_by     INT           DEFAULT NULL,
+                    assigned_by    INT           DEFAULT NULL,
+                    super_admin_id INT           DEFAULT NULL,
+                    created_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at     DATETIME      NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                 ON UPDATE CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_username  (username),
                     UNIQUE KEY uq_pno       (pno),
                     INDEX idx_role_district (role, district),
@@ -152,10 +151,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            
-            # ══════════════════════════════════════════════════════════════════
-            #  🆕 election_configs — district-wise, versioned election details
-            # ══════════════════════════════════════════════════════════════════
+            # ── election_configs ──────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS election_configs (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -172,6 +168,9 @@ def init_db():
                     is_active       TINYINT(1)   NOT NULL DEFAULT 1,
                     is_archived     TINYINT(1)   NOT NULL DEFAULT 0,
                     archived_at     DATETIME     DEFAULT NULL,
+                    is_finalized    TINYINT(1)   NOT NULL DEFAULT 0,
+                    finalized_at    DATETIME     DEFAULT NULL,
+                    finalized_by    INT          DEFAULT NULL,
                     created_by      INT          DEFAULT NULL,
                     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -179,14 +178,14 @@ def init_db():
                     INDEX idx_district        (district),
                     INDEX idx_district_active (district, is_active),
                     INDEX idx_archived        (is_archived),
+                    INDEX idx_finalized       (is_finalized),
                     INDEX idx_election_date   (election_date),
-                    FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+                    FOREIGN KEY (created_by)   REFERENCES users(id) ON DELETE SET NULL,
+                    FOREIGN KEY (finalized_by) REFERENCES users(id) ON DELETE SET NULL
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ══════════════════════════════════════════════════════════════════
-            #  🆕 api_request_logs — every API hit (writes + reads + errors)
-            # ══════════════════════════════════════════════════════════════════
+            # ── api_request_logs ──────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS api_request_logs (
                     id              BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -212,10 +211,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ══════════════════════════════════════════════════════════════════
-            #  🆕 token_revocations — for force-logout by role
-            #  JWTs issued BEFORE `revoke_before` for given role are invalid.
-            # ══════════════════════════════════════════════════════════════════
+            # ── token_revocations ─────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS token_revocations (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -243,6 +239,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── kshetra_officers ──────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS kshetra_officers (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -259,6 +256,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── zones ─────────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS zones (
                     id            INT AUTO_INCREMENT PRIMARY KEY,
@@ -271,6 +269,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── zonal_officers ────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS zonal_officers (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -287,6 +286,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── sectors ───────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sectors (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -299,6 +299,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── sector_officers ───────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS sector_officers (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -315,6 +316,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── gram_panchayats ───────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS gram_panchayats (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -328,6 +330,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── matdan_sthal ──────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS matdan_sthal (
                     id                INT AUTO_INCREMENT PRIMARY KEY,
@@ -336,10 +339,11 @@ def init_db():
                     gram_panchayat_id INT          NOT NULL,
                     thana             VARCHAR(150) DEFAULT '',
                     center_type       ENUM('A++','A','B','C') NOT NULL DEFAULT 'C',
-                    booth_count INT NOT NULL DEFAULT 1,
+                    booth_count       INT          NOT NULL DEFAULT 1,
                     bus_no            VARCHAR(50)  DEFAULT '',
                     latitude          DECIMAL(10,7),
                     longitude         DECIMAL(10,7),
+                    custom_rule_id    INT          DEFAULT NULL,
                     created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_gp_id       (gram_panchayat_id),
                     INDEX idx_thana       (thana),
@@ -349,6 +353,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── matdan_kendra ─────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS matdan_kendra (
                     id              INT AUTO_INCREMENT PRIMARY KEY,
@@ -360,17 +365,19 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── duty_assignments ──────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS duty_assignments (
-                    id          INT AUTO_INCREMENT PRIMARY KEY,
-                    staff_id    INT         NOT NULL,
-                    sthal_id    INT         NOT NULL,
-                    bus_no      VARCHAR(50) DEFAULT '',
-                    election_date DATE DEFAULT NULL,
-                    attended    TINYINT(1) NOT NULL DEFAULT 0,
-                    card_downloaded TINYINT(1) NOT NULL DEFAULT 0,
-                    assigned_by INT         DEFAULT NULL,
-                    created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    id              INT AUTO_INCREMENT PRIMARY KEY,
+                    staff_id        INT         NOT NULL,
+                    sthal_id        INT         NOT NULL,
+                    bus_no          VARCHAR(50) DEFAULT '',
+                    mode            VARCHAR(50) DEFAULT NULL,
+                    election_date   DATE        DEFAULT NULL,
+                    attended        TINYINT(1)  NOT NULL DEFAULT 0,
+                    card_downloaded TINYINT(1)  NOT NULL DEFAULT 0,
+                    assigned_by     INT         DEFAULT NULL,
+                    created_at      DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_staff_sthal (staff_id, sthal_id),
                     INDEX idx_sthal_id    (sthal_id),
                     INDEX idx_assigned_by (assigned_by),
@@ -380,6 +387,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── system_logs ───────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS system_logs (
                     id      INT AUTO_INCREMENT PRIMARY KEY,
@@ -393,6 +401,7 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── fcm_tokens ────────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS fcm_tokens (
                     id          INT AUTO_INCREMENT PRIMARY KEY,
@@ -411,66 +420,59 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── booth_rules: per (admin_id, sensitivity, booth_count) ─────────────────
+            # ── booth_rules ───────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS booth_rules (
-                    id                    INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id              INT NOT NULL,
-                    sensitivity           ENUM('A++','A','B','C') NOT NULL,
-                    booth_count           INT NOT NULL,        -- 1..14, 15 = "15 और उससे अधिक"
-            
-                    si_armed_count        INT NOT NULL DEFAULT 0,
-                    si_unarmed_count      INT NOT NULL DEFAULT 0,
-                    hc_armed_count        INT NOT NULL DEFAULT 0,
-                    hc_unarmed_count      INT NOT NULL DEFAULT 0,
-                    const_armed_count     INT NOT NULL DEFAULT 0,
-                    const_unarmed_count   INT NOT NULL DEFAULT 0,
-            
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id            INT NOT NULL,
+                    sensitivity         ENUM('A++','A','B','C') NOT NULL,
+                    booth_count         INT NOT NULL,
+                    si_armed_count      INT NOT NULL DEFAULT 0,
+                    si_unarmed_count    INT NOT NULL DEFAULT 0,
+                    hc_armed_count      INT NOT NULL DEFAULT 0,
+                    hc_unarmed_count    INT NOT NULL DEFAULT 0,
+                    const_armed_count   INT NOT NULL DEFAULT 0,
+                    const_unarmed_count INT NOT NULL DEFAULT 0,
                     aux_armed_count     INT NOT NULL DEFAULT 0,
                     aux_unarmed_count   INT NOT NULL DEFAULT 0,
-                    pac_count             DECIMAL(4,1) NOT NULL DEFAULT 0,
-            
-                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                        ON UPDATE CURRENT_TIMESTAMP,
+                    pac_count           DECIMAL(4,1) NOT NULL DEFAULT 0,
+                    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                 ON UPDATE CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_admin_sens_booth (admin_id, sensitivity, booth_count),
                     INDEX idx_admin_sens (admin_id, sensitivity),
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
-            
-            # ── district_rules: per (admin_id, duty_type) ──────────────────────────────
+
+            # ── district_rules ────────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS district_rules (
-                    id                    INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id              INT          NOT NULL,
-                    duty_type             VARCHAR(80)  NOT NULL,
-                    duty_label_hi         VARCHAR(150) NOT NULL DEFAULT '',
-                    sankhya               INT          NOT NULL DEFAULT 0,
-            
-                    si_armed_count        INT NOT NULL DEFAULT 0,
-                    si_unarmed_count      INT NOT NULL DEFAULT 0,
-                    hc_armed_count        INT NOT NULL DEFAULT 0,
-                    hc_unarmed_count      INT NOT NULL DEFAULT 0,
-                    const_armed_count     INT NOT NULL DEFAULT 0,
-                    const_unarmed_count   INT NOT NULL DEFAULT 0,
-            
+                    id                  INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id            INT         NOT NULL,
+                    duty_type           VARCHAR(80) NOT NULL,
+                    duty_label_hi       VARCHAR(150) NOT NULL DEFAULT '',
+                    sankhya             INT          NOT NULL DEFAULT 0,
+                    si_armed_count      INT NOT NULL DEFAULT 0,
+                    si_unarmed_count    INT NOT NULL DEFAULT 0,
+                    hc_armed_count      INT NOT NULL DEFAULT 0,
+                    hc_unarmed_count    INT NOT NULL DEFAULT 0,
+                    const_armed_count   INT NOT NULL DEFAULT 0,
+                    const_unarmed_count INT NOT NULL DEFAULT 0,
                     aux_armed_count     INT NOT NULL DEFAULT 0,
                     aux_unarmed_count   INT NOT NULL DEFAULT 0,
-                    pac_count             DECIMAL(4,1) NOT NULL DEFAULT 0,
-                    sort_order            INT          NOT NULL DEFAULT 0,
-            
-                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                        ON UPDATE CURRENT_TIMESTAMP,
+                    pac_count           DECIMAL(4,1) NOT NULL DEFAULT 0,
+                    sort_order          INT          NOT NULL DEFAULT 0,
+                    created_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at          DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                                 ON UPDATE CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_admin_duty (admin_id, duty_type),
                     INDEX idx_admin (admin_id),
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
-            
-            
 
+            # ── goswara_nyay_panchayat ────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS goswara_nyay_panchayat (
                     id         INT AUTO_INCREMENT PRIMARY KEY,
@@ -478,97 +480,115 @@ def init_db():
                     block_name VARCHAR(100) NOT NULL,
                     nyay_count INT NOT NULL DEFAULT 0,
                     updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-                            ON UPDATE CURRENT_TIMESTAMP,
+                               ON UPDATE CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_admin_block (admin_id, block_name),
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── sz_duty_locks ─────────────────────────────────────────────────
             cur.execute("""
-                        CREATE TABLE IF NOT EXISTS sz_duty_locks (
-                            id INT AUTO_INCREMENT PRIMARY KEY,
-                            super_zone_id INT UNIQUE,
-                            is_locked TINYINT(1) DEFAULT 0,
-                            status ENUM('locked','unlock_requested','unlocked') DEFAULT 'unlocked',
-                            unlock_reason TEXT,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                        )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                        """)
-            
-            cur.execute("""
-                        CREATE TABLE IF NOT EXISTS sz_assign_jobs (
-                            id INT AUTO_INCREMENT PRIMARY KEY,
-                            super_zone_id INT,
-                            status ENUM('pending','running','done','error') DEFAULT 'pending',
-                            total_centers INT DEFAULT 0,
-                            done_centers INT DEFAULT 0,
-                            error_msg TEXT,
-                            created_by INT,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                        )ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-                        """)
-            
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS sz_unlock_requests (
-                    id INT AUTO_INCREMENT PRIMARY KEY,
-                    super_zone_id INT,
-                    requested_by INT,
-                    reason TEXT,
-                    status ENUM('pending','approved','rejected') DEFAULT 'pending',
-                    reviewed_by INT,
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                CREATE TABLE IF NOT EXISTS sz_duty_locks (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    super_zone_id INT UNIQUE,
+                    is_locked     TINYINT(1) DEFAULT 0,
+                    status        ENUM('locked','unlock_requested','unlocked') DEFAULT 'unlocked',
+                    unlock_reason TEXT,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── sz_assign_jobs ────────────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sz_assign_jobs (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    super_zone_id INT,
+                    status        ENUM('pending','running','done','error') DEFAULT 'pending',
+                    total_centers INT DEFAULT 0,
+                    done_centers  INT DEFAULT 0,
+                    error_msg     TEXT,
+                    created_by    INT,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            # ── sz_unlock_requests ────────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sz_unlock_requests (
+                    id            INT AUTO_INCREMENT PRIMARY KEY,
+                    super_zone_id INT,
+                    requested_by  INT,
+                    reason        TEXT,
+                    status        ENUM('pending','approved','rejected') DEFAULT 'pending',
+                    reviewed_by   INT,
+                    created_at    DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            # ── district_duty_assignments ─────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS district_duty_assignments (
-                    id            INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id      INT          NOT NULL,
-                    duty_type     VARCHAR(80)  NOT NULL,
-                    batch_no      INT          NOT NULL DEFAULT 1,
-                    staff_id      INT          NOT NULL,
-                    assigned_by   INT          DEFAULT NULL,
-                    bus_no        VARCHAR(50)  DEFAULT '',
-                    note          TEXT,
-                    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id    INT         NOT NULL,
+                    duty_type   VARCHAR(80) NOT NULL,
+                    batch_no    INT         NOT NULL DEFAULT 1,
+                    staff_id    INT         NOT NULL,
+                    assigned_by INT         DEFAULT NULL,
+                    bus_no      VARCHAR(50) DEFAULT '',
+                    note        TEXT,
+                    created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     UNIQUE KEY uq_staff_duty (staff_id, duty_type),
-                    INDEX idx_duty_type  (duty_type),
-                    INDEX idx_admin_id   (admin_id),
-                    INDEX idx_batch      (admin_id, duty_type, batch_no),
-                    FOREIGN KEY (staff_id)    REFERENCES users(id)  ON DELETE CASCADE,
-                    FOREIGN KEY (assigned_by) REFERENCES users(id)  ON DELETE SET NULL,
-                    FOREIGN KEY (admin_id)    REFERENCES users(id)  ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                    INDEX idx_duty_type (duty_type),
+                    INDEX idx_admin_id  (admin_id),
+                    INDEX idx_batch     (admin_id, duty_type, batch_no),
+                    FOREIGN KEY (staff_id)    REFERENCES users(id) ON DELETE CASCADE,
+                    FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL,
+                    FOREIGN KEY (admin_id)    REFERENCES users(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── district_duty_jobs ────────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS district_duty_jobs (
-                    id            INT AUTO_INCREMENT PRIMARY KEY,
-                    admin_id      INT          NOT NULL,
-                    status        ENUM('pending','running','done','error') DEFAULT 'pending',
-                    total_types   INT          NOT NULL DEFAULT 0,
-                    done_types    INT          NOT NULL DEFAULT 0,
-                    assigned      INT          NOT NULL DEFAULT 0,
-                    skipped       INT          NOT NULL DEFAULT 0,
-                    error_msg     TEXT,
-                    created_by    INT          DEFAULT NULL,
-                    created_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    updated_at    DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP
-                                ON UPDATE CURRENT_TIMESTAMP,
+                    id          INT AUTO_INCREMENT PRIMARY KEY,
+                    admin_id    INT  NOT NULL,
+                    status      ENUM('pending','running','done','error') DEFAULT 'pending',
+                    total_types INT  NOT NULL DEFAULT 0,
+                    done_types  INT  NOT NULL DEFAULT 0,
+                    assigned    INT  NOT NULL DEFAULT 0,
+                    skipped     INT  NOT NULL DEFAULT 0,
+                    error_msg   TEXT,
+                    created_by  INT  DEFAULT NULL,
+                    created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
+                                         ON UPDATE CURRENT_TIMESTAMP,
                     INDEX idx_admin (admin_id),
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
-            # ── duty_assignments_history ──────────────────────────────────────────────────
+            # ══════════════════════════════════════════════════════════════════
+            #  HISTORY TABLES
+            # ══════════════════════════════════════════════════════════════════
+
+            # ── duty_assignments_history ──────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS duty_assignments_history (
                     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    election_id         INT          NOT NULL,
-                    original_id         INT          NOT NULL,
-                    admin_id            INT          NOT NULL,
-                    staff_id            INT          NOT NULL,
-                    sthal_id            INT          NOT NULL,
+                    election_id         INT         NOT NULL,
+                    original_id         INT         NOT NULL,
+                    admin_id            INT         NOT NULL,
+                    staff_id            INT         NOT NULL,
+                    sthal_id            INT         NOT NULL,
+                    staff_name          VARCHAR(150) DEFAULT '',
+                    staff_pno           VARCHAR(50)  DEFAULT '',
+                    staff_mobile        VARCHAR(15)  DEFAULT '',
+                    staff_rank          VARCHAR(100) DEFAULT '',
+                    staff_district      VARCHAR(100) DEFAULT '',
+                    staff_thana         VARCHAR(100) DEFAULT '',
+                    is_armed            TINYINT(1)   NOT NULL DEFAULT 0,
+                    center_name         VARCHAR(250) DEFAULT '',
+                    center_type         VARCHAR(10)  DEFAULT '',
                     bus_no              VARCHAR(50)  DEFAULT '',
                     election_date       DATE         DEFAULT NULL,
                     attended            TINYINT(1)   NOT NULL DEFAULT 0,
@@ -576,68 +596,76 @@ def init_db():
                     assigned_by         INT          DEFAULT NULL,
                     original_created_at DATETIME     DEFAULT NULL,
                     archived_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_election_id   (election_id),
-                    INDEX idx_admin_id      (admin_id),
-                    INDEX idx_sthal_id      (sthal_id),
-                    INDEX idx_staff_id      (staff_id),
+                    INDEX idx_election_id (election_id),
+                    INDEX idx_admin_id    (admin_id),
+                    INDEX idx_sthal_id    (sthal_id),
+                    INDEX idx_staff_id    (staff_id),
                     FOREIGN KEY (election_id) REFERENCES election_configs(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
-            
-            # ── district_duty_history ─────────────────────────────────────────────────────
+
+            # ── district_duty_history ─────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS district_duty_history (
                     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    election_id         INT          NOT NULL,
-                    original_id         INT          NOT NULL,
-                    admin_id            INT          NOT NULL,
-                    duty_type           VARCHAR(80)  NOT NULL,
-                    batch_no            INT          NOT NULL DEFAULT 1,
-                    staff_id            INT          NOT NULL,
+                    election_id         INT         NOT NULL,
+                    original_id         INT         NOT NULL,
+                    admin_id            INT         NOT NULL,
+                    duty_type           VARCHAR(80) NOT NULL,
+                    duty_label_hi       VARCHAR(150) DEFAULT '',
+                    batch_no            INT         NOT NULL DEFAULT 1,
+                    staff_id            INT         NOT NULL,
+                    staff_name          VARCHAR(150) DEFAULT '',
+                    staff_pno           VARCHAR(50)  DEFAULT '',
+                    staff_mobile        VARCHAR(15)  DEFAULT '',
+                    staff_rank          VARCHAR(100) DEFAULT '',
+                    staff_district      VARCHAR(100) DEFAULT '',
+                    staff_thana         VARCHAR(100) DEFAULT '',
+                    is_armed            TINYINT(1)   NOT NULL DEFAULT 0,
                     assigned_by         INT          DEFAULT NULL,
                     bus_no              VARCHAR(50)  DEFAULT '',
                     note                TEXT,
                     original_created_at DATETIME     DEFAULT NULL,
                     archived_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
-                    INDEX idx_election_id   (election_id),
-                    INDEX idx_admin_id      (admin_id),
-                    INDEX idx_duty_type     (duty_type),
-                    INDEX idx_staff_id      (staff_id),
-                    INDEX idx_batch         (election_id, duty_type, batch_no),
+                    INDEX idx_election_id (election_id),
+                    INDEX idx_admin_id    (admin_id),
+                    INDEX idx_duty_type   (duty_type),
+                    INDEX idx_staff_id    (staff_id),
+                    INDEX idx_batch       (election_id, duty_type, batch_no),
                     FOREIGN KEY (election_id) REFERENCES election_configs(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
-            
-            # ── district_rules_history ────────────────────────────────────────────────────
+
+            # ── district_rules_history ────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS district_rules_history (
                     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    election_id         INT          NOT NULL,
-                    original_id         INT          NOT NULL,
-                    admin_id            INT          NOT NULL,
-                    duty_type           VARCHAR(80)  NOT NULL,
+                    election_id         INT         NOT NULL,
+                    original_id         INT         NOT NULL,
+                    admin_id            INT         NOT NULL,
+                    duty_type           VARCHAR(80) NOT NULL,
                     duty_label_hi       VARCHAR(150) NOT NULL DEFAULT '',
-                    sankhya             INT          NOT NULL DEFAULT 0,
-                    si_armed_count      INT          NOT NULL DEFAULT 0,
-                    si_unarmed_count    INT          NOT NULL DEFAULT 0,
-                    hc_armed_count      INT          NOT NULL DEFAULT 0,
-                    hc_unarmed_count    INT          NOT NULL DEFAULT 0,
-                    const_armed_count   INT          NOT NULL DEFAULT 0,
-                    const_unarmed_count INT          NOT NULL DEFAULT 0,
-                    aux_armed_count     INT          NOT NULL DEFAULT 0,
-                    aux_unarmed_count   INT          NOT NULL DEFAULT 0,
+                    sankhya             INT         NOT NULL DEFAULT 0,
+                    si_armed_count      INT         NOT NULL DEFAULT 0,
+                    si_unarmed_count    INT         NOT NULL DEFAULT 0,
+                    hc_armed_count      INT         NOT NULL DEFAULT 0,
+                    hc_unarmed_count    INT         NOT NULL DEFAULT 0,
+                    const_armed_count   INT         NOT NULL DEFAULT 0,
+                    const_unarmed_count INT         NOT NULL DEFAULT 0,
+                    aux_armed_count     INT         NOT NULL DEFAULT 0,
+                    aux_unarmed_count   INT         NOT NULL DEFAULT 0,
                     pac_count           DECIMAL(4,1) NOT NULL DEFAULT 0,
-                    sort_order          INT          NOT NULL DEFAULT 0,
-                    original_created_at DATETIME     DEFAULT NULL,
-                    archived_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    sort_order          INT         NOT NULL DEFAULT 0,
+                    original_created_at DATETIME    DEFAULT NULL,
+                    archived_at         DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
                     INDEX idx_election_id (election_id),
                     INDEX idx_admin_id    (admin_id),
                     INDEX idx_duty_type   (duty_type),
                     FOREIGN KEY (election_id) REFERENCES election_configs(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
-            
-            # ── booth_rules_history ───────────────────────────────────────────────────────
+
+            # ── booth_rules_history ───────────────────────────────────────────
             cur.execute("""
                 CREATE TABLE IF NOT EXISTS booth_rules_history (
                     id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -664,13 +692,89 @@ def init_db():
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
             """)
 
+            # ── kshetra_officers_history ──────────────────────────────────────
+            # Snapshots every kshetra_officer assignment at finalization time
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS kshetra_officers_history (
+                    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    election_id         INT          NOT NULL,
+                    original_id         INT          NOT NULL,
+                    admin_id            INT          NOT NULL,
+                    super_zone_id       INT          NOT NULL,
+                    super_zone_name     VARCHAR(100) DEFAULT '',
+                    super_zone_block    VARCHAR(100) DEFAULT '',
+                    user_id             INT          DEFAULT NULL,
+                    name                VARCHAR(150) NOT NULL DEFAULT '',
+                    pno                 VARCHAR(50)  DEFAULT '',
+                    mobile              VARCHAR(15)  DEFAULT '',
+                    user_rank           VARCHAR(100) DEFAULT '',
+                    original_created_at DATETIME     DEFAULT NULL,
+                    archived_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_election_id   (election_id),
+                    INDEX idx_admin_id      (admin_id),
+                    INDEX idx_super_zone_id (super_zone_id),
+                    FOREIGN KEY (election_id) REFERENCES election_configs(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
 
+            # ── zonal_officers_history ────────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS zonal_officers_history (
+                    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    election_id         INT          NOT NULL,
+                    original_id         INT          NOT NULL,
+                    admin_id            INT          NOT NULL,
+                    zone_id             INT          NOT NULL,
+                    zone_name           VARCHAR(100) DEFAULT '',
+                    super_zone_id       INT          DEFAULT NULL,
+                    super_zone_name     VARCHAR(100) DEFAULT '',
+                    user_id             INT          DEFAULT NULL,
+                    name                VARCHAR(150) NOT NULL DEFAULT '',
+                    pno                 VARCHAR(50)  DEFAULT '',
+                    mobile              VARCHAR(15)  DEFAULT '',
+                    user_rank           VARCHAR(100) DEFAULT '',
+                    original_created_at DATETIME     DEFAULT NULL,
+                    archived_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_election_id (election_id),
+                    INDEX idx_admin_id    (admin_id),
+                    INDEX idx_zone_id     (zone_id),
+                    FOREIGN KEY (election_id) REFERENCES election_configs(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
+
+            # ── sector_officers_history ───────────────────────────────────────
+            cur.execute("""
+                CREATE TABLE IF NOT EXISTS sector_officers_history (
+                    id                  BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    election_id         INT          NOT NULL,
+                    original_id         INT          NOT NULL,
+                    admin_id            INT          NOT NULL,
+                    sector_id           INT          NOT NULL,
+                    sector_name         VARCHAR(100) DEFAULT '',
+                    zone_id             INT          DEFAULT NULL,
+                    zone_name           VARCHAR(100) DEFAULT '',
+                    super_zone_id       INT          DEFAULT NULL,
+                    super_zone_name     VARCHAR(100) DEFAULT '',
+                    user_id             INT          DEFAULT NULL,
+                    name                VARCHAR(150) NOT NULL DEFAULT '',
+                    pno                 VARCHAR(50)  DEFAULT '',
+                    mobile              VARCHAR(15)  DEFAULT '',
+                    user_rank           VARCHAR(100) DEFAULT '',
+                    original_created_at DATETIME     DEFAULT NULL,
+                    archived_at         DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_election_id (election_id),
+                    INDEX idx_admin_id    (admin_id),
+                    INDEX idx_sector_id   (sector_id),
+                    FOREIGN KEY (election_id) REFERENCES election_configs(id) ON DELETE CASCADE
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
+            """)
 
             # ─────────────────────────────────────────────────────────────────
             #  AUTO-ADD MISSING COLUMNS (safe for existing databases)
             # ─────────────────────────────────────────────────────────────────
             db = Config.DB_NAME
 
+            # users
             ensure_column(cur, db, "users", "pno VARCHAR(50) DEFAULT NULL")
             ensure_column(cur, db, "users", "user_rank VARCHAR(100) DEFAULT ''")
             ensure_column(cur, db, "users", "district VARCHAR(100) DEFAULT ''")
@@ -682,18 +786,23 @@ def init_db():
             ensure_column(cur, db, "users", "is_active TINYINT(1) NOT NULL DEFAULT 1")
             ensure_column(cur, db, "users", "is_armed TINYINT(1) NOT NULL DEFAULT 0")
 
+            # duty_assignments
             ensure_column(cur, db, "duty_assignments", "attended TINYINT(1) NOT NULL DEFAULT 0")
             ensure_column(cur, db, "duty_assignments", "election_date DATE DEFAULT NULL")
+            ensure_column(cur, db, "duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments", "card_downloaded TINYINT(1) NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "duty_assignments", "mode VARCHAR(50) DEFAULT NULL")
+
+            # matdan_sthal
             ensure_column(cur, db, "matdan_sthal", "latitude DECIMAL(10,7) DEFAULT NULL")
             ensure_column(cur, db, "matdan_sthal", "longitude DECIMAL(10,7) DEFAULT NULL")
             ensure_column(cur, db, "matdan_sthal", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "thana VARCHAR(150) DEFAULT ''")
             ensure_column(cur, db, "matdan_sthal", "center_type ENUM('A++','A','B','C') NOT NULL DEFAULT 'C'")
             ensure_column(cur, db, "matdan_sthal", "booth_count INT NOT NULL DEFAULT 1")
-            ensure_column(cur, db, "duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
-            ensure_column(cur, db, "duty_assignments", "card_downloaded TINYINT(1) NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "matdan_sthal", "custom_rule_id INT DEFAULT NULL")
 
-            # 🆕 Ensure new columns on election_configs (for existing DBs being upgraded)
+            # election_configs
             ensure_column(cur, db, "election_configs", "election_type VARCHAR(100) NOT NULL DEFAULT ''")
             ensure_column(cur, db, "election_configs", "election_name VARCHAR(200) NOT NULL DEFAULT ''")
             ensure_column(cur, db, "election_configs", "pratah_samay VARCHAR(20) DEFAULT ''")
@@ -701,21 +810,42 @@ def init_db():
             ensure_column(cur, db, "election_configs", "instructions TEXT")
             ensure_column(cur, db, "election_configs", "is_archived TINYINT(1) NOT NULL DEFAULT 0")
             ensure_column(cur, db, "election_configs", "archived_at DATETIME DEFAULT NULL")
-            
+            ensure_column(cur, db, "election_configs", "is_finalized TINYINT(1) NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "election_configs", "finalized_at DATETIME DEFAULT NULL")
+            ensure_column(cur, db, "election_configs", "finalized_by INT DEFAULT NULL")
 
+            # district_duty_jobs
             ensure_column(cur, db, "district_duty_jobs", "updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP")
             ensure_column(cur, db, "district_duty_jobs", "total_types INT NOT NULL DEFAULT 0")
             ensure_column(cur, db, "district_duty_jobs", "done_types INT NOT NULL DEFAULT 0")
             ensure_column(cur, db, "district_duty_jobs", "assigned INT NOT NULL DEFAULT 0")
             ensure_column(cur, db, "district_duty_jobs", "skipped INT NOT NULL DEFAULT 0")
             ensure_column(cur, db, "district_duty_jobs", "error_msg TEXT")
+
+            # district_duty_assignments
             ensure_column(cur, db, "district_duty_assignments", "bus_no VARCHAR(50) DEFAULT ''")
             ensure_column(cur, db, "district_duty_assignments", "note TEXT")
-            
-            # Finalization columns on election_configs
-            ensure_column(cur, db, "election_configs", "is_finalized TINYINT(1) NOT NULL DEFAULT 0")
-            ensure_column(cur, db, "election_configs", "finalized_at DATETIME DEFAULT NULL")
-            ensure_column(cur, db, "election_configs", "finalized_by INT DEFAULT NULL")
+
+            # duty_assignments_history — denormalised staff/center columns
+            ensure_column(cur, db, "duty_assignments_history", "staff_name VARCHAR(150) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "staff_pno VARCHAR(50) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "staff_mobile VARCHAR(15) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "staff_rank VARCHAR(100) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "staff_district VARCHAR(100) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "staff_thana VARCHAR(100) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "is_armed TINYINT(1) NOT NULL DEFAULT 0")
+            ensure_column(cur, db, "duty_assignments_history", "center_name VARCHAR(250) DEFAULT ''")
+            ensure_column(cur, db, "duty_assignments_history", "center_type VARCHAR(10) DEFAULT ''")
+
+            # district_duty_history — denormalised staff columns
+            ensure_column(cur, db, "district_duty_history", "duty_label_hi VARCHAR(150) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "staff_name VARCHAR(150) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "staff_pno VARCHAR(50) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "staff_mobile VARCHAR(15) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "staff_rank VARCHAR(100) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "staff_district VARCHAR(100) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "staff_thana VARCHAR(100) DEFAULT ''")
+            ensure_column(cur, db, "district_duty_history", "is_armed TINYINT(1) NOT NULL DEFAULT 0")
 
             # ─────────────────────────────────────────────────────────────────
             #  SEED
@@ -750,10 +880,12 @@ def init_db():
 
 def run_migrations():
     migrations = [
+        # core tables
         ("users",            "idx_role_district", "INDEX (role, district)"),
         ("users",            "idx_role_active",   "INDEX (role, is_active)"),
         ("users",            "idx_name",          "INDEX (name)"),
         ("users",            "idx_thana",         "INDEX (thana)"),
+        ("users",            "idx_user_rank",     "INDEX (user_rank)"),
         ("super_zones",      "idx_admin_id",      "INDEX (admin_id)"),
         ("kshetra_officers", "idx_super_zone_id", "INDEX (super_zone_id)"),
         ("zones",            "idx_super_zone_id", "INDEX (super_zone_id)"),
@@ -773,30 +905,43 @@ def run_migrations():
         ("system_logs",      "idx_level",         "INDEX (level)"),
         ("system_logs",      "idx_module",        "INDEX (module)"),
         ("fcm_tokens",       "idx_user_id",       "INDEX (user_id)"),
-        # 🆕 new indexes
+        # election + config
         ("election_configs",  "idx_district_active", "INDEX (district, is_active)"),
         ("election_configs",  "idx_archived",        "INDEX (is_archived)"),
+        ("election_configs",  "idx_finalized",       "INDEX (is_finalized)"),
+        ("election_configs",  "idx_election_date",   "INDEX (election_date)"),
         ("api_request_logs",  "idx_created_at",      "INDEX (created_at)"),
         ("api_request_logs",  "idx_status_code",     "INDEX (status_code)"),
         ("api_request_logs",  "idx_level",           "INDEX (level)"),
         ("token_revocations", "idx_revoke_before",   "INDEX (revoke_before)"),
-        ("booth_rules",     "idx_admin_sens",  "INDEX (admin_id, sensitivity)"),
-        ("district_rules",  "idx_admin",       "INDEX (admin_id)"),
-        ("district_duty_assignments", "idx_batch",      "INDEX (admin_id, duty_type, batch_no)"),
-        
+        ("booth_rules",       "idx_admin_sens",      "INDEX (admin_id, sensitivity)"),
+        ("district_rules",    "idx_admin",           "INDEX (admin_id)"),
+        ("district_duty_assignments", "idx_batch",   "INDEX (admin_id, duty_type, batch_no)"),
+        # history tables
         ("duty_assignments_history",  "idx_election_id",  "INDEX (election_id)"),
         ("duty_assignments_history",  "idx_admin_id",     "INDEX (admin_id)"),
         ("duty_assignments_history",  "idx_sthal_id",     "INDEX (sthal_id)"),
+        ("duty_assignments_history",  "idx_staff_id",     "INDEX (staff_id)"),
         ("district_duty_history",     "idx_election_id",  "INDEX (election_id)"),
         ("district_duty_history",     "idx_admin_id",     "INDEX (admin_id)"),
         ("district_duty_history",     "idx_duty_type",    "INDEX (duty_type)"),
+        ("district_duty_history",     "idx_staff_id",     "INDEX (staff_id)"),
         ("district_duty_history",     "idx_batch",        "INDEX (election_id, duty_type, batch_no)"),
         ("district_rules_history",    "idx_election_id",  "INDEX (election_id)"),
         ("district_rules_history",    "idx_admin_id",     "INDEX (admin_id)"),
         ("booth_rules_history",       "idx_election_id",  "INDEX (election_id)"),
         ("booth_rules_history",       "idx_admin_id",     "INDEX (admin_id)"),
-        ("election_configs",          "idx_finalized",    "INDEX (is_finalized)"),
-    
+        ("booth_rules_history",       "idx_sensitivity",  "INDEX (election_id, sensitivity)"),
+        # officer history tables
+        ("kshetra_officers_history",  "idx_election_id",   "INDEX (election_id)"),
+        ("kshetra_officers_history",  "idx_admin_id",      "INDEX (admin_id)"),
+        ("kshetra_officers_history",  "idx_super_zone_id", "INDEX (super_zone_id)"),
+        ("zonal_officers_history",    "idx_election_id",   "INDEX (election_id)"),
+        ("zonal_officers_history",    "idx_admin_id",      "INDEX (admin_id)"),
+        ("zonal_officers_history",    "idx_zone_id",       "INDEX (zone_id)"),
+        ("sector_officers_history",   "idx_election_id",   "INDEX (election_id)"),
+        ("sector_officers_history",   "idx_admin_id",      "INDEX (admin_id)"),
+        ("sector_officers_history",   "idx_sector_id",     "INDEX (sector_id)"),
     ]
 
     conn = get_db()

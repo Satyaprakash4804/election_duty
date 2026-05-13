@@ -56,7 +56,10 @@ const _kPageSize = 20;
 // ══════════════════════════════════════════════════════════════════════════════
 class HierarchyReportPage extends StatefulWidget {
   final String role;
-  const HierarchyReportPage({super.key, required this.role});
+  /// Optional district filter (used by master role only).
+  /// admin / super_admin are always locked to their own district by the backend.
+  final String? district;
+  const HierarchyReportPage({super.key, required this.role, this.district});
   @override
   State<HierarchyReportPage> createState() => _HierarchyReportPageState();
 }
@@ -97,7 +100,13 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     setState(() { _loading = true; _error = null; });
     try {
       final token = await AuthService.getToken();
-      final res = await ApiService.get("/admin/hierarchy/full", token: token);
+      // Build endpoint — only master passes ?district=
+      final isMaster = widget.role.toLowerCase() == 'master';
+      final d = (widget.district ?? '').trim();
+      final ep = (isMaster && d.isNotEmpty)
+          ? "/admin/hierarchy/full?district=${Uri.encodeComponent(d)}"
+          : "/admin/hierarchy/full";
+      final res = await ApiService.get(ep, token: token);
       setState(() {
         _data = res is List ? res : [];
         _loading = false;
@@ -302,7 +311,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
               .where((t) => t.isNotEmpty).toSet().join(', ');
           final sOff    = (s['officers'] as List? ?? []);
           final sOffStr = _officerStr(sOff);
-          // Sector HQ: from s['hq'] or s['hq_address']
           final sHq = (s['hq'] ?? s['hq_address'] ?? '—').toString();
           rows.add([
             '${zi + 1}', zOffStr, hq,
@@ -370,7 +378,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     for (final s in sectors) {
       sSeq++;
       final sOff   = (s['officers'] as List? ?? []);
-      // Magistrate = first officer, Police = second (or same as first if only one)
       final magStr = sOff.isNotEmpty
           ? '${sOff[0]['name'] ?? ''} ${sOff[0]['user_rank'] ?? ''}\n${sOff[0]['mobile'] ?? ''}'
           : '—';
@@ -453,7 +460,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     for (final c in centers) {
       final kendras      = c['kendras'] as List? ?? [];
       final dutyOfficers = c['duty_officers'] as List? ?? [];
-      // Exact same duty text logic as screen
       final dutyText = dutyOfficers.isNotEmpty
           ? dutyOfficers.map((d) =>
               '${d['name'] ?? ''} ${d['pno'] ?? ''}\n${d['user_rank'] ?? ''}').join('\n')
@@ -605,7 +611,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     },
   );
 
-  // FIXED: Sector now includes hqAddress field
   void _addSector(Map z) => _openDialog(
     title: 'सैक्टर जोड़ें – ${z['name']}', color: _kGreen, icon: Icons.add,
     fields: {'name': 'सैक्टर का नाम', 'hqAddress': 'मुख्यालय पता'},
@@ -617,7 +622,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     },
   );
 
-  // FIXED: Sector edit includes hqAddress
   void _editSector(Map s) => _openDialog(
     title: 'सैक्टर संपादित करें', color: _kGreen, icon: Icons.edit_outlined,
     fields: {'name': 'सैक्टर का नाम', 'hqAddress': 'मुख्यालय पता'},
@@ -845,6 +849,12 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
+    // Title subtitle reflects district scope when master picked one
+    final scopeLine = (widget.role.toLowerCase() == 'master' &&
+            (widget.district ?? '').trim().isNotEmpty)
+        ? 'जनपद: ${widget.district}'
+        : 'Administrative Hierarchy Report';
+
     return Scaffold(
       backgroundColor: _kBg,
       appBar: AppBar(
@@ -853,12 +863,12 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
-        title: const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text('प्रशासनिक पदानुक्रम',
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text('प्रशासनिक पदानुक्रम',
               style: TextStyle(
                   color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
-          Text('Administrative Hierarchy Report',
-              style: TextStyle(color: Colors.white54, fontSize: 10)),
+          Text(scopeLine,
+              style: const TextStyle(color: Colors.white54, fontSize: 10)),
         ]),
         actions: [
           IconButton(
@@ -1022,7 +1032,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
 
     return Column(
       children: [
-        // Pagination header
         _Tab3PaginationBar(
           currentPage: _tab3Page,
           totalPages: totalPages,
@@ -1030,7 +1039,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           pageSize: _tab3PageSize,
           onPageChanged: (p) => setState(() => _tab3Page = p),
         ),
-        // List
         Expanded(
           child: ListView.builder(
             padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
@@ -1052,7 +1060,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
             },
           ),
         ),
-        // Pagination footer
         _Tab3PaginationBar(
           currentPage: _tab3Page,
           totalPages: totalPages,
@@ -1097,18 +1104,17 @@ class _Tab3PaginationBar extends StatelessWidget {
     final start = ((currentPage - 1) * pageSize + 1).clamp(1, totalItems);
     final end   = (currentPage * pageSize).clamp(1, totalItems);
 
-    // Build page buttons — show max 7 pages with ellipsis
     final pages = <int>[];
     if (totalPages <= 7) {
       for (int i = 1; i <= totalPages; i++) pages.add(i);
     } else {
       pages.add(1);
-      if (currentPage > 3) pages.add(-1); // ellipsis
+      if (currentPage > 3) pages.add(-1);
       for (int i = (currentPage - 1).clamp(2, totalPages - 1);
            i <= (currentPage + 1).clamp(2, totalPages - 1); i++) {
         pages.add(i);
       }
-      if (currentPage < totalPages - 2) pages.add(-1); // ellipsis
+      if (currentPage < totalPages - 2) pages.add(-1);
       pages.add(totalPages);
     }
 
@@ -1135,13 +1141,11 @@ class _Tab3PaginationBar extends StatelessWidget {
                   () => onPageChanged(totalPages)),
             ])
           : Row(children: [
-              // Info
               Expanded(child: Text(
                 'ग्राम पंचायत $start–$end / $totalItems  '
                 '(पृष्ठ $currentPage/$totalPages)',
                 style: const TextStyle(fontSize: 11, color: _kSubtle),
               )),
-              // Page buttons
               Row(children: [
                 _navBtn(Icons.first_page, currentPage > 1,
                     () => onPageChanged(1)),
@@ -1944,7 +1948,6 @@ class _Tab1Table extends StatelessWidget {
     final r = rows[i];
     final isFirstInZone = i == 0 || rows[i-1].zi != r.zi;
     final bg = r.zi.isOdd ? Colors.white : const Color(0xFFFFFDF7);
-    // Exact officer text matching screen display
     final zOffText = r.zOff.isNotEmpty
         ? r.zOff.map((o) {
             final name = (o['name'] ?? '').toString().trim();
@@ -1964,7 +1967,6 @@ class _Tab1Table extends StatelessWidget {
                 .join('\n');
           }).join('\n---\n')
         : '—';
-    // FIXED: Sector HQ uses s['hq'] (from API) or s['hq_address']
     final sHq = r.s != null
         ? ((r.s!['hq'] ?? r.s!['hq_address'] ?? r.s!['hqAddress'] ?? '—')
             .toString())
@@ -2017,7 +2019,6 @@ class _Tab1Table extends StatelessWidget {
             decoration: _cellDec(right: true, bottom: false),
             child: Text(sText,
                 style: const TextStyle(fontSize: 11, color: _kDark))),
-        // FIXED: Sector HQ column
         Container(width: _ws[6], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: true, bottom: false),
             child: Text(sHq,
@@ -2139,7 +2140,6 @@ class _Tab2Table extends StatelessWidget {
       sSeq++;
       final gps    = s['panchayats'] as List? ?? [];
       final sOff   = s['officers']   as List? ?? [];
-      // Exact same format as PDF and screen
       final magStr = sOff.isNotEmpty
           ? '${sOff[0]['name'] ?? ''}\n'
             '${sOff[0]['user_rank'] ?? ''}\n'
@@ -2195,13 +2195,12 @@ class _Tab2Table extends StatelessWidget {
 
             final centers  = gp != null ? (gp['centers'] as List? ?? []) : <Map>[];
             final sthalStr = centers.map((c) => '${c['name']}').join('\n');
-            // FIXED: matdan kendra count/room numbers
             final kStr = centers.map((c) {
               final kendras = c['kendras'];
               if (kendras is List && kendras.isNotEmpty) {
                 return kendras.map((k) => '${k['room_number']}').join(', ');
               }
-              return '1'; // 1 kendra by default if no rooms defined
+              return '1';
             }).where((e) => e.isNotEmpty).join(' | ');
 
             return Container(
@@ -2429,7 +2428,6 @@ class _Tab3Table extends StatelessWidget {
             final bg    = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
 
             final duty  = c['duty_officers'] as List? ?? [];
-            // FIXED: exact same format as PDF
             final dText = duty.isNotEmpty
                 ? duty.map((d) =>
                     '${d['name'] ?? ''}  ${d['pno'] ?? ''}\n'
