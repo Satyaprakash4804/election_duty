@@ -97,6 +97,21 @@ export const adminApi = {
 
   deleteRoom: (roomId) =>
     api.delete(`/admin/rooms/${roomId}`),
+
+
+   getElectionConfig: () =>
+    api.get('/admin/election-config/active'),
+
+
+   getAdminConfig: () =>
+    api.get('/admin/config')
+
+
+};
+
+export const goswaraApi = {
+  getGoswara: () => api.get('/admin/goswara'),
+  saveNyayPanchayat: (data) => api.post('/admin/goswara/nyay-panchayat', data),
 };
 
 // ── DISTRICT RULES ────────────────────────────────────────────────────────────
@@ -124,6 +139,22 @@ export const districtRulesApi = {
   // Remove a custom duty type and its rule
   deleteCustom: (dutyType) =>
     api.delete(`/admin/district-rules/custom/${dutyType}`),
+
+
+  // PUT  /admin/district-rules/:dutyType/adjust  { siArmedCount, ..., auxUnarmedCount }
+  // Auto-fits per-batch rule counts to available free staff pool.
+  // Body: { [camelCaseField]: newPerBatchCount, ... }
+  // Returns updated rule object.
+  adjustRule: (dutyType, perBatchCounts) =>
+    api.put(`/admin/district-rules/${dutyType}/adjust`, perBatchCounts),
+
+
+  getAvailability: (dutyType) =>
+    api.get(`/admin/district-duty/${dutyType}/availability`),
+
+
+  autoAssignOverride: (dutyType, data) =>
+    api.post(`/admin/district-duty/${dutyType}/auto-assign-override`, data),
 };
 
 // ── DISTRICT DUTY SUMMARY ─────────────────────────────────────────────────────
@@ -259,4 +290,29 @@ export const staffApi = {
   profile: () => api.get('/staff/profile'),
   myDuty: () => api.get('/staff/my-duty'),
   changePassword: (data) => api.post('/staff/change-password', data),
+};
+
+
+
+export const electionConfigApi = {
+  // GET /admin/election-config/active
+  getActive: () => api.get('/admin/election-config/active'),
+ 
+  // GET /admin/election-config  (list all configs — for admin settings page)
+  getAll: () => api.get('/admin/election-config'),
+ 
+  // POST /admin/election-config
+  // Body: { district, state, electionType, electionName, phase,
+  //         electionYear, electionDate, pratahSamay, sayaSamay }
+  create: (data) => api.post('/admin/election-config', data),
+ 
+  // PUT /admin/election-config/:id
+  update: (id, data) => api.put(`/admin/election-config/${id}`, data),
+ 
+  // DELETE /admin/election-config/:id
+  delete: (id) => api.delete(`/admin/election-config/${id}`),
+ 
+  // POST /admin/election-config/:id/activate
+  // Mark a config as active (deactivates all others for the same district)
+  activate: (id) => api.post(`/admin/election-config/${id}/activate`, {}),
 };

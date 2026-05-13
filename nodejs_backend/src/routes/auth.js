@@ -1,12 +1,11 @@
-'use strict';
 
 const express = require('express');
-const router = express.Router();
-const jwt = require('jsonwebtoken');
-const crypto = require('crypto');
+const router  = express.Router();
+const jwt     = require('jsonwebtoken');
+const crypto  = require('crypto');
 const { query, writeLog } = require('../config/db');
 const { ok, err, loginRequired } = require('../middleware/auth');
-const config = require('../config');
+const config  = require('../config');
 
 const SALT = config.passwordSalt;
 function hashPassword(plain) {
@@ -16,7 +15,7 @@ function hashPassword(plain) {
 // ── POST /api/login ───────────────────────────────────────────────────────────
 router.post('/login', async (req, res) => {
   try {
-    const body = req.body || {};
+    const body     = req.body || {};
     const username = ((body.username || body.pno) || '').trim();
     const password = body.password || '';
 
@@ -38,19 +37,20 @@ router.post('/login', async (req, res) => {
       return err(res, 'Invalid credentials', 401);
     }
 
+    const now = Math.floor(Date.now() / 1000);
     const payload = {
       id:       user.id,
       username: user.username || user.pno,
       name:     user.name,
       role:     user.role,
       district: user.district || null,
-      exp:      Math.floor(Date.now() / 1000) + config.jwt.expiry,
+      iat:      now,                                    // 🆕 explicit iat for revocation check
+      exp:      now + config.jwt.expiry,
     };
 
     const token = jwt.sign(payload, config.jwt.secret, { algorithm: 'HS256' });
     await writeLog('INFO', `User '${user.name}' (${user.role}) logged in`, 'Auth');
 
-    const isWeb = body.platform === 'web';
     const responseData = {
       user: {
         id:       user.id,
@@ -59,26 +59,24 @@ router.post('/login', async (req, res) => {
         pno:      user.pno,
         role:     user.role.toUpperCase(),
         district: user.district || null,
-        mobile:   user.mobile || null,
+        mobile:   user.mobile  || null,
       },
+      token,
     };
 
-    responseData.token = token;
-
-    if (!isWeb) {
-      // Mobile → return token in JSON
-      
-      return ok(res, responseData, 'Login successful');
+    const isWeb = body.platform === 'web';
+    if (isWeb) {
+      // Web → HttpOnly cookie (token still included in body for convenience)
+      res.cookie('token', token, {
+        httpOnly: true,
+        secure:   config.app.isProd,
+        sameSite: 'Lax',
+        maxAge:   config.jwt.expiry * 1000,
+      });
     }
-
-    // Web → set HttpOnly cookie
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: config.app.isProd,
-      sameSite: 'Lax',
-      maxAge: config.jwt.expiry * 1000,
-    });
+    // Mobile → token in JSON body only (no cookie)
     return ok(res, responseData, 'Login successful');
+
   } catch (e) {
     console.error('Login error:', e);
     return err(res, 'Server error', 500);

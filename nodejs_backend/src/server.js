@@ -21,6 +21,7 @@ const hierarchyRoutes = require('./routes/hierarchy');
 const dynamicRoutes = require('./routes/dynamicTables');
 const fcmRoutes = require('./routes/fcm');
 const { connectMongo } = require('./config/mongo');
+const { startRequestTimer, logRequestEnd, logException } = require('./middleware/auth');
 
 const app = express();
 
@@ -68,6 +69,7 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(cookieParser());
 
+
 // ── Global rate limiter ───────────────────────────────────────────────────────
 const globalLimiter = rateLimit({
   windowMs: config.rateLimit.windowMs,
@@ -104,6 +106,9 @@ app.use('/', fcmRoutes);                          // /save-token, /send-notifica
 
 // ── 404 & error handlers ──────────────────────────────────────────────────────
 app.use(notFound);
+
+app.use(logException);
+
 app.use(errorHandler);
 
 // ── Start server ──────────────────────────────────────────────────────────────

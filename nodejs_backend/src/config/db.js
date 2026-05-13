@@ -26,6 +26,7 @@ async function createDatabaseIfNotExists() {
     user: config.db.user,
     password: config.db.password,
     charset: 'utf8mb4',
+    collation: 'utf8mb4_unicode_ci', // 🔥 ADD THIS
   });
   try {
     await conn.execute(
@@ -301,6 +302,7 @@ async function initDb() {
         latitude          DECIMAL(10,7),
         longitude         DECIMAL(10,7),
         created_at        DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        booth_count INT NOT NULL DEFAULT 1,
         INDEX idx_gp_id       (gram_panchayat_id),
         INDEX idx_thana       (thana),
         INDEX idx_name        (name),
@@ -332,6 +334,7 @@ async function initDb() {
         created_at  DATETIME    NOT NULL DEFAULT CURRENT_TIMESTAMP,
         election_date DATE DEFAULT NULL,
         attended    TINYINT(1) NOT NULL DEFAULT 0,
+        mode        TEXT NULL, 
         card_downloaded TINYINT(1) NOT NULL DEFAULT 0,
         UNIQUE KEY uq_staff_sthal (staff_id, sthal_id),
         INDEX idx_sthal_id    (sthal_id),
@@ -375,22 +378,6 @@ async function initDb() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
 
-    // ── booth_staff_rules ─────────────────────────────────────────────────────
-    await conn.execute(`
-      CREATE TABLE IF NOT EXISTS booth_staff_rules (
-        id          INT AUTO_INCREMENT PRIMARY KEY,
-        admin_id    INT NOT NULL,
-        sensitivity ENUM('A++','A','B','C') NOT NULL,
-        user_rank   VARCHAR(100) NOT NULL,
-        is_armed       TINYINT(1)   NOT NULL DEFAULT 0,
-        required_count INT NOT NULL DEFAULT 1,
-        created_at  DATETIME DEFAULT CURRENT_TIMESTAMP,
-        INDEX idx_admin       (admin_id),
-        INDEX idx_sensitivity (sensitivity),
-        FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
-      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
-    `);
-
     // ── goswara_nyay_panchayat ─────────────────────────────────────────────────────
     await conn.execute(`
      CREATE TABLE IF NOT EXISTS goswara_nyay_panchayat (
@@ -404,6 +391,212 @@ async function initDb() {
                     FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci
     `);
+
+    // 🔥 ADD THESE TABLES AFTER app_config
+
+    // ── election_configs ─────────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS election_configs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  district VARCHAR(100) NOT NULL,
+  state VARCHAR(100) NOT NULL DEFAULT '',
+  election_type VARCHAR(100) NOT NULL DEFAULT '',
+  election_name VARCHAR(200) NOT NULL DEFAULT '',
+  phase VARCHAR(50) NOT NULL DEFAULT '',
+  election_year VARCHAR(10) NOT NULL DEFAULT '',
+  election_date DATE DEFAULT NULL,
+  pratah_samay VARCHAR(20) DEFAULT '',
+  saya_samay VARCHAR(20) DEFAULT '',
+  instructions TEXT,
+  is_active TINYINT(1) NOT NULL DEFAULT 1,
+  is_archived TINYINT(1) NOT NULL DEFAULT 0,
+  archived_at DATETIME DEFAULT NULL,
+  created_by INT DEFAULT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_district (district),
+  INDEX idx_district_active (district, is_active),
+  INDEX idx_archived (is_archived),
+  INDEX idx_election_date (election_date),
+  FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE SET NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── api_request_logs ─────────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS api_request_logs (
+  id BIGINT AUTO_INCREMENT PRIMARY KEY,
+  method VARCHAR(10) NOT NULL,
+  path VARCHAR(500) NOT NULL,
+  status_code INT NOT NULL DEFAULT 0,
+  duration_ms INT NOT NULL DEFAULT 0,
+  user_id INT DEFAULT NULL,
+  username VARCHAR(100) DEFAULT NULL,
+  role VARCHAR(30) DEFAULT NULL,
+  ip_address VARCHAR(45) DEFAULT NULL,
+  user_agent VARCHAR(500) DEFAULT NULL,
+  request_body TEXT,
+  error_message TEXT,
+  level ENUM('INFO','WARN','ERROR') NOT NULL DEFAULT 'INFO',
+  created_at DATETIME(3) NOT NULL DEFAULT CURRENT_TIMESTAMP(3),
+  INDEX idx_created_at (created_at),
+  INDEX idx_status_code (status_code),
+  INDEX idx_path (path(100)),
+  INDEX idx_user_id (user_id),
+  INDEX idx_role (role),
+  INDEX idx_level (level)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── token_revocations ─────────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS token_revocations (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  role VARCHAR(30) NOT NULL,
+  revoke_before BIGINT NOT NULL,
+  revoked_by INT DEFAULT NULL,
+  reason VARCHAR(255) DEFAULT '',
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_role (role),
+  INDEX idx_revoke_before (revoke_before)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── booth_rules (IMPORTANT replace booth_staff_rules) ────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS booth_rules (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  admin_id INT NOT NULL,
+  sensitivity ENUM('A++','A','B','C') NOT NULL,
+  booth_count INT NOT NULL,
+
+  si_armed_count INT NOT NULL DEFAULT 0,
+  si_unarmed_count INT NOT NULL DEFAULT 0,
+  hc_armed_count INT NOT NULL DEFAULT 0,
+  hc_unarmed_count INT NOT NULL DEFAULT 0,
+  const_armed_count INT NOT NULL DEFAULT 0,
+  const_unarmed_count INT NOT NULL DEFAULT 0,
+
+  aux_armed_count INT NOT NULL DEFAULT 0,
+  aux_unarmed_count INT NOT NULL DEFAULT 0,
+  pac_count DECIMAL(4,1) NOT NULL DEFAULT 0,
+
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_admin_sens_booth (admin_id, sensitivity, booth_count),
+  INDEX idx_admin_sens (admin_id, sensitivity),
+  FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── district_rules ─────────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS district_rules (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  admin_id INT NOT NULL,
+  duty_type VARCHAR(80) NOT NULL,
+  duty_label_hi VARCHAR(150) DEFAULT '',
+  sankhya INT DEFAULT 0,
+
+  si_armed_count INT DEFAULT 0,
+  si_unarmed_count INT DEFAULT 0,
+  hc_armed_count INT DEFAULT 0,
+  hc_unarmed_count INT DEFAULT 0,
+  const_armed_count INT DEFAULT 0,
+  const_unarmed_count INT DEFAULT 0,
+
+  aux_armed_count INT DEFAULT 0,
+  aux_unarmed_count INT DEFAULT 0,
+  pac_count DECIMAL(4,1) DEFAULT 0,
+  sort_order INT DEFAULT 0,
+
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_admin_duty (admin_id, duty_type),
+  INDEX idx_admin (admin_id),
+  FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── sz_duty_locks ─────────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS sz_duty_locks (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  super_zone_id INT UNIQUE,
+  is_locked TINYINT(1) DEFAULT 0,
+  status ENUM('locked','unlock_requested','unlocked') DEFAULT 'unlocked',
+  unlock_reason TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── sz_assign_jobs ─────────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS sz_assign_jobs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  super_zone_id INT,
+  status ENUM('pending','running','done','error') DEFAULT 'pending',
+  total_centers INT DEFAULT 0,
+  done_centers INT DEFAULT 0,
+  error_msg TEXT,
+  created_by INT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── sz_unlock_requests ─────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS sz_unlock_requests (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  super_zone_id INT,
+  requested_by INT,
+  reason TEXT,
+  status ENUM('pending','approved','rejected') DEFAULT 'pending',
+  reviewed_by INT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── district_duty_assignments ─────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS district_duty_assignments (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  admin_id INT NOT NULL,
+  duty_type VARCHAR(80) NOT NULL,
+  batch_no INT DEFAULT 1,
+  staff_id INT NOT NULL,
+  assigned_by INT DEFAULT NULL,
+  bus_no VARCHAR(50) DEFAULT '',
+  note TEXT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  UNIQUE KEY uq_staff_duty (staff_id, duty_type),
+  INDEX idx_duty_type (duty_type),
+  INDEX idx_admin_id (admin_id),
+  INDEX idx_batch (admin_id, duty_type, batch_no),
+  FOREIGN KEY (staff_id) REFERENCES users(id) ON DELETE CASCADE,
+  FOREIGN KEY (assigned_by) REFERENCES users(id) ON DELETE SET NULL,
+  FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
+
+    // ── district_duty_jobs ────────────────────────────────────
+    await conn.execute(`
+CREATE TABLE IF NOT EXISTS district_duty_jobs (
+  id INT AUTO_INCREMENT PRIMARY KEY,
+  admin_id INT NOT NULL,
+  status ENUM('pending','running','done','error') DEFAULT 'pending',
+  total_types INT DEFAULT 0,
+  done_types INT DEFAULT 0,
+  assigned INT DEFAULT 0,
+  skipped INT DEFAULT 0,
+  error_msg TEXT,
+  created_by INT,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  INDEX idx_admin (admin_id),
+  FOREIGN KEY (admin_id) REFERENCES users(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+`);
 
 
     await conn.execute('SET SESSION foreign_key_checks = 1');
@@ -424,8 +617,8 @@ async function initDb() {
 
     await ensureColumn(conn, 'sectors', "hq_address TEXT");
 
-    await ensureColumn(conn, 'booth_staff_rules', "is_armed TINYINT(1) NOT NULL DEFAULT 0");
 
+    await ensureColumn(conn, 'matdan_sthal', "booth_count INT NOT NULL DEFAULT 1");
     await ensureColumn(conn, 'matdan_sthal', "latitude DECIMAL(10,7) DEFAULT NULL");
     await ensureColumn(conn, 'matdan_sthal', "longitude DECIMAL(10,7) DEFAULT NULL");
     await ensureColumn(conn, 'matdan_sthal', "bus_no VARCHAR(50) DEFAULT ''");
@@ -436,6 +629,12 @@ async function initDb() {
     await ensureColumn(conn, 'duty_assignments', "election_date DATE DEFAULT NULL");
     await ensureColumn(conn, 'duty_assignments', "attended    TINYINT(1) NOT NULL DEFAULT 0");
     await ensureColumn(conn, 'duty_assignments', "card_downloaded TINYINT(1) NOT NULL DEFAULT 0");
+    await ensureColumn(conn, 'duty_assignments', "mode TEXT NULL");
+
+
+    await ensureColumn(conn, 'kshetra_officers', "user_rank VARCHAR(100) DEFAULT ''");
+    await ensureColumn(conn, 'zonal_officers', "user_rank VARCHAR(100) DEFAULT ''");
+    await ensureColumn(conn, 'sector_officers', "user_rank VARCHAR(100) DEFAULT ''");
 
     // ── Seed: master user ─────────────────────────────────────────────────────
     const [rows] = await conn.execute("SELECT id FROM users WHERE username='master'");
