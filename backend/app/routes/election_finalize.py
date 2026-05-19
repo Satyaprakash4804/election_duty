@@ -1,56 +1,28 @@
-"""
-election_finalize.py
-────────────────────
-Blueprint: finalize_bp   →  prefix  /api/admin/election
-
-Register in app.py:
-    from election_finalize import finalize_bp
-    app.register_blueprint(finalize_bp)
-
-ENDPOINTS
-─────────
-GET  /api/admin/election/finalize/status
-POST /api/admin/election/finalize
-GET  /api/admin/election/history
-GET  /api/admin/election/history/<election_id>
-GET  /api/admin/election/history/<election_id>/booth-assignments
-GET  /api/admin/election/history/<election_id>/district-duties
-GET  /api/admin/election/history/<election_id>/officers
-GET  /api/admin/election/history/<election_id>/rules
-
-WHAT FINALIZE DOES (in one transaction)
-────────────────────────────────────────
-1.  duty_assignments          → duty_assignments_history        (with denormalized staff+center info)
-2.  district_duty_assignments → district_duty_history           (with denormalized staff info + duty label)
-3.  district_rules            → district_rules_history
-4.  booth_rules               → booth_rules_history
-5.  kshetra_officers          → kshetra_officers_history        (with super_zone name/block)
-6.  zonal_officers            → zonal_officers_history          (with zone + super_zone names)
-7.  sector_officers           → sector_officers_history         (with sector + zone + super_zone names)
-8.  DELETE live duty_assignments
-9.  DELETE live district_duty_assignments
-10. Unlock all super zones for this district
-11. Mark election_config  is_finalized=1, is_archived=1
-"""
-
 from datetime import date
-from flask import Blueprint, request
+from flask import Blueprint, request, abort
 from db import get_db
-from app.routes import admin_required, ok, err, write_log   # adjust if your import path differs
+from app.routes import ok, err, write_log, admin_required
+from app.election_guard import (
+    get_active_election,
+    finalize_district_auto,
+    sweep_auto_finalize_all_districts,
+)
 
-finalize_bp = Blueprint("finalize", __name__, url_prefix="/api/admin/election")
+election_finalize_bp = Blueprint(
+    "election_finalize", __name__, url_prefix="/api/admin/election"
+)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  Internal helpers
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  INTERNAL HELPERS
+# ═════════════════════════════════════════════════════════════════════════════
 
 def _admin_id():
     return request.user["id"]
 
 
 def _district_admin_ids(district: str) -> list:
-    """All admin/super_admin user IDs in the same district as the current user."""
+    """All admin/super_admin user IDs in the same district."""
     if not district:
         return [_admin_id()]
     conn = get_db()
@@ -59,7 +31,7 @@ def _district_admin_ids(district: str) -> list:
             cur.execute(
                 "SELECT id FROM users "
                 "WHERE role IN ('admin','super_admin') AND district = %s",
-                (district,)
+                (district,),
             )
             ids = [r["id"] for r in cur.fetchall()]
             if _admin_id() not in ids:
@@ -74,11 +46,42 @@ def _ph(ids: list):
     return ",".join(["%s"] * len(ids)), list(ids)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/finalize/status
-# ─────────────────────────────────────────────────────────────────────────────
+def _page_params():
+    page  = max(1, int(request.args.get("page", 1)))
+    limit = min(200, max(1, int(request.args.get("limit", 50))))
+    return page, limit, (page - 1) * limit
 
-@finalize_bp.route("/finalize/status", methods=["GET"])
+
+def _paginated(data, total, page, limit):
+    return ok({
+        "data":       data,
+        "total":      total,
+        "page":       page,
+        "limit":      limit,
+        "totalPages": -(-total // limit) if limit else 0,
+    })
+
+
+def _verify_election_district(election_id: int, district: str):
+    """Abort 404 if election_id does not belong to this district."""
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM election_configs WHERE id = %s AND district = %s",
+                (election_id, district),
+            )
+            if not cur.fetchone():
+                abort(404)
+    finally:
+        conn.close()
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  STATUS
+# ═════════════════════════════════════════════════════════════════════════════
+
+@election_finalize_bp.route("/finalize/status", methods=["GET"])
 @admin_required
 def finalize_status():
     """
@@ -89,44 +92,31 @@ def finalize_status():
     if not district:
         return err("Admin has no district configured", 400)
 
-    d_ids = _district_admin_ids(district)
+    cfg = get_active_election(district)
+    if not cfg:
+        return ok({
+            "hasActiveConfig": False,
+            "config":          None,
+            "canFinalize":     False,
+            "dateInPast":      False,
+            "readyToFinalize": False,
+            "alreadyFinalized": False,
+            "counts":          {},
+        })
+
+    d_ids      = _district_admin_ids(district)
     ph, params = _ph(d_ids)
+
+    election_date = cfg.get("election_date")
+    today         = date.today()
+    date_in_past  = bool(election_date and election_date < today)
+    already_final = bool(cfg.get("is_finalized"))
+    ready         = date_in_past and not already_final
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
 
-            # Active election config
-            cur.execute("""
-                SELECT id, election_name, election_type, election_date,
-                       is_finalized, is_archived, phase, election_year,
-                       pratah_samay, saya_samay, state
-                FROM election_configs
-                WHERE district    = %s
-                  AND is_active   = 1
-                  AND is_archived = 0
-                ORDER BY updated_at DESC, id DESC
-                LIMIT 1
-            """, (district,))
-            cfg = cur.fetchone()
-
-            if not cfg:
-                return ok({
-                    "hasActiveConfig":  False,
-                    "readyToFinalize":  False,
-                    "config":           None,
-                    "counts":           {},
-                })
-
-            today         = date.today()
-            election_date = cfg["election_date"]
-            ready = (
-                election_date is not None
-                and election_date <= today
-                and not cfg["is_finalized"]
-            )
-
-            # Live assignment counts
             cur.execute(f"""
                 SELECT COUNT(*) AS cnt
                 FROM duty_assignments da
@@ -177,20 +167,22 @@ def finalize_status():
         conn.close()
 
     return ok({
-        "hasActiveConfig":   True,
-        "readyToFinalize":   bool(ready),
-        "alreadyFinalized":  bool(cfg["is_finalized"]),
+        "hasActiveConfig":  True,
+        "readyToFinalize":  ready,
+        "canFinalize":      True,
+        "dateInPast":       date_in_past,
+        "alreadyFinalized": already_final,
         "config": {
             "id":           cfg["id"],
-            "electionName": cfg["election_name"]  or "",
-            "electionType": cfg["election_type"]  or "",
-            "electionDate": str(election_date)    if election_date else "",
-            "phase":        cfg["phase"]          or "",
-            "electionYear": cfg["election_year"]  or "",
-            "state":        cfg["state"]          or "",
-            "pratahSamay":  cfg["pratah_samay"]   or "",
-            "sayaSamay":    cfg["saya_samay"]      or "",
-            "isFinalized":  bool(cfg["is_finalized"]),
+            "electionName": cfg.get("election_name")  or "",
+            "electionType": cfg.get("election_type")  or "",
+            "electionDate": str(election_date) if election_date else "",
+            "phase":        cfg.get("phase")          or "",
+            "electionYear": cfg.get("election_year")  or "",
+            "state":        cfg.get("state")          or "",
+            "pratahSamay":  cfg.get("pratah_samay")   or "",
+            "sayaSamay":    cfg.get("saya_samay")      or "",
+            "isFinalized":  already_final,
         },
         "counts": {
             "boothAssignments":    booth_count,
@@ -202,19 +194,20 @@ def finalize_status():
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  POST /api/admin/election/finalize
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  MANUAL FINALIZE
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/finalize", methods=["POST"])
+@election_finalize_bp.route("/finalize", methods=["POST"])
 @admin_required
-def finalize_election():
+def finalize_now():
     """
-    Archives all live assignments + officer lists to history tables,
-    clears live data, unlocks super zones, marks the election config finalized.
+    Manually finalize the active election for the admin's district.
+    All live duty data is archived to history tables, super zones are
+    unlocked, and the election config is marked finalized.
 
     Body (optional):
-      { "force": true }  →  bypass the date guard (for admin override / testing)
+      { "force": true }  →  bypass date guard (for testing / admin override)
     """
     body     = request.get_json() or {}
     force    = bool(body.get("force", False))
@@ -223,376 +216,145 @@ def finalize_election():
     if not district:
         return err("Admin has no district configured", 400)
 
-    # ── Fetch active election config ──────────────────────────────────────────
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute("""
-                SELECT id, election_name, election_date, is_finalized
-                FROM election_configs
-                WHERE district    = %s
-                  AND is_active   = 1
-                  AND is_archived = 0
-                ORDER BY updated_at DESC, id DESC
-                LIMIT 1
-            """, (district,))
-            cfg = cur.fetchone()
-    finally:
-        conn.close()
-
+    cfg = get_active_election(district)
     if not cfg:
-        return err("No active election config found for your district", 404)
-
-    if cfg["is_finalized"]:
         return err(
-            f"Election '{cfg['election_name']}' is already finalized. "
-            "Ask the master to create a new election config.",
-            409
+            "कोई सक्रिय चुनाव कॉन्फ़िगरेशन नहीं है। "
+            "(No active election config to finalize.)",
+            404,
         )
 
-    # ── Date guard ────────────────────────────────────────────────────────────
+    if cfg.get("is_finalized"):
+        return err(
+            f"Election '{cfg.get('election_name')}' is already finalized. "
+            "Ask the master to create a new election config.",
+            409,
+        )
+
+    # Date guard
     if not force:
-        today         = date.today()
-        election_date = cfg["election_date"]
+        election_date = cfg.get("election_date")
         if election_date is None:
-            return err("Election date is not set. Ask the master to set it first.", 400)
-        if election_date > today:
+            return err(
+                "Election date is not set. Ask the master to set it first.",
+                400,
+            )
+        if election_date > date.today():
             return err(
                 f"Election date is {election_date} — finalization is only allowed "
                 "on or after the election date. Pass force=true to override.",
-                400
+                400,
             )
 
-    election_id = cfg["id"]
-    d_ids       = _district_admin_ids(district)
-    ph, params  = _ph(d_ids)
-
-    conn = get_db()
     try:
-        with conn.cursor() as cur:
+        finalize_district_auto(district, cfg["id"])
 
-            # ── Step 1: Archive duty_assignments (with denormalized data) ─────
-            cur.execute(f"""
-                INSERT INTO duty_assignments_history
-                    (election_id, original_id, admin_id,
-                     staff_id, sthal_id,
-                     staff_name, staff_pno, staff_mobile, staff_rank,
-                     staff_district, staff_thana, is_armed,
-                     center_name, center_type,
-                     bus_no, election_date, attended, card_downloaded,
-                     assigned_by, original_created_at)
-                SELECT
-                    %s,
-                    da.id,
-                    sz.admin_id,
-                    da.staff_id,
-                    da.sthal_id,
-                    u.name,
-                    u.pno,
-                    u.mobile,
-                    u.user_rank,
-                    u.district,
-                    u.thana,
-                    u.is_armed,
-                    ms.name,
-                    ms.center_type,
-                    da.bus_no,
-                    da.election_date,
-                    da.attended,
-                    da.card_downloaded,
-                    da.assigned_by,
-                    da.created_at
-                FROM duty_assignments da
-                JOIN users u            ON u.id  = da.staff_id
-                JOIN matdan_sthal ms    ON ms.id = da.sthal_id
-                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors s          ON s.id  = gp.sector_id
-                JOIN zones z            ON z.id  = s.zone_id
-                JOIN super_zones sz     ON sz.id = z.super_zone_id
-                WHERE sz.admin_id IN ({ph})
-            """, [election_id] + params)
-            booth_archived = cur.rowcount
-
-            # ── Step 2: Archive district_duty_assignments (with denorm data) ──
-            cur.execute(f"""
-                INSERT INTO district_duty_history
-                    (election_id, original_id, admin_id,
-                     duty_type, duty_label_hi, batch_no,
-                     staff_id, staff_name, staff_pno, staff_mobile,
-                     staff_rank, staff_district, staff_thana, is_armed,
-                     assigned_by, bus_no, note, original_created_at)
-                SELECT
-                    %s,
-                    dda.id,
-                    dda.admin_id,
-                    dda.duty_type,
-                    COALESCE(dr.duty_label_hi, ''),
-                    dda.batch_no,
-                    dda.staff_id,
-                    u.name,
-                    u.pno,
-                    u.mobile,
-                    u.user_rank,
-                    u.district,
-                    u.thana,
-                    u.is_armed,
-                    dda.assigned_by,
-                    dda.bus_no,
-                    dda.note,
-                    dda.created_at
-                FROM district_duty_assignments dda
-                JOIN users u ON u.id = dda.staff_id
-                LEFT JOIN district_rules dr
-                    ON dr.admin_id = dda.admin_id
-                   AND dr.duty_type = dda.duty_type
-                WHERE dda.admin_id IN ({ph})
-            """, [election_id] + params)
-            district_archived = cur.rowcount
-
-            # ── Step 3: Archive district_rules ────────────────────────────────
-            cur.execute(f"""
-                INSERT INTO district_rules_history
-                    (election_id, original_id, admin_id,
-                     duty_type, duty_label_hi, sankhya,
-                     si_armed_count, si_unarmed_count,
-                     hc_armed_count, hc_unarmed_count,
-                     const_armed_count, const_unarmed_count,
-                     aux_armed_count, aux_unarmed_count,
-                     pac_count, sort_order, original_created_at)
-                SELECT
-                    %s, id, admin_id,
-                    duty_type, duty_label_hi, sankhya,
-                    si_armed_count, si_unarmed_count,
-                    hc_armed_count, hc_unarmed_count,
-                    const_armed_count, const_unarmed_count,
-                    aux_armed_count, aux_unarmed_count,
-                    pac_count, sort_order, created_at
-                FROM district_rules
-                WHERE admin_id IN ({ph})
-            """, [election_id] + params)
-            rules_archived = cur.rowcount
-
-            # ── Step 4: Archive booth_rules ───────────────────────────────────
-            cur.execute(f"""
-                INSERT INTO booth_rules_history
-                    (election_id, original_id, admin_id,
-                     sensitivity, booth_count,
-                     si_armed_count, si_unarmed_count,
-                     hc_armed_count, hc_unarmed_count,
-                     const_armed_count, const_unarmed_count,
-                     aux_armed_count, aux_unarmed_count,
-                     pac_count, original_created_at)
-                SELECT
-                    %s, id, admin_id,
-                    sensitivity, booth_count,
-                    si_armed_count, si_unarmed_count,
-                    hc_armed_count, hc_unarmed_count,
-                    const_armed_count, const_unarmed_count,
-                    aux_armed_count, aux_unarmed_count,
-                    pac_count, created_at
-                FROM booth_rules
-                WHERE admin_id IN ({ph})
-            """, [election_id] + params)
-            booth_rules_archived = cur.rowcount
-
-            # ── Step 5: Archive kshetra_officers ──────────────────────────────
-            cur.execute(f"""
-                INSERT INTO kshetra_officers_history
-                    (election_id, original_id, admin_id,
-                     super_zone_id, super_zone_name, super_zone_block,
-                     user_id, name, pno, mobile, user_rank,
-                     original_created_at)
-                SELECT
-                    %s,
-                    ko.id,
-                    sz.admin_id,
-                    ko.super_zone_id,
-                    sz.name,
-                    sz.block,
-                    ko.user_id,
-                    ko.name,
-                    ko.pno,
-                    ko.mobile,
-                    ko.user_rank,
-                    ko.created_at
-                FROM kshetra_officers ko
-                JOIN super_zones sz ON sz.id = ko.super_zone_id
-                WHERE sz.admin_id IN ({ph})
-            """, [election_id] + params)
-            kshetra_archived = cur.rowcount
-
-            # ── Step 6: Archive zonal_officers ────────────────────────────────
-            cur.execute(f"""
-                INSERT INTO zonal_officers_history
-                    (election_id, original_id, admin_id,
-                     zone_id, zone_name,
-                     super_zone_id, super_zone_name,
-                     user_id, name, pno, mobile, user_rank,
-                     original_created_at)
-                SELECT
-                    %s,
-                    zo.id,
-                    sz.admin_id,
-                    zo.zone_id,
-                    z.name,
-                    sz.id,
-                    sz.name,
-                    zo.user_id,
-                    zo.name,
-                    zo.pno,
-                    zo.mobile,
-                    zo.user_rank,
-                    zo.created_at
-                FROM zonal_officers zo
-                JOIN zones z        ON z.id  = zo.zone_id
-                JOIN super_zones sz  ON sz.id = z.super_zone_id
-                WHERE sz.admin_id IN ({ph})
-            """, [election_id] + params)
-            zonal_archived = cur.rowcount
-
-            # ── Step 7: Archive sector_officers ───────────────────────────────
-            cur.execute(f"""
-                INSERT INTO sector_officers_history
-                    (election_id, original_id, admin_id,
-                     sector_id, sector_name,
-                     zone_id, zone_name,
-                     super_zone_id, super_zone_name,
-                     user_id, name, pno, mobile, user_rank,
-                     original_created_at)
-                SELECT
-                    %s,
-                    so.id,
-                    sz.admin_id,
-                    so.sector_id,
-                    s.name,
-                    z.id,
-                    z.name,
-                    sz.id,
-                    sz.name,
-                    so.user_id,
-                    so.name,
-                    so.pno,
-                    so.mobile,
-                    so.user_rank,
-                    so.created_at
-                FROM sector_officers so
-                JOIN sectors s      ON s.id  = so.sector_id
-                JOIN zones z        ON z.id  = s.zone_id
-                JOIN super_zones sz  ON sz.id = z.super_zone_id
-                WHERE sz.admin_id IN ({ph})
-            """, [election_id] + params)
-            sector_archived = cur.rowcount
-
-            # ── Step 8: Delete live duty_assignments ──────────────────────────
-            cur.execute(f"""
-                DELETE da FROM duty_assignments da
-                JOIN matdan_sthal ms    ON ms.id = da.sthal_id
-                JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors s          ON s.id  = gp.sector_id
-                JOIN zones z            ON z.id  = s.zone_id
-                JOIN super_zones sz     ON sz.id = z.super_zone_id
-                WHERE sz.admin_id IN ({ph})
-            """, params)
-
-            # ── Step 9: Delete live district_duty_assignments ─────────────────
-            cur.execute(f"""
-                DELETE FROM district_duty_assignments
-                WHERE admin_id IN ({ph})
-            """, params)
-
-            # ── Step 10: Unlock all super zones for this district ─────────────
-            cur.execute(f"""
-                UPDATE sz_duty_locks
-                SET is_locked     = 0,
-                    status        = 'unlocked',
-                    unlock_reason = 'Auto-unlocked on election finalization'
-                WHERE super_zone_id IN (
-                    SELECT id FROM super_zones WHERE admin_id IN ({ph})
+        # Stamp as manual finalize
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE election_configs SET auto_finalized=0, finalized_by=%s WHERE id=%s",
+                    (_admin_id(), cfg["id"]),
                 )
-            """, params)
-
-            # ── Step 11: Mark election config finalized + archived ────────────
-            cur.execute("""
-                UPDATE election_configs
-                SET is_finalized = 1,
-                    finalized_at = NOW(),
-                    finalized_by = %s,
-                    is_active    = 0,
-                    is_archived  = 1,
-                    archived_at  = NOW()
-                WHERE id = %s
-            """, (_admin_id(), election_id))
-
-        conn.commit()
+            conn.commit()
+        finally:
+            conn.close()
 
     except Exception as e:
-        try:
-            conn.rollback()
-        except Exception:
-            pass
-        write_log("ERROR", f"finalize_election: {e}", "ElectionFinalize")
-        return err(f"Finalization failed: {e}", 500)
-
-    finally:
-        conn.close()
+        write_log("ERROR", f"manual finalize failed: {e}", "ElectionFinalize")
+        return err(f"Finalize failed: {e}", 500)
 
     write_log(
         "INFO",
-        (
-            f"Election finalized: config_id={election_id} district={district} | "
-            f"booth={booth_archived} district={district_archived} "
-            f"kshetra={kshetra_archived} zonal={zonal_archived} sector={sector_archived} "
-            f"by admin {_admin_id()}"
-        ),
-        "ElectionFinalize"
+        f"Manual finalize: election={cfg['id']} district={district} "
+        f"by user {_admin_id()}",
+        "ElectionFinalize",
     )
 
-    return ok({
-        "electionId":   election_id,
-        "electionName": cfg["election_name"],
-        "archived": {
-            "boothAssignments":    booth_archived,
-            "districtAssignments": district_archived,
-            "districtRules":       rules_archived,
-            "boothRules":          booth_rules_archived,
-            "kshetraOfficers":     kshetra_archived,
-            "zonalOfficers":       zonal_archived,
-            "sectorOfficers":      sector_archived,
+    return ok(
+        {
+            "electionId":  cfg["id"],
+            "district":    district,
+            "electionName": cfg.get("election_name", ""),
         },
-        "message": (
-            "All assignments and officer lists have been archived. "
-            "Super zones are unlocked. "
-            "Admins can now assign duties for the next election."
-        ),
-    }, "Election finalized successfully")
+        "चुनाव सफलतापूर्वक समाप्त किया गया (Election finalized successfully)",
+    )
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/history
-#  List of all archived elections for this district with summary counts
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  AUTO-CHECK — cron / scheduler
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/history", methods=["GET"])
+@election_finalize_bp.route("/finalize/auto-check", methods=["GET", "POST"])
+def finalize_auto_check():
+    """
+    Sweep every district whose election_date has passed and finalize
+    automatically. Safe to hit via cron / GET.
+    Add reverse-proxy auth if you want to restrict access.
+    """
+    try:
+        result = sweep_auto_finalize_all_districts()
+        write_log(
+            "INFO",
+            f"Auto-finalize sweep: {len(result.get('finalized', []))} finalized, "
+            f"{len(result.get('errors', []))} errors",
+            "ElectionFinalize",
+        )
+        return ok(result, "Auto-finalize sweep complete")
+    except Exception as e:
+        write_log("ERROR", f"auto-check sweep failed: {e}", "ElectionFinalize")
+        return err(f"Sweep failed: {e}", 500)
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY — LIST
+# ═════════════════════════════════════════════════════════════════════════════
+
+@election_finalize_bp.route("/history", methods=["GET"])
 @admin_required
-def election_history_list():
-    district = (request.user.get("district") or "").strip()
-    d_ids    = _district_admin_ids(district)
-    ph, params = _ph(d_ids)
+def list_history():
+    """
+    List past (finalized / archived) elections.
+    - admin / super_admin : own district only
+    - master              : all districts (filter via ?district= and ?name=)
+    """
+    role     = request.user.get("role")
+    district = request.user.get("district") or ""
+    name_q   = (request.args.get("name")     or "").strip()
+    dist_q   = (request.args.get("district") or "").strip()
+
+    where  = ["is_finalized = 1"]
+    params = []
+
+    if role == "master":
+        if dist_q:
+            where.append("district = %s")
+            params.append(dist_q)
+    else:
+        where.append("district = %s")
+        params.append(district)
+
+    if name_q:
+        where.append("election_name LIKE %s")
+        params.append(f"%{name_q}%")
+
+    where_sql = " AND ".join(where)
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-
-            # All archived/finalized configs for this district
-            cur.execute("""
-                SELECT id, election_name, election_type, election_date,
-                       phase, election_year, state, is_finalized,
-                       finalized_at, finalized_by, archived_at, created_at
+            cur.execute(f"""
+                SELECT id, district, state, election_type, election_name,
+                       phase, election_year, election_date,
+                       pratah_samay, saya_samay, instructions,
+                       auto_finalized, is_finalized,
+                       finalized_at, finalized_by,
+                       archived_at, created_at
                 FROM election_configs
-                WHERE district = %s
-                  AND (is_archived = 1 OR is_finalized = 1)
-                ORDER BY id DESC
-            """, (district,))
+                WHERE {where_sql}
+                ORDER BY COALESCE(finalized_at, archived_at, created_at) DESC
+            """, params)
             configs = cur.fetchall()
 
             if not configs:
@@ -601,7 +363,6 @@ def election_history_list():
             cfg_ids = [c["id"] for c in configs]
             c_ph    = ",".join(["%s"] * len(cfg_ids))
 
-            # Summary counts per election from every history table
             def _counts(table, election_col="election_id"):
                 cur.execute(f"""
                     SELECT {election_col} AS eid, COUNT(*) AS cnt
@@ -609,7 +370,7 @@ def election_history_list():
                     WHERE {election_col} IN ({c_ph})
                     GROUP BY {election_col}
                 """, cfg_ids)
-                return {r["eid"]: r["cnt"] for r in cur.fetchall()}
+                return {r["eid"]: int(r["cnt"] or 0) for r in cur.fetchall()}
 
             booth_map    = _counts("duty_assignments_history")
             district_map = _counts("district_duty_history")
@@ -621,99 +382,107 @@ def election_history_list():
         conn.close()
 
     return ok([{
-        "id":                       c["id"],
-        "electionName":             c["election_name"]  or "",
-        "electionType":             c["election_type"]  or "",
-        "electionDate":             str(c["election_date"]) if c["election_date"] else "",
-        "phase":                    c["phase"]          or "",
-        "electionYear":             c["election_year"]  or "",
-        "state":                    c["state"]          or "",
-        "isFinalized":              bool(c["is_finalized"]),
-        "finalizedAt":              str(c["finalized_at"]) if c["finalized_at"] else "",
-        "archivedAt":               str(c["archived_at"])  if c["archived_at"]  else "",
+        "id":                          c["id"],
+        "district":                    c["district"]       or "",
+        "state":                       c["state"]          or "",
+        "electionName":                c["election_name"]  or "",
+        "electionType":                c["election_type"]  or "",
+        "electionDate":                str(c["election_date"]) if c["election_date"] else "",
+        "phase":                       c["phase"]          or "",
+        "electionYear":                c["election_year"]  or "",
+        "isFinalized":                 bool(c["is_finalized"]),
+        "autoFinalized":               bool(c.get("auto_finalized")),
+        "finalizedAt":                 str(c["finalized_at"]) if c["finalized_at"] else "",
+        "archivedAt":                  str(c["archived_at"])  if c["archived_at"]  else "",
+        "createdAt":                   str(c["created_at"]),
         "boothAssignmentsArchived":    booth_map.get(c["id"],    0),
         "districtAssignmentsArchived": district_map.get(c["id"], 0),
         "kshetraOfficersArchived":     kshetra_map.get(c["id"],  0),
         "zonalOfficersArchived":       zonal_map.get(c["id"],    0),
         "sectorOfficersArchived":      sector_map.get(c["id"],   0),
+        "totalArchived": (
+            booth_map.get(c["id"], 0) +
+            district_map.get(c["id"], 0) +
+            kshetra_map.get(c["id"], 0) +
+            zonal_map.get(c["id"], 0) +
+            sector_map.get(c["id"], 0)
+        ),
     } for c in configs])
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/history/<election_id>
-#  Full detail summary for one archived election
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY — DETAIL
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/history/<int:election_id>", methods=["GET"])
+@election_finalize_bp.route("/history/<int:eid>", methods=["GET"])
 @admin_required
-def election_history_detail(election_id):
-    district = (request.user.get("district") or "").strip()
-    d_ids    = _district_admin_ids(district)
-    ph, params = _ph(d_ids)
+def history_detail(eid):
+    """Full election config + summary counts for one archived election."""
+    role     = request.user.get("role")
+    district = request.user.get("district") or ""
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-
-            # Verify config belongs to this district
-            cur.execute("""
-                SELECT id, election_name, election_type, election_date,
-                       phase, election_year, state, is_finalized,
-                       finalized_at, archived_at
-                FROM election_configs
-                WHERE id = %s AND district = %s
-            """, (election_id, district))
+            cur.execute("SELECT * FROM election_configs WHERE id = %s", (eid,))
             cfg = cur.fetchone()
             if not cfg:
-                return err("Election not found or access denied", 404)
+                return err("Election not found", 404)
+            if role != "master" and cfg["district"] != district:
+                return err("Access denied", 403)
 
-            # Booth assignments — grouped by center_type
-            cur.execute("""
+            d_ids      = _district_admin_ids(cfg["district"])
+            ph, params = _ph(d_ids)
+
+            # Booth assignments grouped by center_type
+            cur.execute(f"""
                 SELECT center_type,
-                       COUNT(*)              AS total_staff,
-                       COUNT(DISTINCT sthal_id) AS centers_covered,
-                       SUM(attended)         AS total_attended
+                       COUNT(*)                  AS total_staff,
+                       COUNT(DISTINCT sthal_id)  AS centers_covered,
+                       SUM(attended)             AS total_attended
                 FROM duty_assignments_history
-                WHERE election_id = %s
-                  AND admin_id IN (""" + ph + """)
+                WHERE election_id = %s AND admin_id IN ({ph})
                 GROUP BY center_type
-            """, [election_id] + params)
+            """, [eid] + params)
             booth_by_type = cur.fetchall()
 
-            # District duties — grouped by duty_type
-            cur.execute("""
+            # District duties grouped by duty_type
+            cur.execute(f"""
                 SELECT duty_type, duty_label_hi,
-                       MAX(batch_no)              AS batch_count,
-                       COUNT(DISTINCT staff_id)   AS total_staff
+                       MAX(batch_no)             AS batch_count,
+                       COUNT(DISTINCT staff_id)  AS total_staff
                 FROM district_duty_history
-                WHERE election_id = %s
-                  AND admin_id IN (""" + ph + """)
+                WHERE election_id = %s AND admin_id IN ({ph})
                 GROUP BY duty_type, duty_label_hi
                 ORDER BY duty_type
-            """, [election_id] + params)
+            """, [eid] + params)
             district_summary = cur.fetchall()
 
-            # Officer summary counts
-            cur.execute("""
-                SELECT COUNT(*) AS cnt
-                FROM kshetra_officers_history
-                WHERE election_id = %s AND admin_id IN (""" + ph + """)
-            """, [election_id] + params)
-            kshetra_count = cur.fetchone()["cnt"]
+            # Officer counts
+            def _officer_count(table):
+                cur.execute(
+                    f"SELECT COUNT(*) AS cnt FROM {table} "
+                    f"WHERE election_id = %s AND admin_id IN ({ph})",
+                    [eid] + params,
+                )
+                return int(cur.fetchone()["cnt"] or 0)
 
-            cur.execute("""
-                SELECT COUNT(*) AS cnt
-                FROM zonal_officers_history
-                WHERE election_id = %s AND admin_id IN (""" + ph + """)
-            """, [election_id] + params)
-            zonal_count = cur.fetchone()["cnt"]
+            kshetra_count = _officer_count("kshetra_officers_history")
+            zonal_count   = _officer_count("zonal_officers_history")
+            sector_count  = _officer_count("sector_officers_history")
 
-            cur.execute("""
-                SELECT COUNT(*) AS cnt
-                FROM sector_officers_history
-                WHERE election_id = %s AND admin_id IN (""" + ph + """)
-            """, [election_id] + params)
-            sector_count = cur.fetchone()["cnt"]
+            # Overall assignment counts (for compatibility)
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM duty_assignments_history WHERE election_id=%s",
+                (eid,),
+            )
+            booth_total = int(cur.fetchone()["c"] or 0)
+
+            cur.execute(
+                "SELECT COUNT(*) AS c FROM district_duty_history WHERE election_id=%s",
+                (eid,),
+            )
+            district_total = int(cur.fetchone()["c"] or 0)
 
     finally:
         conn.close()
@@ -721,57 +490,66 @@ def election_history_detail(election_id):
     return ok({
         "config": {
             "id":           cfg["id"],
+            "district":     cfg["district"]       or "",
+            "state":        cfg.get("state")      or "",
             "electionName": cfg["election_name"]  or "",
-            "electionType": cfg["election_type"]  or "",
+            "electionType": cfg.get("election_type") or "",
             "electionDate": str(cfg["election_date"]) if cfg["election_date"] else "",
-            "phase":        cfg["phase"]          or "",
-            "electionYear": cfg["election_year"]  or "",
-            "state":        cfg["state"]          or "",
-            "isFinalized":  bool(cfg["is_finalized"]),
-            "finalizedAt":  str(cfg["finalized_at"]) if cfg["finalized_at"] else "",
-            "archivedAt":   str(cfg["archived_at"])  if cfg["archived_at"]  else "",
+            "phase":        cfg.get("phase")      or "",
+            "electionYear": cfg.get("election_year") or "",
+            "pratahSamay":  cfg.get("pratah_samay")  or "",
+            "sayaSamay":    cfg.get("saya_samay")     or "",
+            "instructions": cfg.get("instructions")  or "",
+            "isFinalized":  bool(cfg.get("is_finalized")),
+            "finalizedAt":  str(cfg["finalized_at"])  if cfg.get("finalized_at") else "",
+            "archivedAt":   str(cfg["archived_at"])   if cfg.get("archived_at")  else "",
         },
         "boothSummary": [{
-            "centerType":      r["center_type"]     or "",
-            "totalStaff":      int(r["total_staff"]      or 0),
-            "centersCovered":  int(r["centers_covered"]  or 0),
-            "totalAttended":   int(r["total_attended"]   or 0),
+            "centerType":     r["center_type"]    or "",
+            "totalStaff":     int(r["total_staff"]     or 0),
+            "centersCovered": int(r["centers_covered"] or 0),
+            "totalAttended":  int(r["total_attended"]  or 0),
         } for r in booth_by_type],
         "districtDutySummary": [{
-            "dutyType":      r["duty_type"]      or "",
-            "dutyLabelHi":   r["duty_label_hi"]  or "",
-            "batchCount":    int(r["batch_count"] or 0),
-            "totalStaff":    int(r["total_staff"] or 0),
+            "dutyType":    r["duty_type"]     or "",
+            "dutyLabelHi": r["duty_label_hi"] or "",
+            "batchCount":  int(r["batch_count"] or 0),
+            "totalStaff":  int(r["total_staff"] or 0),
         } for r in district_summary],
         "officerSummary": {
-            "kshetraOfficers": int(kshetra_count or 0),
-            "zonalOfficers":   int(zonal_count   or 0),
-            "sectorOfficers":  int(sector_count  or 0),
+            "kshetraOfficers": kshetra_count,
+            "zonalOfficers":   zonal_count,
+            "sectorOfficers":  sector_count,
         },
+        # Flat counts (backward-compatible)
+        "boothAssigned":    booth_total,
+        "districtAssigned": district_total,
+        "kshetraOfficers":  kshetra_count,
+        "zonalOfficers":    zonal_count,
+        "sectorOfficers":   sector_count,
+        "totalAssigned":    booth_total + district_total + kshetra_count + zonal_count + sector_count,
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/history/<election_id>/booth-assignments
-#  Paginated booth assignment records for one archived election
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY — BOOTH ASSIGNMENTS (paginated)
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/history/<int:election_id>/booth-assignments", methods=["GET"])
+@election_finalize_bp.route("/history/<int:eid>/booth-assignments", methods=["GET"])
 @admin_required
-def history_booth_assignments(election_id):
-    district     = (request.user.get("district") or "").strip()
-    d_ids        = _district_admin_ids(district)
-    ph, params   = _ph(d_ids)
-    search       = request.args.get("q",           "").strip()
-    center_type  = request.args.get("centerType",  "").strip()
-    page         = max(1, int(request.args.get("page",  1)))
-    limit        = min(200, max(1, int(request.args.get("limit", 50))))
-    offset       = (page - 1) * limit
+def history_booth_assignments(eid):
+    """Paginated booth assignment records for one archived election."""
+    district    = (request.user.get("district") or "").strip()
+    d_ids       = _district_admin_ids(district)
+    ph, params  = _ph(d_ids)
+    search      = request.args.get("q",          "").strip()
+    center_type = request.args.get("centerType", "").strip()
+    page, limit, offset = _page_params()
 
-    _verify_election_district(election_id, district)
+    _verify_election_district(eid, district)
 
-    where  = ["dah.election_id = %s", f"dah.admin_id IN ({ph})"]
-    wparams = [election_id] + params
+    where   = ["dah.election_id = %s", f"dah.admin_id IN ({ph})"]
+    wparams = [eid] + params
 
     if search:
         where.append(
@@ -790,7 +568,10 @@ def history_booth_assignments(election_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM duty_assignments_history dah WHERE {where_sql}", wparams)
+            cur.execute(
+                f"SELECT COUNT(*) AS cnt FROM duty_assignments_history dah WHERE {where_sql}",
+                wparams,
+            )
             total = cur.fetchone()["cnt"]
 
             cur.execute(f"""
@@ -813,55 +594,48 @@ def history_booth_assignments(election_id):
     finally:
         conn.close()
 
-    return ok({
-        "data": [{
-            "id":            r["id"],
-            "staffId":       r["staff_id"],
-            "sthalId":       r["sthal_id"],
-            "staffName":     r["staff_name"]     or "",
-            "staffPno":      r["staff_pno"]      or "",
-            "staffMobile":   r["staff_mobile"]   or "",
-            "staffRank":     r["staff_rank"]      or "",
-            "staffDistrict": r["staff_district"] or "",
-            "staffThana":    r["staff_thana"]    or "",
-            "isArmed":       bool(r["is_armed"]),
-            "centerName":    r["center_name"]    or "",
-            "centerType":    r["center_type"]    or "",
-            "busNo":         r["bus_no"]         or "",
-            "electionDate":  str(r["election_date"]) if r["election_date"] else "",
-            "attended":      bool(r["attended"]),
-            "cardDownloaded":bool(r["card_downloaded"]),
-            "archivedAt":    str(r["archived_at"]),
-        } for r in rows],
-        "total":      total,
-        "page":       page,
-        "limit":      limit,
-        "totalPages": -(-total // limit),
-    })
+    return _paginated([{
+        "id":             r["id"],
+        "originalId":     r["original_id"],
+        "staffId":        r["staff_id"],
+        "sthalId":        r["sthal_id"],
+        "staffName":      r["staff_name"]     or "",
+        "staffPno":       r["staff_pno"]      or "",
+        "staffMobile":    r["staff_mobile"]   or "",
+        "staffRank":      r["staff_rank"]      or "",
+        "staffDistrict":  r["staff_district"] or "",
+        "staffThana":     r["staff_thana"]    or "",
+        "isArmed":        bool(r["is_armed"]),
+        "centerName":     r["center_name"]    or "",
+        "centerType":     r["center_type"]    or "",
+        "busNo":          r["bus_no"]         or "",
+        "electionDate":   str(r["election_date"]) if r["election_date"] else "",
+        "attended":       bool(r["attended"]),
+        "cardDownloaded": bool(r["card_downloaded"]),
+        "archivedAt":     str(r["archived_at"]),
+    } for r in rows], total, page, limit)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/history/<election_id>/district-duties
-#  Paginated district duty records for one archived election
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY — DISTRICT DUTIES (paginated)
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/history/<int:election_id>/district-duties", methods=["GET"])
+@election_finalize_bp.route("/history/<int:eid>/district-duties", methods=["GET"])
 @admin_required
-def history_district_duties(election_id):
+def history_district_duties(eid):
+    """Paginated district duty records for one archived election."""
     district    = (request.user.get("district") or "").strip()
     d_ids       = _district_admin_ids(district)
     ph, params  = _ph(d_ids)
-    search      = request.args.get("q",         "").strip()
-    duty_type   = request.args.get("dutyType",  "").strip()
-    batch_no    = request.args.get("batchNo",   None)
-    page        = max(1, int(request.args.get("page",  1)))
-    limit       = min(200, max(1, int(request.args.get("limit", 50))))
-    offset      = (page - 1) * limit
+    search      = request.args.get("q",        "").strip()
+    duty_type   = request.args.get("dutyType", "").strip()
+    batch_no    = request.args.get("batchNo",  None)
+    page, limit, offset = _page_params()
 
-    _verify_election_district(election_id, district)
+    _verify_election_district(eid, district)
 
-    where  = ["ddh.election_id = %s", f"ddh.admin_id IN ({ph})"]
-    wparams = [election_id] + params
+    where   = ["ddh.election_id = %s", f"ddh.admin_id IN ({ph})"]
+    wparams = [eid] + params
 
     if search:
         where.append(
@@ -884,7 +658,10 @@ def history_district_duties(election_id):
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(f"SELECT COUNT(*) AS cnt FROM district_duty_history ddh WHERE {where_sql}", wparams)
+            cur.execute(
+                f"SELECT COUNT(*) AS cnt FROM district_duty_history ddh WHERE {where_sql}",
+                wparams,
+            )
             total = cur.fetchone()["cnt"]
 
             cur.execute(f"""
@@ -905,76 +682,73 @@ def history_district_duties(election_id):
     finally:
         conn.close()
 
-    return ok({
-        "data": [{
-            "id":            r["id"],
-            "dutyType":      r["duty_type"]      or "",
-            "dutyLabelHi":   r["duty_label_hi"]  or "",
-            "batchNo":       r["batch_no"],
-            "staffId":       r["staff_id"],
-            "staffName":     r["staff_name"]     or "",
-            "staffPno":      r["staff_pno"]      or "",
-            "staffMobile":   r["staff_mobile"]   or "",
-            "staffRank":     r["staff_rank"]      or "",
-            "staffDistrict": r["staff_district"] or "",
-            "staffThana":    r["staff_thana"]    or "",
-            "isArmed":       bool(r["is_armed"]),
-            "busNo":         r["bus_no"]         or "",
-            "note":          r["note"]           or "",
-            "archivedAt":    str(r["archived_at"]),
-        } for r in rows],
-        "total":      total,
-        "page":       page,
-        "limit":      limit,
-        "totalPages": -(-total // limit),
-    })
+    return _paginated([{
+        "id":            r["id"],
+        "originalId":    r["original_id"],
+        "dutyType":      r["duty_type"]     or "",
+        "dutyLabelHi":   r["duty_label_hi"] or "",
+        "batchNo":       r["batch_no"],
+        "staffId":       r["staff_id"],
+        "staffName":     r["staff_name"]     or "",
+        "staffPno":      r["staff_pno"]      or "",
+        "staffMobile":   r["staff_mobile"]   or "",
+        "staffRank":     r["staff_rank"]      or "",
+        "staffDistrict": r["staff_district"] or "",
+        "staffThana":    r["staff_thana"]    or "",
+        "isArmed":       bool(r["is_armed"]),
+        "busNo":         r["bus_no"]         or "",
+        "note":          r["note"]           or "",
+        "archivedAt":    str(r["archived_at"]),
+    } for r in rows], total, page, limit)
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/history/<election_id>/officers
-#  All officer snapshots (kshetra + zonal + sector) for one archived election
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY — OFFICERS (kshetra + zonal + sector combined)
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/history/<int:election_id>/officers", methods=["GET"])
+@election_finalize_bp.route("/history/<int:eid>/officers", methods=["GET"])
 @admin_required
-def history_officers(election_id):
+def history_officers(eid):
+    """All officer snapshots (kshetra + zonal + sector) for one archived election."""
     district    = (request.user.get("district") or "").strip()
     d_ids       = _district_admin_ids(district)
     ph, params  = _ph(d_ids)
     search      = request.args.get("q", "").strip()
+    like        = f"%{search}%"
 
-    _verify_election_district(election_id, district)
-
-    like = f"%{search}%"
+    _verify_election_district(eid, district)
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
 
-            # Kshetra officers
-            q = [f"election_id = %s", f"admin_id IN ({ph})"]
-            qp = [election_id] + params
+            # ── Kshetra officers ─────────────────────────────────────────────
+            q  = [f"election_id = %s", f"admin_id IN ({ph})"]
+            qp = [eid] + params
             if search:
-                q.append("(name LIKE %s OR pno LIKE %s OR user_rank LIKE %s OR super_zone_name LIKE %s)")
+                q.append(
+                    "(name LIKE %s OR pno LIKE %s OR user_rank LIKE %s "
+                    "OR super_zone_name LIKE %s)"
+                )
                 qp += [like, like, like, like]
-            where_sql = " AND ".join(q)
-
             cur.execute(f"""
                 SELECT id, original_id, super_zone_id, super_zone_name,
                        super_zone_block, user_id, name, pno, mobile,
                        user_rank, archived_at
                 FROM kshetra_officers_history
-                WHERE {where_sql}
+                WHERE {" AND ".join(q)}
                 ORDER BY super_zone_name, name
             """, qp)
             kshetra = cur.fetchall()
 
-            # Zonal officers
+            # ── Zonal officers ───────────────────────────────────────────────
             q2  = [f"election_id = %s", f"admin_id IN ({ph})"]
-            qp2 = [election_id] + params
+            qp2 = [eid] + params
             if search:
-                q2.append("(name LIKE %s OR pno LIKE %s OR user_rank LIKE %s "
-                           "OR zone_name LIKE %s OR super_zone_name LIKE %s)")
+                q2.append(
+                    "(name LIKE %s OR pno LIKE %s OR user_rank LIKE %s "
+                    "OR zone_name LIKE %s OR super_zone_name LIKE %s)"
+                )
                 qp2 += [like, like, like, like, like]
             cur.execute(f"""
                 SELECT id, original_id, zone_id, zone_name,
@@ -986,12 +760,15 @@ def history_officers(election_id):
             """, qp2)
             zonal = cur.fetchall()
 
-            # Sector officers
+            # ── Sector officers ──────────────────────────────────────────────
             q3  = [f"election_id = %s", f"admin_id IN ({ph})"]
-            qp3 = [election_id] + params
+            qp3 = [eid] + params
             if search:
-                q3.append("(name LIKE %s OR pno LIKE %s OR user_rank LIKE %s "
-                           "OR sector_name LIKE %s OR zone_name LIKE %s OR super_zone_name LIKE %s)")
+                q3.append(
+                    "(name LIKE %s OR pno LIKE %s OR user_rank LIKE %s "
+                    "OR sector_name LIKE %s OR zone_name LIKE %s "
+                    "OR super_zone_name LIKE %s)"
+                )
                 qp3 += [like, like, like, like, like, like]
             cur.execute(f"""
                 SELECT id, original_id, sector_id, sector_name,
@@ -1007,9 +784,10 @@ def history_officers(election_id):
     finally:
         conn.close()
 
-    def _fmt_kshetra(r):
-        return {
+    return ok({
+        "kshetraOfficers": [{
             "id":             r["id"],
+            "originalId":     r["original_id"],
             "superZoneId":    r["super_zone_id"],
             "superZoneName":  r["super_zone_name"]  or "",
             "superZoneBlock": r["super_zone_block"]  or "",
@@ -1019,11 +797,10 @@ def history_officers(election_id):
             "mobile":         r["mobile"]           or "",
             "rank":           r["user_rank"]         or "",
             "archivedAt":     str(r["archived_at"]),
-        }
-
-    def _fmt_zonal(r):
-        return {
+        } for r in kshetra],
+        "zonalOfficers": [{
             "id":            r["id"],
+            "originalId":    r["original_id"],
             "zoneId":        r["zone_id"],
             "zoneName":      r["zone_name"]         or "",
             "superZoneId":   r["super_zone_id"],
@@ -1034,11 +811,10 @@ def history_officers(election_id):
             "mobile":        r["mobile"]            or "",
             "rank":          r["user_rank"]          or "",
             "archivedAt":    str(r["archived_at"]),
-        }
-
-    def _fmt_sector(r):
-        return {
+        } for r in zonal],
+        "sectorOfficers": [{
             "id":            r["id"],
+            "originalId":    r["original_id"],
             "sectorId":      r["sector_id"],
             "sectorName":    r["sector_name"]       or "",
             "zoneId":        r["zone_id"],
@@ -1051,28 +827,23 @@ def history_officers(election_id):
             "mobile":        r["mobile"]            or "",
             "rank":          r["user_rank"]          or "",
             "archivedAt":    str(r["archived_at"]),
-        }
-
-    return ok({
-        "kshetraOfficers": [_fmt_kshetra(r) for r in kshetra],
-        "zonalOfficers":   [_fmt_zonal(r)   for r in zonal],
-        "sectorOfficers":  [_fmt_sector(r)  for r in sector],
+        } for r in sector],
     })
 
 
-# ─────────────────────────────────────────────────────────────────────────────
-#  GET /api/admin/election/history/<election_id>/rules
-#  Booth rules + district rules snapshots for one archived election
-# ─────────────────────────────────────────────────────────────────────────────
+# ═════════════════════════════════════════════════════════════════════════════
+#  HISTORY — RULES SNAPSHOT
+# ═════════════════════════════════════════════════════════════════════════════
 
-@finalize_bp.route("/history/<int:election_id>/rules", methods=["GET"])
+@election_finalize_bp.route("/history/<int:eid>/rules", methods=["GET"])
 @admin_required
-def history_rules(election_id):
+def history_rules(eid):
+    """Booth rules + district rules snapshots for one archived election."""
     district    = (request.user.get("district") or "").strip()
     d_ids       = _district_admin_ids(district)
     ph, params  = _ph(d_ids)
 
-    _verify_election_district(election_id, district)
+    _verify_election_district(eid, district)
 
     conn = get_db()
     try:
@@ -1087,8 +858,8 @@ def history_rules(election_id):
                        pac_count
                 FROM booth_rules_history
                 WHERE election_id = %s AND admin_id IN ({ph})
-                ORDER BY sensitivity, booth_count
-            """, [election_id] + params)
+                ORDER BY FIELD(sensitivity,'A++','A','B','C'), booth_count
+            """, [eid] + params)
             booth_rules = cur.fetchall()
 
             cur.execute(f"""
@@ -1101,7 +872,7 @@ def history_rules(election_id):
                 FROM district_rules_history
                 WHERE election_id = %s AND admin_id IN ({ph})
                 ORDER BY sort_order
-            """, [election_id] + params)
+            """, [eid] + params)
             district_rules = cur.fetchall()
 
     finally:
@@ -1109,51 +880,31 @@ def history_rules(election_id):
 
     return ok({
         "boothRules": [{
-            "sensitivity":      r["sensitivity"],
-            "boothCount":       r["booth_count"],
-            "siArmedCount":     r["si_armed_count"],
-            "siUnarmedCount":   r["si_unarmed_count"],
-            "hcArmedCount":     r["hc_armed_count"],
-            "hcUnarmedCount":   r["hc_unarmed_count"],
-            "constArmedCount":  r["const_armed_count"],
-            "constUnarmedCount":r["const_unarmed_count"],
-            "auxArmedCount":    r["aux_armed_count"],
-            "auxUnarmedCount":  r["aux_unarmed_count"],
-            "pacCount":         float(r["pac_count"] or 0),
+            "sensitivity":       r["sensitivity"],
+            "boothCount":        r["booth_count"],
+            "siArmedCount":      r["si_armed_count"],
+            "siUnarmedCount":    r["si_unarmed_count"],
+            "hcArmedCount":      r["hc_armed_count"],
+            "hcUnarmedCount":    r["hc_unarmed_count"],
+            "constArmedCount":   r["const_armed_count"],
+            "constUnarmedCount": r["const_unarmed_count"],
+            "auxArmedCount":     r["aux_armed_count"],
+            "auxUnarmedCount":   r["aux_unarmed_count"],
+            "pacCount":          float(r["pac_count"] or 0),
         } for r in booth_rules],
         "districtRules": [{
-            "dutyType":         r["duty_type"]       or "",
-            "dutyLabelHi":      r["duty_label_hi"]   or "",
-            "sankhya":          r["sankhya"]          or 0,
-            "siArmedCount":     r["si_armed_count"],
-            "siUnarmedCount":   r["si_unarmed_count"],
-            "hcArmedCount":     r["hc_armed_count"],
-            "hcUnarmedCount":   r["hc_unarmed_count"],
-            "constArmedCount":  r["const_armed_count"],
-            "constUnarmedCount":r["const_unarmed_count"],
-            "auxArmedCount":    r["aux_armed_count"],
-            "auxUnarmedCount":  r["aux_unarmed_count"],
-            "pacCount":         float(r["pac_count"] or 0),
-            "sortOrder":        r["sort_order"]       or 0,
+            "dutyType":          r["duty_type"]       or "",
+            "dutyLabelHi":       r["duty_label_hi"]   or "",
+            "sankhya":           r["sankhya"]          or 0,
+            "siArmedCount":      r["si_armed_count"],
+            "siUnarmedCount":    r["si_unarmed_count"],
+            "hcArmedCount":      r["hc_armed_count"],
+            "hcUnarmedCount":    r["hc_unarmed_count"],
+            "constArmedCount":   r["const_armed_count"],
+            "constUnarmedCount": r["const_unarmed_count"],
+            "auxArmedCount":     r["aux_armed_count"],
+            "auxUnarmedCount":   r["aux_unarmed_count"],
+            "pacCount":          float(r["pac_count"] or 0),
+            "sortOrder":         r["sort_order"]       or 0,
         } for r in district_rules],
     })
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-#  Internal: verify the election_id belongs to the admin's district
-# ─────────────────────────────────────────────────────────────────────────────
-
-def _verify_election_district(election_id: int, district: str):
-    """Raises a 404-style error if election_id doesn't belong to district."""
-    conn = get_db()
-    try:
-        with conn.cursor() as cur:
-            cur.execute(
-                "SELECT id FROM election_configs WHERE id = %s AND district = %s",
-                (election_id, district)
-            )
-            if not cur.fetchone():
-                from flask import abort
-                abort(404)
-    finally:
-        conn.close()

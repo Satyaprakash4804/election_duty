@@ -106,9 +106,19 @@ class _DutyEntry {
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN PAGE
 // ══════════════════════════════════════════════════════════════════════════════
+
+
 class ManakDistrictPage extends StatefulWidget {
   final List<Map<String, dynamic>> initialRules;
-  const ManakDistrictPage({super.key, required this.initialRules});
+  final int? electionId;
+  final String? electionName;
+
+  const ManakDistrictPage({
+    super.key,
+    required this.initialRules,
+    this.electionId,
+    this.electionName,
+  });
 
   @override
   State<ManakDistrictPage> createState() => _ManakDistrictPageState();

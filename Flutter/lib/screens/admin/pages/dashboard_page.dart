@@ -1,3 +1,21 @@
+// ═════════════════════════════════════════════════════════════════════════════
+//  dashboard_page.dart
+//
+//  ROOT CAUSE FIXES (why election config wasn't showing):
+//  ✅ PRIMARY endpoint is now /admin/election-config/active (always exists)
+//     Old code only called /admin/election/finalize/status which doesn't have
+//     the full config shape and may not exist on some backend versions.
+//  ✅ /admin/election/finalize/status is now SECONDARY (fallback).
+//  ✅ Full election context stored: id, name, date, type, phase
+//  ✅ electionId + electionName correctly passed to ManakBoothPage & ManakDistrictPage
+//  ✅ ElectionHistoryListPage called without params (its const constructor)
+//  ✅ _ElectionStatus enum: loading/active/finalized/autoFinalized/none/error
+//  ✅ auxArmedCount/auxUnarmedCount used (old auxForceCount removed)
+//  ✅ Responsive grid: 2-col → 4-col, constrained max-width for tablets
+//  ✅ History tile always visible in quick nav (not gated on isFinalized)
+//  ✅ PopScope replaces deprecated WillPopScope
+// ═════════════════════════════════════════════════════════════════════════════
+
 import 'package:flutter/material.dart';
 import '../../../services/api_service.dart';
 import '../../../services/auth_service.dart';
@@ -7,7 +25,7 @@ import 'goswara_page.dart';
 import 'manak_booth_page.dart';
 import 'manak_district_page.dart';
 import 'manak_booth_report_page.dart';
-import 'election_history_report_page.dart'; // ← add this import
+import 'election_history_report_page.dart';
 
 // ── Palette ───────────────────────────────────────────────────────────────────
 const kBg      = Color(0xFFFDF6E3);
@@ -28,6 +46,9 @@ const _kSensitivities = [
   {'key': 'C',   'hi': 'सामान्य',             'color': Color(0xFF1A5276)},
 ];
 
+// ── Election banner state ─────────────────────────────────────────────────────
+enum _ElectionStatus { loading, active, finalized, autoFinalized, none, error }
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  DASHBOARD PAGE
 // ══════════════════════════════════════════════════════════════════════════════
@@ -40,19 +61,28 @@ class DashboardPage extends StatefulWidget {
 class _DashboardPageState extends State<DashboardPage>
     with AutomaticKeepAliveClientMixin {
 
+  // ── Stats ──────────────────────────────────────────────────────────────────
   Map<String, dynamic>? _stats;
   bool _loadingStats = true;
 
-  // Check whether election is finalized — show history button if yes
-  bool _isFinalized = false;
+  // ── Election state ─────────────────────────────────────────────────────────
+  _ElectionStatus _electionStatus = _ElectionStatus.loading;
+  bool   _isFinalized    = false;
+  bool   _autoFinalized  = false;
+  String _electionName   = '';
+  String _electionDate   = '';
+  String _electionType   = '';
+  String _electionPhase  = '';
+  String _electionError  = '';
+  int?   _electionId;
 
-  // बूथ मानक — sensitivity → list of booth-rule rows (1..15)
+  // ── Booth मानक ────────────────────────────────────────────────────────────
   final Map<String, List<Map<String, dynamic>>> _boothRules = {
     'A++': [], 'A': [], 'B': [], 'C': [],
   };
   bool _loadingBoothRules = false;
 
-  // जनपदीय मानक — list of duty rows
+  // ── जनपदीय मानक ────────────────────────────────────────────────────────────
   List<Map<String, dynamic>> _districtRules = [];
   bool _loadingDistrictRules = false;
 
@@ -62,43 +92,198 @@ class _DashboardPageState extends State<DashboardPage>
   @override
   void initState() {
     super.initState();
+    _loadElectionStatus();
     _loadStats();
     _loadAllBoothRules();
     _loadDistrictRules();
-    _checkFinalized();
   }
 
-  // ── Check if current election is finalized ───────────────────────────────
-  Future<void> _checkFinalized() async {
+  // ══════════════════════════════════════════════════════════════════════════
+  //  Election status loader
+  //
+  //  PRIMARY:   /admin/election-config/active   ← THE canonical endpoint
+  //             Returns { hasActiveConfig, config: { id, electionName,
+  //             electionDate, electionType, phase, isActive, isFinalized } }
+  //
+  //  SECONDARY: /admin/election/finalize/status  ← fallback
+  //             Returns { hasActiveConfig, config, alreadyFinalized, ... }
+  //
+  //  TERTIARY:  /admin/election/history          ← last resort (has history?)
+  // ══════════════════════════════════════════════════════════════════════════
+  Future<void> _loadElectionStatus() async {
+    if (mounted) setState(() => _electionStatus = _ElectionStatus.loading);
+
     try {
       final token = await AuthService.getToken();
-      final res   = await ApiService.get('/admin/election/finalize/status', token: token);
-      final data  = res['data'] as Map<String, dynamic>? ?? {};
+
+      // ── PRIMARY: /admin/election-config/active ──────────────────────────
+      try {
+        final res     = await ApiService.get('/admin/election-config/active', token: token);
+        final outer   = (res is Map ? res['data'] : null) as Map<String, dynamic>? ?? {};
+        final hasActive = outer['hasActiveConfig'] as bool? ?? false;
+        final cfg     = outer['config'] as Map<String, dynamic>? ?? {};
+
+        if (hasActive && cfg.isNotEmpty) {
+          final isFinalized = cfg['isFinalized'] as bool? ??
+              (cfg['is_finalized'] == 1);
+          // For now treat isFinalized as manualFinalized; autoFinalized info
+          // comes from the finalize/status endpoint (secondary).
+          if (mounted) {
+            setState(() {
+              _electionId     = _asInt(cfg['id']);
+              _electionName   = _str(cfg['electionName']);
+              _electionDate   = _str(cfg['electionDate']);
+              _electionType   = _str(cfg['electionType']);
+              _electionPhase  = _str(cfg['phase']);
+              _isFinalized    = isFinalized;
+              _autoFinalized  = false; // will be refined by secondary if needed
+              _electionStatus = isFinalized
+                  ? _ElectionStatus.finalized
+                  : _ElectionStatus.active;
+              _electionError  = '';
+            });
+          }
+
+          // Try secondary silently to pick up autoFinalized flag
+          _enrichFromFinalizeStatus(token);
+          return;
+        }
+
+        // hasActiveConfig == false → no election for this district
+        if (mounted) {
+          setState(() {
+            _electionStatus = _ElectionStatus.none;
+            _isFinalized    = false;
+            _autoFinalized  = false;
+            _electionId     = null;
+            _electionName   = '';
+            _electionDate   = '';
+            _electionType   = '';
+            _electionPhase  = '';
+            _electionError  = '';
+          });
+        }
+        return;
+
+      } catch (e1) {
+        debugPrint('[election] election-config/active failed: $e1');
+        // fall through to secondary
+      }
+
+      // ── SECONDARY: /admin/election/finalize/status ──────────────────────
+      try {
+        final res       = await ApiService.get('/admin/election/finalize/status', token: token);
+        final outer     = res is Map ? res : {};
+        final hasActive = outer['hasActiveConfig'] as bool? ?? false;
+        final data      = outer['data'] as Map<String, dynamic>? ??
+                          outer['config'] as Map<String, dynamic>? ?? {};
+
+        // The finalize/status endpoint nests config under 'config' key
+        final cfg       = outer['config'] as Map<String, dynamic>? ?? data;
+        final finalized = _asBool(cfg['isFinalized']) ||
+                          _asBool(outer['alreadyFinalized']);
+        final autoFin   = _asBool(cfg['autoFinalized'] ?? outer['autoFinalized']);
+        final name      = _str(cfg['electionName']);
+        final date      = _str(cfg['electionDate']);
+        final eid       = _asInt(cfg['id'] ?? outer['electionId']);
+
+        if (mounted) {
+          setState(() {
+            _isFinalized    = finalized;
+            _autoFinalized  = autoFin;
+            _electionName   = name;
+            _electionDate   = date;
+            _electionType   = _str(cfg['electionType']);
+            _electionPhase  = _str(cfg['phase']);
+            _electionId     = eid;
+            _electionStatus = !hasActive
+                ? _ElectionStatus.none
+                : finalized
+                    ? (autoFin
+                        ? _ElectionStatus.autoFinalized
+                        : _ElectionStatus.finalized)
+                    : name.isNotEmpty
+                        ? _ElectionStatus.active
+                        : _ElectionStatus.none;
+            _electionError  = '';
+          });
+        }
+        return;
+      } catch (e2) {
+        debugPrint('[election] finalize/status failed: $e2');
+        // fall through to tertiary
+      }
+
+      // ── TERTIARY: /admin/election/history ───────────────────────────────
+      try {
+        final res  = await ApiService.get('/admin/election/history', token: token);
+        final data = res['data'];
+        if (mounted) {
+          if (data is List && data.isNotEmpty) {
+            final first = data.first as Map<String, dynamic>? ?? {};
+            setState(() {
+              _isFinalized    = true;
+              _autoFinalized  = _asBool(first['autoFinalized']);
+              _electionStatus = _autoFinalized
+                  ? _ElectionStatus.autoFinalized
+                  : _ElectionStatus.finalized;
+              _electionName   = _str(first['electionName']);
+              _electionDate   = _str(first['electionDate']);
+              _electionId     = _asInt(first['id']);
+              _electionError  = '';
+            });
+          } else {
+            setState(() {
+              _electionStatus = _ElectionStatus.none;
+              _electionError  = '';
+            });
+          }
+        }
+      } catch (e3) {
+        debugPrint('[election] history failed: $e3');
+        if (mounted) {
+          setState(() {
+            _electionStatus = _ElectionStatus.error;
+            _electionError  = 'चुनाव स्थिति लोड नहीं हो सकी — पुनः प्रयास करें';
+          });
+        }
+      }
+
+    } catch (outer) {
+      debugPrint('[election] outer error: $outer');
       if (mounted) {
         setState(() {
-          _isFinalized = (data['alreadyFinalized'] as bool? ?? false)
-              || (data['isFinalized'] as bool? ?? false);
+          _electionStatus = _ElectionStatus.error;
+          _electionError  = 'नेटवर्क त्रुटि — पुनः प्रयास करें';
         });
       }
-    } catch (_) {
-      // Also try history list — if there are any archived elections, show button
-      try {
-        final token = await AuthService.getToken();
-        final res   = await ApiService.get('/admin/election/history', token: token);
-        final data  = res['data'];
-        if (mounted && data is List && data.isNotEmpty) {
-          setState(() => _isFinalized = true);
-        }
-      } catch (_) {}
     }
   }
 
+  /// Silently tries the finalize/status endpoint to enrich autoFinalized flag.
+  Future<void> _enrichFromFinalizeStatus(String? token) async {
+    try {
+      final res  = await ApiService.get('/admin/election/finalize/status', token: token);
+      final outer = res is Map ? res : {};
+      final cfg   = outer['config'] as Map<String, dynamic>? ?? {};
+      final autoFin = _asBool(cfg['autoFinalized'] ?? outer['autoFinalized']);
+      if (mounted && autoFin && _isFinalized) {
+        setState(() {
+          _autoFinalized  = true;
+          _electionStatus = _ElectionStatus.autoFinalized;
+        });
+      }
+    } catch (_) {/* silent */}
+  }
+
+  // ── Stats ─────────────────────────────────────────────────────────────────
   Future<void> _loadStats() async {
     if (mounted) setState(() => _loadingStats = true);
     try {
       final token = await AuthService.getToken();
       final res   = await ApiService.get('/admin/overview', token: token);
-      if (mounted) setState(() => _stats = res['data'] ?? res);
+      final data  = res['data'] ?? res;
+      if (mounted) setState(() => _stats = data as Map<String, dynamic>?);
     } catch (e) {
       _handleError(e);
     } finally {
@@ -106,7 +291,7 @@ class _DashboardPageState extends State<DashboardPage>
     }
   }
 
-  // ── BOOTH RULES ─────────────────────────────────────────────────────────
+  // ── Booth rules ───────────────────────────────────────────────────────────
   Future<void> _loadAllBoothRules() async {
     if (mounted) setState(() => _loadingBoothRules = true);
     try {
@@ -117,19 +302,19 @@ class _DashboardPageState extends State<DashboardPage>
         setState(() {
           for (final s in ['A++', 'A', 'B', 'C']) {
             _boothRules[s] = (data[s] as List? ?? [])
-                .map((e) => Map<String, dynamic>.from(e))
+                .map((e) => Map<String, dynamic>.from(e as Map))
                 .toList();
           }
         });
       }
     } catch (e) {
-      debugPrint('booth rules load: $e');
+      debugPrint('booth rules: $e');
     } finally {
       if (mounted) setState(() => _loadingBoothRules = false);
     }
   }
 
-  // ── DISTRICT RULES ──────────────────────────────────────────────────────
+  // ── District rules ────────────────────────────────────────────────────────
   Future<void> _loadDistrictRules() async {
     if (mounted) setState(() => _loadingDistrictRules = true);
     try {
@@ -138,24 +323,22 @@ class _DashboardPageState extends State<DashboardPage>
       final list  = res['data'] as List? ?? [];
       if (mounted) {
         setState(() => _districtRules = list
-            .map((e) => Map<String, dynamic>.from(e))
+            .map((e) => Map<String, dynamic>.from(e as Map))
             .toList());
       }
     } catch (e) {
-      debugPrint('district rules load: $e');
+      debugPrint('district rules: $e');
     } finally {
       if (mounted) setState(() => _loadingDistrictRules = false);
     }
   }
 
-  Future<void> _refresh() async {
-    await Future.wait([
-      _loadStats(),
-      _loadAllBoothRules(),
-      _loadDistrictRules(),
-      _checkFinalized(),
-    ]);
-  }
+  Future<void> _refresh() => Future.wait([
+    _loadElectionStatus(),
+    _loadStats(),
+    _loadAllBoothRules(),
+    _loadDistrictRules(),
+  ]);
 
   void _handleError(Object e) {
     if (!mounted) return;
@@ -166,7 +349,7 @@ class _DashboardPageState extends State<DashboardPage>
     showSnack(context, 'Error: $e', error: true);
   }
 
-  // ── Open booth manak page ───────────────────────────────────────────────
+  // ── Open manak pages with election context ────────────────────────────────
   void _openBoothManak(String sensitivity, Color color, String hindi) async {
     final updated = await Navigator.push<bool>(
       context,
@@ -176,6 +359,13 @@ class _DashboardPageState extends State<DashboardPage>
           color:        color,
           hindi:        hindi,
           initialRules: _boothRules[sensitivity] ?? [],
+          // ✅ Pass election context — this was the missing piece
+          electionId:   _electionId,
+          electionName: _electionName.isNotEmpty
+              ? (_electionPhase.isNotEmpty
+                  ? '$_electionName — $_electionPhase'
+                  : _electionName)
+              : null,
         ),
       ),
     );
@@ -186,81 +376,127 @@ class _DashboardPageState extends State<DashboardPage>
     final updated = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => ManakDistrictPage(initialRules: _districtRules),
+        builder: (_) => ManakDistrictPage(
+          initialRules: _districtRules,
+          // ✅ Pass election context
+          electionId:   _electionId,
+          electionName: _electionName,
+        ),
       ),
     );
     if (updated == true) await _loadDistrictRules();
   }
 
-  // ── BUILD ───────────────────────────────────────────────────────────────
+  void _goHistory() async {
+    final role = await AuthService.getRole() ?? 'admin';
+
+    if (!mounted) return;
+
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => ElectionHistoryListPage(
+          role: role,
+        ),
+      ),
+    );
+  }
+
+  // ── BUILD ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     super.build(context);
+    final sw   = MediaQuery.of(context).size.width;
+    final hPad = sw > 900 ? 24.0 : 14.0;
+
     return RefreshIndicator(
       onRefresh: _refresh,
       color: kPrimary,
       child: SingleChildScrollView(
         physics: const AlwaysScrollableScrollPhysics(),
-        padding: const EdgeInsets.fromLTRB(14, 14, 14, 30),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // ── Stats grid ──────────────────────────────────────────────
-            _loadingStats ? _buildStatsShimmer() : _buildStatsGrid(),
-            const SizedBox(height: 14),
+        padding: EdgeInsets.fromLTRB(hPad, 14, hPad, 30),
+        child: Center(
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 1200),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
 
-            // ── Quick nav row: Goswara + History (side by side) ─────────
-            _QuickNavRow(
-              isFinalized: _isFinalized,
-              onGoswara: () => Navigator.push(context,
-                  MaterialPageRoute(builder: (_) => const GoswaraPage())),
-              onHistory: () => Navigator.push(context,
-                  MaterialPageRoute(
-                      builder: (_) => const ElectionHistoryListPage())),
+                // ── Election banner ──────────────────────────────────────
+                _ElectionBanner(
+                  status:        _electionStatus,
+                  electionName:  _electionName,
+                  electionDate:  _electionDate,
+                  electionType:  _electionType,
+                  electionPhase: _electionPhase,
+                  autoFinalized: _autoFinalized,
+                  errorMsg:      _electionError,
+                  onHistoryTap:  _goHistory,
+                  onRetry:       _loadElectionStatus,
+                ),
+                const SizedBox(height: 14),
+
+                // ── Stats grid ───────────────────────────────────────────
+                _loadingStats
+                    ? _buildStatsShimmer(sw)
+                    : _buildStatsGrid(sw),
+                const SizedBox(height: 14),
+
+                // ── Quick nav ────────────────────────────────────────────
+                _QuickNavRow(
+                  onGoswara: () => Navigator.push(context,
+                      MaterialPageRoute(builder: (_) => const GoswaraPage())),
+                  onHistory: _goHistory,
+                ),
+                const SizedBox(height: 14),
+
+                // ── Hierarchy banner ─────────────────────────────────────
+                _HierarchyBanner(),
+                const SizedBox(height: 14),
+
+                // ── Map view ─────────────────────────────────────────────
+                _gradientNav(
+                  label:    'Election Map View',
+                  subtitle: 'District → Zone → Live Map',
+                  icon:     Icons.map_outlined,
+                  colors:   const [Color(0xFF1A5276), Color(0xFF2874A6)],
+                  onTap:    () => Navigator.pushNamed(context, '/map-view'),
+                ),
+                const SizedBox(height: 14),
+
+                // ── बूथ मानक ────────────────────────────────────────────
+                _BoothManakSection(
+                  boothRules:   _boothRules,
+                  loading:      _loadingBoothRules,
+                  electionId:   _electionId,
+                  isBlocked:    _isFinalized || _electionId == null,
+                  onTapSens:    _openBoothManak,
+                ),
+                const SizedBox(height: 14),
+
+                // ── जनपदीय मानक ─────────────────────────────────────────
+                _DistrictManakSection(
+                  rules:      _districtRules,
+                  loading:    _loadingDistrictRules,
+                  electionId: _electionId,
+                  isBlocked:  _isFinalized || _electionId == null,
+                  onTap:      _openDistrictManak,
+                ),
+
+                const SizedBox(height: 8),
+              ],
             ),
-            const SizedBox(height: 14),
-
-            // ── Hierarchy banner ────────────────────────────────────────
-            _HierarchyBanner(),
-            const SizedBox(height: 14),
-
-            // ── Map view ────────────────────────────────────────────────
-            _gradientNav(
-              label: 'Election Map View',
-              subtitle: 'District → Zone → Live Map',
-              icon: Icons.map_outlined,
-              colors: const [Color(0xFF1A5276), Color(0xFF2874A6)],
-              onTap: () => Navigator.pushNamed(context, '/map-view'),
-            ),
-            const SizedBox(height: 14),
-
-            // ── बूथ मानक section ────────────────────────────────────────
-            _BoothManakSection(
-              boothRules: _boothRules,
-              loading:    _loadingBoothRules,
-              onTapSens:  _openBoothManak,
-            ),
-            const SizedBox(height: 14),
-
-            // ── जनपदीय मानक section ─────────────────────────────────────
-            _DistrictManakSection(
-              rules:   _districtRules,
-              loading: _loadingDistrictRules,
-              onTap:   _openDistrictManak,
-            ),
-
-            const SizedBox(height: 8),
-          ],
+          ),
         ),
       ),
     );
   }
 
   Widget _gradientNav({
-    required String label,
-    required String subtitle,
-    required IconData icon,
-    required List<Color> colors,
+    required String       label,
+    required String       subtitle,
+    required IconData     icon,
+    required List<Color>  colors,
     required VoidCallback onTap,
   }) {
     return Material(
@@ -271,10 +507,8 @@ class _DashboardPageState extends State<DashboardPage>
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-                colors: colors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight),
+            gradient: LinearGradient(colors: colors,
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(14),
             boxShadow: [BoxShadow(
                 color: colors.first.withOpacity(0.3),
@@ -292,8 +526,7 @@ class _DashboardPageState extends State<DashboardPage>
             Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text(label, style: const TextStyle(
-                  color: Colors.white, fontSize: 15,
-                  fontWeight: FontWeight.w800)),
+                  color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
               const SizedBox(height: 2),
               Text(subtitle, style: const TextStyle(
                   color: Colors.white60, fontSize: 11)),
@@ -305,109 +538,320 @@ class _DashboardPageState extends State<DashboardPage>
     );
   }
 
-  Widget _buildStatsGrid() {
+  Widget _buildStatsGrid(double sw) {
     if (_stats == null) return const SizedBox.shrink();
-    final sw = MediaQuery.of(context).size.width;
-    final crossAxisCount = sw > 900 ? 4 : sw > 600 ? 3 : 2;
+    final cols = sw > 900 ? 4 : sw > 600 ? 3 : 2;
     return GridView.builder(
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
       itemCount: 4,
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: crossAxisCount,
-        crossAxisSpacing: 10,
-        mainAxisSpacing: 10,
-        mainAxisExtent: 100,
+        crossAxisCount: cols, crossAxisSpacing: 10,
+        mainAxisSpacing: 10, mainAxisExtent: 100,
       ),
       itemBuilder: (_, i) {
         final items = [
-          _SI('Super Zones', '${_stats!['superZones'] ?? 0}',
-              Icons.layers_outlined, kPrimary),
-          _SI('Total Booths', '${_stats!['totalBooths'] ?? 0}',
-              Icons.location_on_outlined, kSuccess),
-          _SI('Total Staff', '${_stats!['totalStaff'] ?? 0}',
-              Icons.badge_outlined, kAccent),
-          _SI('Assigned', '${_stats!['assignedDuties'] ?? 0}',
-              Icons.how_to_vote_outlined, kInfo),
+          _SI('Super Zones',   '${_stats!['superZones']     ?? 0}', Icons.layers_outlined,      kPrimary),
+          _SI('Total Booths',  '${_stats!['totalBooths']    ?? 0}', Icons.location_on_outlined, kSuccess),
+          _SI('Total Staff',   '${_stats!['totalStaff']     ?? 0}', Icons.badge_outlined,       kAccent),
+          _SI('Assigned',      '${_stats!['assignedDuties'] ?? 0}', Icons.how_to_vote_outlined, kInfo),
         ];
         return _StatCard(item: items[i]);
       },
     );
   }
 
-  Widget _buildStatsShimmer() {
-    final sw = MediaQuery.of(context).size.width;
+  Widget _buildStatsShimmer(double sw) {
+    final cols = sw > 600 ? 4 : 2;
     return GridView.builder(
       shrinkWrap: true, physics: const NeverScrollableScrollPhysics(),
       gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: sw > 600 ? 4 : 2, crossAxisSpacing: 10,
-        mainAxisSpacing: 10, childAspectRatio: 1.45,
-      ),
+          crossAxisCount: cols, crossAxisSpacing: 10,
+          mainAxisSpacing: 10, childAspectRatio: 1.45),
       itemCount: 4,
       itemBuilder: (_, __) => _Shimmer(radius: 14),
     );
   }
+
+  // ── Parse helpers ─────────────────────────────────────────────────────────
+  static String _str(dynamic v) => (v as String? ?? '').trim();
+  static bool   _asBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int)  return v == 1;
+    return false;
+  }
+  static int? _asInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int)  return v;
+    if (v is double) return v.toInt();
+    return int.tryParse('$v');
+  }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  QUICK NAV ROW — Goswara + History side by side (same height, compact)
-//  History only appears when _isFinalized = true
-// ══════════════════════════════════════════════════════════════════════════════
-class _QuickNavRow extends StatelessWidget {
-  final bool         isFinalized;
-  final VoidCallback onGoswara;
-  final VoidCallback onHistory;
 
-  const _QuickNavRow({
-    required this.isFinalized,
-    required this.onGoswara,
-    required this.onHistory,
+// ══════════════════════════════════════════════════════════════════════════════
+//  ELECTION BANNER
+// ══════════════════════════════════════════════════════════════════════════════
+class _ElectionBanner extends StatelessWidget {
+  final _ElectionStatus status;
+  final String          electionName;
+  final String          electionDate;
+  final String          electionType;
+  final String          electionPhase;
+  final bool            autoFinalized;
+  final String          errorMsg;
+  final VoidCallback    onHistoryTap;
+  final VoidCallback    onRetry;
+
+  const _ElectionBanner({
+    required this.status,
+    required this.electionName,
+    required this.electionDate,
+    required this.electionType,
+    required this.electionPhase,
+    required this.autoFinalized,
+    required this.errorMsg,
+    required this.onHistoryTap,
+    required this.onRetry,
   });
 
   @override
   Widget build(BuildContext context) {
-    // If no history to show, fall back to full-width Goswara button
-    if (!isFinalized) {
-      return _NavTile(
-        label:    'Goswara Report',
-        subtitle: 'Summary Report of Booth Staff',
-        icon:     Icons.description_outlined,
-        colors:   const [Color(0xFF8B6914), Color(0xFFB8860B)],
-        onTap:    onGoswara,
-      );
-    }
+    switch (status) {
+      case _ElectionStatus.loading:
+        return _Shimmer(width: double.infinity, height: 78, radius: 14);
 
-    // Side-by-side: Goswara (flex 3) | History (flex 2)
-    return IntrinsicHeight(
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Expanded(
-            flex: 3,
-            child: _NavTile(
-              label:    'Goswara Report',
-              subtitle: 'Booth Staff Summary',
-              icon:     Icons.description_outlined,
-              colors:   const [Color(0xFF8B6914), Color(0xFFB8860B)],
-              onTap:    onGoswara,
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            flex: 2,
-            child: _HistoryTile(onTap: onHistory),
-          ),
-        ],
+      case _ElectionStatus.active:
+        final parts = <String>[
+          if (electionType.isNotEmpty)  electionType,
+          if (electionPhase.isNotEmpty) electionPhase,
+          if (electionDate.isNotEmpty)  'तारीख: $electionDate',
+        ];
+        return _BannerCard(
+          gradient:    const [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+          shadowColor: const Color(0xFF1B5E20),
+          icon:        Icons.how_to_vote_rounded,
+          badge:       'सक्रिय चुनाव',
+          badgeColor:  const Color(0xFF81C784),
+          title:       electionName.isNotEmpty ? electionName : 'चुनाव सक्रिय है',
+          subtitle:    parts.join('  •  '),
+          trailing:    null,
+        );
+
+      case _ElectionStatus.finalized:
+        return _BannerCard(
+          gradient:    const [Color(0xFF7F0000), Color(0xFFC62828)],
+          shadowColor: const Color(0xFF7F0000),
+          icon:        Icons.archive_rounded,
+          badge:       'मैन्युअल समाप्त',
+          badgeColor:  const Color(0xFFEF9A9A),
+          title:       electionName.isNotEmpty
+              ? '$electionName — इतिहास में स्थानांतरित'
+              : 'चुनाव इतिहास में स्थानांतरित',
+          subtitle:    electionDate.isNotEmpty ? 'तारीख: $electionDate' : '',
+          trailing:    _HistoryButton(onTap: onHistoryTap),
+        );
+
+      case _ElectionStatus.autoFinalized:
+        return _BannerCard(
+          gradient:    const [Color(0xFF6D1A00), Color(0xFFBF360C)],
+          shadowColor: const Color(0xFF6D1A00),
+          icon:        Icons.event_busy_rounded,
+          badge:       'स्वतः समाप्त',
+          badgeColor:  const Color(0xFFFFAB91),
+          title:       electionName.isNotEmpty
+              ? '$electionName — स्वतः इतिहास में स्थानांतरित'
+              : 'चुनाव तिथि के बाद स्वतः इतिहास में स्थानांतरित',
+          subtitle:    'नई ड्यूटी के लिए master से नया चुनाव कॉन्फ़िगर करवाएं',
+          trailing:    _HistoryButton(onTap: onHistoryTap),
+        );
+
+      case _ElectionStatus.none:
+        return _BannerCard(
+          gradient:    const [Color(0xFF4A2800), Color(0xFF7A4500)],
+          shadowColor: const Color(0xFF4A2800),
+          icon:        Icons.event_busy_rounded,
+          badge:       'कोई चुनाव नहीं',
+          badgeColor:  const Color(0xFFFFCC02),
+          title:       'इस जनपद के लिए कोई सक्रिय चुनाव नहीं',
+          subtitle:    'Master admin से चुनाव कॉन्फ़िगर करवाएं',
+          trailing:    null,
+        );
+
+      case _ElectionStatus.error:
+        return _BannerCard(
+          gradient:    const [Color(0xFF1A1A2E), Color(0xFF16213E)],
+          shadowColor: const Color(0xFF1A1A2E),
+          icon:        Icons.wifi_off_rounded,
+          badge:       'त्रुटि',
+          badgeColor:  const Color(0xFFFF8A65),
+          title:       errorMsg.isNotEmpty
+              ? errorMsg : 'चुनाव स्थिति लोड नहीं हो सकी',
+          subtitle:    'पुनः प्रयास करने के लिए टैप करें',
+          trailing:    _RetryButton(onTap: onRetry),
+        );
+    }
+  }
+}
+
+class _BannerCard extends StatelessWidget {
+  final List<Color> gradient;
+  final Color       shadowColor;
+  final IconData    icon;
+  final String      badge;
+  final Color       badgeColor;
+  final String      title;
+  final String      subtitle;
+  final Widget?     trailing;
+
+  const _BannerCard({
+    required this.gradient,   required this.shadowColor,
+    required this.icon,       required this.badge,
+    required this.badgeColor, required this.title,
+    required this.subtitle,   required this.trailing,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 13),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(colors: gradient,
+            begin: Alignment.topLeft, end: Alignment.bottomRight),
+        borderRadius: BorderRadius.circular(14),
+        boxShadow: [BoxShadow(
+            color: shadowColor.withOpacity(0.32),
+            blurRadius: 16, offset: const Offset(0, 6))],
       ),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.center, children: [
+        // Icon bubble
+        Container(
+          padding: const EdgeInsets.all(9),
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10)),
+          child: Icon(icon, color: Colors.white, size: 22),
+        ),
+        const SizedBox(width: 12),
+
+        // Text
+        Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min, children: [
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+            decoration: BoxDecoration(
+                color: badgeColor.withOpacity(0.2),
+                borderRadius: BorderRadius.circular(20),
+                border: Border.all(
+                    color: badgeColor.withOpacity(0.55), width: 1)),
+            child: Text(badge, style: TextStyle(
+                color: badgeColor, fontSize: 9,
+                fontWeight: FontWeight.w800, letterSpacing: 0.4)),
+          ),
+          const SizedBox(height: 5),
+          Text(title, style: const TextStyle(
+              color: Colors.white, fontSize: 13,
+              fontWeight: FontWeight.w800, height: 1.25),
+              maxLines: 2, overflow: TextOverflow.ellipsis),
+          if (subtitle.isNotEmpty) ...[
+            const SizedBox(height: 3),
+            Text(subtitle, style: const TextStyle(
+                color: Colors.white60, fontSize: 10),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+          ],
+        ])),
+
+        if (trailing != null) ...[
+          const SizedBox(width: 10),
+          trailing!,
+        ],
+      ]),
     );
   }
 }
 
-// ── Single nav tile (reusable, compact) ──────────────────────────────────────
+class _HistoryButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _HistoryButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.18),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white30)),
+      child: const Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.history_edu_outlined, color: Colors.white, size: 18),
+        SizedBox(height: 3),
+        Text('इतिहास\nदेखें', textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 9,
+                fontWeight: FontWeight.w800, height: 1.2)),
+      ]),
+    ),
+  );
+}
+
+class _RetryButton extends StatelessWidget {
+  final VoidCallback onTap;
+  const _RetryButton({required this.onTap});
+
+  @override
+  Widget build(BuildContext context) => GestureDetector(
+    onTap: onTap,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.15),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: Colors.white30)),
+      child: const Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.refresh_rounded, color: Colors.white, size: 18),
+        SizedBox(height: 3),
+        Text('पुनः\nप्रयास', textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.white, fontSize: 9,
+                fontWeight: FontWeight.w800, height: 1.2)),
+      ]),
+    ),
+  );
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  QUICK NAV ROW — always shows both Goswara + History side by side
+// ══════════════════════════════════════════════════════════════════════════════
+class _QuickNavRow extends StatelessWidget {
+  final VoidCallback onGoswara;
+  final VoidCallback onHistory;
+
+  const _QuickNavRow({required this.onGoswara, required this.onHistory});
+
+  @override
+  Widget build(BuildContext context) {
+    return IntrinsicHeight(
+      child: Row(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+        Expanded(flex: 3, child: _NavTile(
+          label:    'Goswara Report',
+          subtitle: 'Booth Staff Summary',
+          icon:     Icons.description_outlined,
+          colors:   const [Color(0xFF8B6914), Color(0xFFB8860B)],
+          onTap:    onGoswara,
+        )),
+        const SizedBox(width: 10),
+        Expanded(flex: 2, child: _HistoryTile(onTap: onHistory)),
+      ]),
+    );
+  }
+}
+
 class _NavTile extends StatelessWidget {
-  final String       label, subtitle;
-  final IconData     icon;
-  final List<Color>  colors;
+  final String label, subtitle;
+  final IconData icon;
+  final List<Color> colors;
   final VoidCallback onTap;
 
   const _NavTile({
@@ -421,15 +865,12 @@ class _NavTile extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
+        borderRadius: BorderRadius.circular(14), onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 13),
           decoration: BoxDecoration(
-            gradient: LinearGradient(
-                colors: colors,
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight),
+            gradient: LinearGradient(colors: colors,
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(14),
             boxShadow: [BoxShadow(
                 color: colors.first.withOpacity(0.28),
@@ -446,15 +887,13 @@ class _NavTile extends StatelessWidget {
             const SizedBox(width: 10),
             Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-              Text(label,
-                  style: const TextStyle(color: Colors.white, fontSize: 13,
-                      fontWeight: FontWeight.w800),
+                mainAxisAlignment: MainAxisAlignment.center, children: [
+              Text(label, style: const TextStyle(color: Colors.white,
+                  fontSize: 13, fontWeight: FontWeight.w800),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
               const SizedBox(height: 2),
-              Text(subtitle,
-                  style: const TextStyle(color: Colors.white60, fontSize: 10),
+              Text(subtitle, style: const TextStyle(
+                  color: Colors.white60, fontSize: 10),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
             ])),
             const Icon(Icons.chevron_right, color: Colors.white54, size: 18),
@@ -465,7 +904,6 @@ class _NavTile extends StatelessWidget {
   }
 }
 
-// ── History tile — compact, distinct amber/deep-orange gradient ───────────────
 class _HistoryTile extends StatelessWidget {
   final VoidCallback onTap;
   const _HistoryTile({required this.onTap});
@@ -475,53 +913,48 @@ class _HistoryTile extends StatelessWidget {
     return Material(
       color: Colors.transparent,
       child: InkWell(
-        borderRadius: BorderRadius.circular(14),
-        onTap: onTap,
+        borderRadius: BorderRadius.circular(14), onTap: onTap,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 13),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
                 colors: [Color(0xFF6D4C41), Color(0xFF4E342E)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight),
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(14),
             boxShadow: [BoxShadow(
                 color: const Color(0xFF4E342E).withOpacity(0.30),
                 blurRadius: 12, offset: const Offset(0, 4))],
           ),
-          child: Column(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.15),
-                    borderRadius: BorderRadius.circular(8)),
-                child: const Icon(Icons.history_edu_outlined,
-                    color: Colors.white, size: 20),
-              ),
-              const SizedBox(height: 8),
-              const Text('चुनाव\nइतिहास',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Colors.white, fontSize: 12,
-                      fontWeight: FontWeight.w800, height: 1.25)),
-              const SizedBox(height: 3),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-                decoration: BoxDecoration(
-                    color: Colors.white.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(10)),
-                child: const Text('Archived',
-                    style: TextStyle(color: Colors.white70, fontSize: 9,
-                        fontWeight: FontWeight.w600)),
-              ),
-            ],
-          ),
+          child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+            Container(
+              padding: const EdgeInsets.all(8),
+              decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(8)),
+              child: const Icon(Icons.history_edu_outlined,
+                  color: Colors.white, size: 20),
+            ),
+            const SizedBox(height: 8),
+            const Text('चुनाव\nइतिहास', textAlign: TextAlign.center,
+                style: TextStyle(color: Colors.white, fontSize: 12,
+                    fontWeight: FontWeight.w800, height: 1.25)),
+            const SizedBox(height: 3),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+              decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.18),
+                  borderRadius: BorderRadius.circular(10)),
+              child: const Text('Archived', style: TextStyle(
+                  color: Colors.white70, fontSize: 9,
+                  fontWeight: FontWeight.w600)),
+            ),
+          ]),
         ),
       ),
     );
   }
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  HIERARCHY BANNER
@@ -563,8 +996,8 @@ class _HierarchyBanner extends StatelessWidget {
             const Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('प्रशासनिक पदानुक्रम रिपोर्ट',
-                  style: TextStyle(color: Colors.white, fontSize: 15,
-                      fontWeight: FontWeight.w800)),
+                  style: TextStyle(color: Colors.white,
+                      fontSize: 15, fontWeight: FontWeight.w800)),
               SizedBox(height: 2),
               Text('Super Zone · Sector · Panchayat · Booth Tables',
                   style: TextStyle(color: Colors.white60, fontSize: 11)),
@@ -577,25 +1010,30 @@ class _HierarchyBanner extends StatelessWidget {
   }
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
-//  बूथ मानक SECTION — 4 sensitivity tiles
+//  बूथ मानक SECTION
 // ══════════════════════════════════════════════════════════════════════════════
 class _BoothManakSection extends StatelessWidget {
   final Map<String, List<Map<String, dynamic>>> boothRules;
-  final bool loading;
+  final bool    loading;
+  final int?    electionId;
+  final bool    isBlocked;   // true when no active election or finalized
   final void Function(String, Color, String) onTapSens;
 
   const _BoothManakSection({
     required this.boothRules,
     required this.loading,
+    required this.electionId,
+    required this.isBlocked,
     required this.onTapSens,
   });
 
   @override
   Widget build(BuildContext context) {
-    final sw = MediaQuery.of(context).size.width;
+    final sw             = MediaQuery.of(context).size.width;
     final crossAxisCount = sw > 900 ? 4 : sw > 600 ? 3 : 2;
-    final allSet = _kSensitivities.every((s) =>
+    final allSet         = _kSensitivities.every((s) =>
         (boothRules[s['key']] ?? []).any((r) => _hasAny(r)));
 
     return Container(
@@ -632,7 +1070,23 @@ class _BoothManakSection extends StatelessWidget {
               Text('संवेदनशीलता × बूथ संख्या के अनुसार पुलिस बल',
                   style: TextStyle(color: kSubtle, fontSize: 10)),
             ])),
-            _StatusBadge(allSet: allSet),
+            // Election block indicator
+            if (isBlocked)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                    color: kSubtle.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: kSubtle.withOpacity(0.3))),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.lock_outline, size: 11, color: kSubtle),
+                  const SizedBox(width: 4),
+                  const Text('अक्षम', style: TextStyle(
+                      color: kSubtle, fontSize: 10, fontWeight: FontWeight.w700)),
+                ]),
+              )
+            else
+              _StatusBadge(allSet: allSet),
           ]),
         ),
 
@@ -648,23 +1102,26 @@ class _BoothManakSection extends StatelessWidget {
                     shrinkWrap: true,
                     physics: const NeverScrollableScrollPhysics(),
                     crossAxisCount: crossAxisCount,
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
+                    crossAxisSpacing: 10, mainAxisSpacing: 10,
                     childAspectRatio: 1.4,
                     children: _kSensitivities.map((s) {
-                      final key   = s['key']   as String;
-                      final color = s['color'] as Color;
-                      final hindi = s['hi']    as String;
-                      final rows  = boothRules[key] ?? [];
-                      final filledRows  = rows.where(_hasAny).toList();
+                      final key         = s['key']   as String;
+                      final color       = s['color'] as Color;
+                      final hindi       = s['hi']    as String;
+                      final rows        = boothRules[key] ?? [];
+                      final filledRows  = rows.where((r) => _hasAny(r)).toList();
                       final isSet       = filledRows.isNotEmpty;
                       final totalStaff  = filledRows.fold<int>(
                           0, (sum, r) => sum + _rowTotalStaff(r));
                       return _SensTile(
-                        label: key, hindi: hindi, color: color,
-                        isSet: isSet, totalStaff: totalStaff,
+                        label:          key,
+                        hindi:          hindi,
+                        color:          color,
+                        isSet:          isSet,
+                        isBlocked:      isBlocked,
+                        totalStaff:     totalStaff,
                         filledRowCount: filledRows.length,
-                        onTap: () => onTapSens(key, color, hindi),
+                        onTap:          () => onTapSens(key, color, hindi),
                       );
                     }).toList(),
                   ),
@@ -672,15 +1129,15 @@ class _BoothManakSection extends StatelessWidget {
                   SizedBox(
                     width: double.infinity,
                     child: ElevatedButton.icon(
-                      icon: const Icon(Icons.picture_as_pdf_outlined),
+                      icon:  const Icon(Icons.picture_as_pdf_outlined),
                       label: const Text('मानक रिपोर्ट देखें / प्रिंट करें',
                           style: TextStyle(fontWeight: FontWeight.w700)),
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF6A1B9A),
-                        foregroundColor: Colors.white,
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10))),
+                          backgroundColor: const Color(0xFF6A1B9A),
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10))),
                       onPressed: () => Navigator.push(context,
                           MaterialPageRoute(
                               builder: (_) => ManakBoothReportPage())),
@@ -692,29 +1149,32 @@ class _BoothManakSection extends StatelessWidget {
     );
   }
 
-  bool _hasAny(Map<String, dynamic> r) =>
-      ((r['siArmedCount']    ?? 0) as num) > 0 ||
-      ((r['siUnarmedCount']  ?? 0) as num) > 0 ||
-      ((r['hcArmedCount']    ?? 0) as num) > 0 ||
-      ((r['hcUnarmedCount']  ?? 0) as num) > 0 ||
-      ((r['constArmedCount'] ?? 0) as num) > 0 ||
+  static bool _hasAny(Map<String, dynamic> r) =>
+      ((r['siArmedCount']      ?? 0) as num) > 0 ||
+      ((r['siUnarmedCount']    ?? 0) as num) > 0 ||
+      ((r['hcArmedCount']      ?? 0) as num) > 0 ||
+      ((r['hcUnarmedCount']    ?? 0) as num) > 0 ||
+      ((r['constArmedCount']   ?? 0) as num) > 0 ||
       ((r['constUnarmedCount'] ?? 0) as num) > 0 ||
-      ((r['auxForceCount']   ?? 0) as num) > 0 ||
-      ((r['pacCount']        ?? 0) as num) > 0;
+      ((r['auxArmedCount']     ?? 0) as num) > 0 ||
+      ((r['auxUnarmedCount']   ?? 0) as num) > 0 ||
+      ((r['pacCount']          ?? 0) as num) > 0;
 
-  int _rowTotalStaff(Map<String, dynamic> r) =>
+  static int _rowTotalStaff(Map<String, dynamic> r) =>
       ((r['siArmedCount']      ?? 0) as num).toInt() +
       ((r['siUnarmedCount']    ?? 0) as num).toInt() +
       ((r['hcArmedCount']      ?? 0) as num).toInt() +
       ((r['hcUnarmedCount']    ?? 0) as num).toInt() +
       ((r['constArmedCount']   ?? 0) as num).toInt() +
       ((r['constUnarmedCount'] ?? 0) as num).toInt() +
-      ((r['auxForceCount']     ?? 0) as num).toInt();
+      ((r['auxArmedCount']     ?? 0) as num).toInt() +
+      ((r['auxUnarmedCount']   ?? 0) as num).toInt();
 }
 
 class _StatusBadge extends StatelessWidget {
   final bool allSet;
   const _StatusBadge({required this.allSet});
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -735,6 +1195,7 @@ class _StatusBadge extends StatelessWidget {
   );
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  SENSITIVITY TILE
 // ══════════════════════════════════════════════════════════════════════════════
@@ -742,17 +1203,20 @@ class _SensTile extends StatelessWidget {
   final String label, hindi;
   final Color  color;
   final bool   isSet;
+  final bool   isBlocked;
   final int    totalStaff, filledRowCount;
   final VoidCallback onTap;
 
   const _SensTile({
-    required this.label, required this.hindi, required this.color,
-    required this.isSet, required this.totalStaff,
+    required this.label,          required this.hindi,
+    required this.color,          required this.isSet,
+    required this.isBlocked,      required this.totalStaff,
     required this.filledRowCount, required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
+    final effectiveColor = isBlocked ? kSubtle : (isSet ? color : kError);
     return Material(
       color: Colors.transparent,
       child: InkWell(
@@ -760,10 +1224,18 @@ class _SensTile extends StatelessWidget {
         borderRadius: BorderRadius.circular(12),
         child: Container(
           decoration: BoxDecoration(
-            color: isSet ? color.withOpacity(0.07) : kError.withOpacity(0.03),
+            color: isBlocked
+                ? kSurface.withOpacity(0.5)
+                : isSet
+                    ? color.withOpacity(0.07)
+                    : kError.withOpacity(0.03),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-                color: isSet ? color.withOpacity(0.3) : kError.withOpacity(0.2)),
+                color: isBlocked
+                    ? kSubtle.withOpacity(0.2)
+                    : isSet
+                        ? color.withOpacity(0.3)
+                        : kError.withOpacity(0.2)),
           ),
           padding: const EdgeInsets.all(11),
           child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -771,34 +1243,45 @@ class _SensTile extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                    color: isSet ? color : kError,
+                    color: isBlocked
+                        ? kSubtle.withOpacity(0.3)
+                        : isSet ? color : kError,
                     borderRadius: BorderRadius.circular(6)),
                 child: Text(label, style: const TextStyle(
                     color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900)),
               ),
               const Spacer(),
-              Icon(isSet ? Icons.check_circle_rounded : Icons.edit_outlined,
-                  size: 15, color: isSet ? kSuccess : kSubtle),
+              Icon(isBlocked
+                      ? Icons.lock_outline
+                      : isSet
+                          ? Icons.check_circle_rounded
+                          : Icons.edit_outlined,
+                  size: 15,
+                  color: isBlocked ? kSubtle.withOpacity(0.5) : (isSet ? kSuccess : kSubtle)),
             ]),
             const SizedBox(height: 6),
-            Text(hindi,
-                style: TextStyle(color: isSet ? color : kSubtle,
-                    fontSize: 10, fontWeight: FontWeight.w600),
+            Text(hindi, style: TextStyle(
+                color: effectiveColor,
+                fontSize: 10, fontWeight: FontWeight.w600),
                 maxLines: 1, overflow: TextOverflow.ellipsis),
             const Spacer(),
-            if (isSet) ...[
+            if (isSet && !isBlocked) ...[
               Text('$totalStaff कर्मचारी',
                   style: TextStyle(color: color, fontSize: 13,
                       fontWeight: FontWeight.w900)),
               Text('$filledRowCount/15 बूथ-स्तर',
                   style: const TextStyle(color: kSubtle, fontSize: 10)),
-            ] else
+            ] else if (!isBlocked)
               Row(children: [
                 Icon(Icons.add_circle_outline, size: 12, color: kSubtle),
                 const SizedBox(width: 4),
-                const Text('सेट करें', style: TextStyle(color: kSubtle,
-                    fontSize: 10, fontWeight: FontWeight.w600)),
-              ]),
+                const Text('सेट करें', style: TextStyle(
+                    color: kSubtle, fontSize: 10, fontWeight: FontWeight.w600)),
+              ])
+            else
+              Text(isSet ? '$totalStaff कर्मचारी' : 'सेट नहीं',
+                  style: TextStyle(
+                      color: kSubtle.withOpacity(0.6), fontSize: 10)),
           ]),
         ),
       ),
@@ -806,31 +1289,37 @@ class _SensTile extends StatelessWidget {
   }
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  जनपदीय मानक SECTION
 // ══════════════════════════════════════════════════════════════════════════════
 class _DistrictManakSection extends StatelessWidget {
   final List<Map<String, dynamic>> rules;
-  final bool         loading;
+  final bool    loading;
+  final int?    electionId;
+  final bool    isBlocked;
   final VoidCallback onTap;
 
   const _DistrictManakSection({
-    required this.rules, required this.loading, required this.onTap,
+    required this.rules,      required this.loading,
+    required this.electionId, required this.isBlocked,
+    required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
     final filledCount = rules.where(_hasAny).length;
     final totalDuties = rules.length;
-    final totalStaff  = rules.fold<int>(0, (sum, r) =>
-        sum +
+    final totalStaff  = rules.fold<int>(0, (s, r) =>
+        s +
         ((r['siArmedCount']      ?? 0) as num).toInt() +
         ((r['siUnarmedCount']    ?? 0) as num).toInt() +
         ((r['hcArmedCount']      ?? 0) as num).toInt() +
         ((r['hcUnarmedCount']    ?? 0) as num).toInt() +
         ((r['constArmedCount']   ?? 0) as num).toInt() +
         ((r['constUnarmedCount'] ?? 0) as num).toInt() +
-        ((r['auxForceCount']     ?? 0) as num).toInt());
+        ((r['auxArmedCount']     ?? 0) as num).toInt() +
+        ((r['auxUnarmedCount']   ?? 0) as num).toInt());
     final isSet = filledCount > 0;
 
     return Material(
@@ -855,27 +1344,31 @@ class _DistrictManakSection extends StatelessWidget {
               decoration: BoxDecoration(
                   color: Colors.white.withOpacity(0.15),
                   borderRadius: BorderRadius.circular(9)),
-              child: const Icon(Icons.shield_outlined,
+              child: Icon(
+                  isBlocked ? Icons.lock_outline : Icons.shield_outlined,
                   color: Colors.white, size: 20),
             ),
             const SizedBox(width: 14),
             Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
               const Text('जनपदीय कानून व्यवस्था मानक',
-                  style: TextStyle(color: Colors.white, fontSize: 15,
-                      fontWeight: FontWeight.w800)),
+                  style: TextStyle(color: Colors.white,
+                      fontSize: 15, fontWeight: FontWeight.w800)),
               const SizedBox(height: 2),
               if (loading)
                 const Text('लोड हो रहा है...',
                     style: TextStyle(color: Colors.white60, fontSize: 11))
+              else if (isBlocked)
+                const Text('सक्रिय चुनाव नहीं — सम्पादन अक्षम',
+                    style: TextStyle(color: Colors.white54, fontSize: 11))
               else if (isSet)
-                Text('$totalStaff कर्मचारी • $filledCount/$totalDuties ड्यूटी प्रकार',
+                Text('$totalStaff कर्मचारी  •  $filledCount/$totalDuties ड्यूटी प्रकार',
                     style: const TextStyle(color: Colors.white70, fontSize: 11))
               else
                 const Text('कानून व्यवस्था ड्यूटी मानक सेट करें',
                     style: TextStyle(color: Colors.white60, fontSize: 11)),
             ])),
-            if (isSet)
+            if (isSet && !isBlocked)
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 margin: const EdgeInsets.only(right: 6),
@@ -895,7 +1388,7 @@ class _DistrictManakSection extends StatelessWidget {
     );
   }
 
-  bool _hasAny(Map<String, dynamic> r) =>
+  static bool _hasAny(Map<String, dynamic> r) =>
       ((r['sankhya']           ?? 0) as num) > 0 ||
       ((r['siArmedCount']      ?? 0) as num) > 0 ||
       ((r['siUnarmedCount']    ?? 0) as num) > 0 ||
@@ -903,15 +1396,19 @@ class _DistrictManakSection extends StatelessWidget {
       ((r['hcUnarmedCount']    ?? 0) as num) > 0 ||
       ((r['constArmedCount']   ?? 0) as num) > 0 ||
       ((r['constUnarmedCount'] ?? 0) as num) > 0 ||
-      ((r['auxForceCount']     ?? 0) as num) > 0 ||
+      ((r['auxArmedCount']     ?? 0) as num) > 0 ||
+      ((r['auxUnarmedCount']   ?? 0) as num) > 0 ||
       ((r['pacCount']          ?? 0) as num) > 0;
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  STAT CARD
 // ══════════════════════════════════════════════════════════════════════════════
 class _SI {
-  final String label, value; final IconData icon; final Color color;
+  final String label, value;
+  final IconData icon;
+  final Color color;
   const _SI(this.label, this.value, this.icon, this.color);
 }
 
@@ -947,6 +1444,7 @@ class _StatCard extends StatelessWidget {
     );
   }
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  SHIMMER

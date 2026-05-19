@@ -18,6 +18,8 @@ const _kBorder  = Color(0xFFDDE3EE);
 const _kAccent  = Color(0xFFFBBF24);
 const _kGold    = Color(0xFFFFF8E7);
 const _kOrange  = Color(0xFFE67E22);
+const _kAmber   = Color(0xFFFFF3CD);
+const _kAmberDark = Color(0xFF856404);
 
 Color _sensitivityColor(String? t) {
   switch (t) {
@@ -54,12 +56,460 @@ const _kCenterTypes = ['A++', 'A', 'B', 'C'];
 const _kPageSize = 20;
 
 // ══════════════════════════════════════════════════════════════════════════════
+// ELECTION SELECTOR PAGE  — shown before HierarchyReportPage
+// Admin/super_admin: district is locked (backend), directly see election picker.
+// Master: first picks district, then election.
+// ══════════════════════════════════════════════════════════════════════════════
+class HierarchyElectionSelectorPage extends StatefulWidget {
+  final String role;
+  final String? districtHint; // pre-set for admin/super_admin
+  const HierarchyElectionSelectorPage({
+    super.key,
+    required this.role,
+    this.districtHint,
+  });
+  @override
+  State<HierarchyElectionSelectorPage> createState() =>
+      _HierarchyElectionSelectorPageState();
+}
+
+class _HierarchyElectionSelectorPageState
+    extends State<HierarchyElectionSelectorPage> {
+  // Districts (master only)
+  List<String> _districts = [];
+  String? _selectedDistrict;
+
+  // Elections
+  List<Map> _elections = [];
+  String? _selectedElectionId;
+  bool _loadingDistricts = false;
+  bool _loadingElections = false;
+  String? _error;
+
+  bool get _isMaster => widget.role.toLowerCase() == 'master';
+
+  @override
+  void initState() {
+    super.initState();
+    if (_isMaster) {
+      _loadDistricts();
+    } else {
+      // admin / super_admin district locked by backend
+      _selectedDistrict = widget.districtHint ?? '';
+      _loadElections();
+    }
+  }
+
+  Future<void> _loadDistricts() async {
+    setState(() { _loadingDistricts = true; _error = null; });
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get('/admin/hierarchy/districts', token: token);
+      final list  = res['data'] as List? ?? [];
+      setState(() {
+        _districts = list.map((e) => '$e').toList();
+        _loadingDistricts = false;
+      });
+    } catch (e) {
+      setState(() { _loadingDistricts = false; _error = e.toString(); });
+    }
+  }
+
+  Future<void> _loadElections({String? district}) async {
+    setState(() { _loadingElections = true; _error = null; _elections = []; _selectedElectionId = null; });
+    try {
+      final token = await AuthService.getToken();
+      final d = district ?? _selectedDistrict ?? '';
+      final ep = d.isNotEmpty
+          ? '/admin/elections?district=${Uri.encodeComponent(d)}'
+          : '/admin/elections';
+      final res  = await ApiService.get(ep, token: token);
+      final list = (res['data'] as List? ?? res as List? ?? []);
+      setState(() {
+        _elections = List<Map>.from(list);
+        _loadingElections = false;
+        // Auto-select current/active if only one
+        if (_elections.length == 1) {
+          _selectedElectionId = '${_elections.first['id']}';
+        }
+      });
+    } catch (e) {
+      setState(() { _loadingElections = false; _error = e.toString(); });
+    }
+  }
+
+  void _proceed() {
+    if (_selectedElectionId == null) return;
+    final elec = _elections.firstWhere(
+      (e) => '${e['id']}' == _selectedElectionId,
+      orElse: () => {},
+    );
+    final isActive = elec['is_active'] == true || elec['isActive'] == true ||
+        (elec['status'] ?? '').toString().toLowerCase() == 'active';
+
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(
+        builder: (_) => HierarchyReportPage(
+          role:       widget.role,
+          district:   _selectedDistrict,
+          electionId: int.tryParse(_selectedElectionId!),
+          electionName: '${elec['name'] ?? elec['election_name'] ?? 'चुनाव'}',
+          isHistory:  !isActive,
+        ),
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: _kBg,
+      appBar: AppBar(
+        backgroundColor: _kPrimary, elevation: 0,
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
+          onPressed: () => Navigator.pop(context),
+        ),
+        title: const Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('प्रशासनिक पदानुक्रम',
+                style: TextStyle(color: Colors.white,
+                    fontSize: 15, fontWeight: FontWeight.w800)),
+            Text('चुनाव चुनें',
+                style: TextStyle(color: Colors.white54, fontSize: 10)),
+          ],
+        ),
+      ),
+      body: _loadingDistricts
+          ? const Center(child: CircularProgressIndicator(color: _kPrimary))
+          : Center(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(24),
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 440),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      // Header illustration
+                      Container(
+                        padding: const EdgeInsets.all(24),
+                        decoration: BoxDecoration(
+                          gradient: const LinearGradient(
+                            colors: [Color(0xFF0F2B5B), Color(0xFF1E3F80)],
+                            begin: Alignment.topLeft, end: Alignment.bottomRight,
+                          ),
+                          borderRadius: BorderRadius.circular(16),
+                        ),
+                        child: const Column(children: [
+                          Icon(Icons.how_to_vote_outlined,
+                              size: 48, color: Colors.white70),
+                          SizedBox(height: 10),
+                          Text('पदानुक्रम रिपोर्ट',
+                              style: TextStyle(color: Colors.white,
+                                  fontSize: 18, fontWeight: FontWeight.w800)),
+                          SizedBox(height: 4),
+                          Text('चुनाव का चयन करके रिपोर्ट देखें',
+                              style: TextStyle(
+                                  color: Colors.white60, fontSize: 12)),
+                        ]),
+                      ),
+                      const SizedBox(height: 24),
+
+                      if (_error != null)
+                        Container(
+                          margin: const EdgeInsets.only(bottom: 16),
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            color: _kRed.withOpacity(0.08),
+                            borderRadius: BorderRadius.circular(8),
+                            border: Border.all(color: _kRed.withOpacity(0.3)),
+                          ),
+                          child: Row(children: [
+                            const Icon(Icons.error_outline,
+                                color: _kRed, size: 16),
+                            const SizedBox(width: 8),
+                            Expanded(child: Text(_error!,
+                                style: const TextStyle(
+                                    color: _kRed, fontSize: 12))),
+                          ]),
+                        ),
+
+                      // District selector (master only)
+                      if (_isMaster) ...[
+                        _SectionCard(
+                          title: 'जनपद चुनें',
+                          icon: Icons.location_city_outlined,
+                          color: _kPrimary,
+                          child: _loadingDistricts
+                              ? const Center(child: Padding(
+                                  padding: EdgeInsets.all(16),
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2, color: _kPrimary)))
+                              : _DropCard<String>(
+                                  value: _selectedDistrict,
+                                  hint: 'जनपद चुनें',
+                                  items: _districts
+                                      .map((d) => DropdownMenuItem(
+                                            value: d,
+                                            child: Text(d, overflow: TextOverflow.ellipsis)))
+                                      .toList(),
+                                  onChanged: (v) {
+                                    setState(() {
+                                      _selectedDistrict = v;
+                                      _elections = [];
+                                      _selectedElectionId = null;
+                                    });
+                                    if (v != null) _loadElections(district: v);
+                                  },
+                                ),
+                        ),
+                        const SizedBox(height: 16),
+                      ],
+
+                      // Election selector
+                      _SectionCard(
+                        title: 'चुनाव चुनें',
+                        icon: Icons.ballot_outlined,
+                        color: _kGreen,
+                        child: _loadingElections
+                            ? const Center(child: Padding(
+                                padding: EdgeInsets.all(16),
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: _kGreen)))
+                            : _elections.isEmpty
+                                ? Padding(
+                                    padding: const EdgeInsets.all(16),
+                                    child: Text(
+                                      _isMaster && _selectedDistrict == null
+                                          ? 'पहले जनपद चुनें'
+                                          : 'कोई चुनाव उपलब्ध नहीं',
+                                      style: const TextStyle(
+                                          color: _kSubtle, fontSize: 13),
+                                      textAlign: TextAlign.center,
+                                    ),
+                                  )
+                                : Column(
+                                    children: _elections.map((e) {
+                                      final id = '${e['id']}';
+                                      final name = '${e['name'] ?? e['election_name'] ?? 'चुनाव'}';
+                                      final isActive = e['is_active'] == true ||
+                                          e['isActive'] == true ||
+                                          (e['status'] ?? '').toString().toLowerCase() == 'active';
+                                      final selected = _selectedElectionId == id;
+                                      return _ElectionTile(
+                                        name: name,
+                                        isActive: isActive,
+                                        selected: selected,
+                                        election: e,
+                                        onTap: () => setState(() => _selectedElectionId = id),
+                                      );
+                                    }).toList(),
+                                  ),
+                      ),
+
+                      const SizedBox(height: 24),
+                      SizedBox(
+                        height: 52,
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: _selectedElectionId != null
+                                ? _kPrimary : Colors.grey[300],
+                            foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(12)),
+                            elevation: _selectedElectionId != null ? 2 : 0,
+                          ),
+                          icon: const Icon(Icons.arrow_forward_rounded, size: 18),
+                          label: const Text('रिपोर्ट देखें',
+                              style: TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.w700)),
+                          onPressed: _selectedElectionId != null ? _proceed : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+    );
+  }
+}
+
+class _ElectionTile extends StatelessWidget {
+  final String name;
+  final bool isActive, selected;
+  final Map election;
+  final VoidCallback onTap;
+  const _ElectionTile({
+    required this.name, required this.isActive,
+    required this.selected, required this.election, required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final startDate = election['start_date'] ?? election['startDate'] ?? '';
+    final endDate   = election['end_date']   ?? election['endDate']   ?? '';
+    return GestureDetector(
+      onTap: onTap,
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 180),
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+        decoration: BoxDecoration(
+          color: selected
+              ? (isActive ? _kGreen : _kPrimary).withOpacity(0.08)
+              : Colors.white,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(
+            color: selected
+                ? (isActive ? _kGreen : _kPrimary)
+                : _kBorder,
+            width: selected ? 2 : 1,
+          ),
+        ),
+        child: Row(children: [
+          AnimatedContainer(
+            duration: const Duration(milliseconds: 180),
+            width: 22, height: 22,
+            decoration: BoxDecoration(
+              color: selected
+                  ? (isActive ? _kGreen : _kPrimary)
+                  : Colors.transparent,
+              shape: BoxShape.circle,
+              border: Border.all(
+                color: selected
+                    ? (isActive ? _kGreen : _kPrimary)
+                    : _kBorder,
+                width: 2,
+              ),
+            ),
+            child: selected
+                ? const Icon(Icons.check, color: Colors.white, size: 13)
+                : null,
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text(name, style: TextStyle(
+              fontWeight: FontWeight.w700, fontSize: 14,
+              color: selected
+                  ? (isActive ? _kGreen : _kPrimary) : _kDark,
+            )),
+            if (startDate.toString().isNotEmpty || endDate.toString().isNotEmpty)
+              Text('$startDate${endDate.toString().isNotEmpty ? ' – $endDate' : ''}',
+                  style: const TextStyle(color: _kSubtle, fontSize: 11)),
+          ])),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: isActive
+                  ? _kGreen.withOpacity(0.12)
+                  : _kSubtle.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(6),
+            ),
+            child: Text(
+              isActive ? 'वर्तमान' : 'इतिहास',
+              style: TextStyle(
+                color: isActive ? _kGreen : _kSubtle,
+                fontSize: 10, fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ]),
+      ),
+    );
+  }
+}
+
+class _SectionCard extends StatelessWidget {
+  final String title;
+  final IconData icon;
+  final Color color;
+  final Widget child;
+  const _SectionCard({
+    required this.title, required this.icon,
+    required this.color, required this.child,
+  });
+  @override
+  Widget build(BuildContext context) => Container(
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: _kBorder),
+      boxShadow: [BoxShadow(
+        color: color.withOpacity(0.07),
+        blurRadius: 8, offset: const Offset(0, 3))],
+    ),
+    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Container(
+        padding: const EdgeInsets.fromLTRB(14, 12, 14, 10),
+        decoration: BoxDecoration(
+          color: color.withOpacity(0.06),
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+          border: Border(bottom: BorderSide(color: color.withOpacity(0.15))),
+        ),
+        child: Row(children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(width: 8),
+          Text(title, style: TextStyle(color: color,
+              fontWeight: FontWeight.w800, fontSize: 13)),
+        ]),
+      ),
+      Padding(padding: const EdgeInsets.all(12), child: child),
+    ]),
+  );
+}
+
+class _DropCard<T> extends StatelessWidget {
+  final T? value;
+  final String hint;
+  final List<DropdownMenuItem<T>> items;
+  final ValueChanged<T?> onChanged;
+  const _DropCard({required this.value, required this.hint,
+      required this.items, required this.onChanged});
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 12),
+    decoration: BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(
+          color: value != null ? _kPrimary : _kBorder, width: 1.5),
+    ),
+    child: DropdownButtonHideUnderline(
+      child: DropdownButton<T>(
+        value: value, isExpanded: true, isDense: false,
+        hint: Text(hint, style: const TextStyle(color: _kSubtle, fontSize: 13)),
+        style: const TextStyle(color: _kDark, fontSize: 13),
+        dropdownColor: Colors.white,
+        items: items,
+        onChanged: onChanged,
+      ),
+    ),
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// MAIN HIERARCHY REPORT PAGE
+// ══════════════════════════════════════════════════════════════════════════════
 class HierarchyReportPage extends StatefulWidget {
   final String role;
-  /// Optional district filter (used by master role only).
-  /// admin / super_admin are always locked to their own district by the backend.
   final String? district;
-  const HierarchyReportPage({super.key, required this.role, this.district});
+  // NEW: election context
+  final int?    electionId;
+  final String? electionName;
+  final bool    isHistory;
+
+  const HierarchyReportPage({
+    super.key,
+    required this.role,
+    this.district,
+    this.electionId,
+    this.electionName,
+    this.isHistory = false,
+  });
   @override
   State<HierarchyReportPage> createState() => _HierarchyReportPageState();
 }
@@ -76,7 +526,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
 
   // Pagination for Tab 3
   int _tab3Page = 1;
-  int _tab3Total = 0;
   static const _tab3PageSize = _kPageSize;
 
   @override
@@ -96,19 +545,26 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   @override
   void dispose() { _tab.dispose(); super.dispose(); }
 
+  // ── Build endpoint with optional electionId ─────────────────────────────
+  String _buildEndpoint() {
+    final isMaster = widget.role.toLowerCase() == 'master';
+    final d = (widget.district ?? '').trim();
+    final params = <String>[];
+    if (isMaster && d.isNotEmpty) params.add('district=${Uri.encodeComponent(d)}');
+    if (widget.isHistory && widget.electionId != null) {
+      params.add('electionId=${widget.electionId}');
+    }
+    final q = params.isNotEmpty ? '?${params.join('&')}' : '';
+    return '/admin/hierarchy/full$q';
+  }
+
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
       final token = await AuthService.getToken();
-      // Build endpoint — only master passes ?district=
-      final isMaster = widget.role.toLowerCase() == 'master';
-      final d = (widget.district ?? '').trim();
-      final ep = (isMaster && d.isNotEmpty)
-          ? "/admin/hierarchy/full?district=${Uri.encodeComponent(d)}"
-          : "/admin/hierarchy/full";
-      final res = await ApiService.get(ep, token: token);
+      final res = await ApiService.get(_buildEndpoint(), token: token);
       setState(() {
-        _data = res is List ? res : [];
+        _data = (res is List ? res : (res['data'] as List? ?? []));
         _loading = false;
         _tab3Page = 1;
       });
@@ -141,7 +597,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   List get _allGPs =>
       _allSectors.expand((s) => (s['panchayats'] as List? ?? [])).toList();
 
-  // All tab3 items (flat list of sz+z+s+gp)
   List<Map> get _allTab3Items {
     final items = <Map>[];
     for (final sz in _filteredSZ) {
@@ -167,10 +622,16 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     return all.sublist(start, end);
   }
 
-  int get _tab3TotalPages => ((_allTab3Items.length + _tab3PageSize - 1) / _tab3PageSize).ceil().clamp(1, 9999);
+  int get _tab3TotalPages =>
+      ((_allTab3Items.length + _tab3PageSize - 1) / _tab3PageSize)
+          .ceil().clamp(1, 9999);
 
   // ── CRUD helpers ─────────────────────────────────────────────────────────
+  // CRUD operations are disabled in history mode
+  bool get _canEdit => !widget.isHistory;
+
   Future<void> _delete(String ep, int id, String name) async {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
     final ok = await _confirm('हटाएं', '"$name" को हटाना चाहते हैं?');
     if (ok != true) return;
     try {
@@ -188,7 +649,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       title: Text(title, style: const TextStyle(fontWeight: FontWeight.w800)),
       content: Text(msg),
       actions: [
-        TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('रद्द')),
+        TextButton(onPressed: () => Navigator.pop(context, false),
+            child: const Text('रद्द')),
         ElevatedButton(
           style: ElevatedButton.styleFrom(backgroundColor: _kRed),
           onPressed: () => Navigator.pop(context, true),
@@ -207,7 +669,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   }
 
   // ══════════════════════════════════════════════════════════════════════════
-  // PRINT — exact data match with screen tables
+  // PRINT — includes election name in header
   // ══════════════════════════════════════════════════════════════════════════
   Future<void> _print() async {
     final font = await PdfGoogleFonts.notoSansDevanagariRegular();
@@ -215,12 +677,21 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     final doc  = pw.Document();
     final idx  = _tab.index;
 
+    // Election header string for PDF
+    final elecHeader = widget.electionName != null
+        ? 'चुनाव: ${widget.electionName}'
+        : '';
+
     if (idx == 0) {
       doc.addPage(pw.MultiPage(
         pageFormat: PdfPageFormat.a4.landscape,
         margin: const pw.EdgeInsets.all(14),
         build: (_) {
           final widgets = <pw.Widget>[];
+          if (elecHeader.isNotEmpty) {
+            widgets.add(_pdfElectionHeader(elecHeader, font, bold));
+            widgets.add(pw.SizedBox(height: 6));
+          }
           for (final sz in _filteredSZ) {
             widgets.addAll(_pdfTab1(sz, font, bold));
             widgets.add(pw.SizedBox(height: 10));
@@ -235,12 +706,19 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           doc.addPage(pw.MultiPage(
             pageFormat: PdfPageFormat.a4.landscape,
             margin: const pw.EdgeInsets.all(14),
-            build: (_) => _pdfTab2(sz, z, font, bold),
+            build: (_) {
+              final ws = <pw.Widget>[];
+              if (elecHeader.isNotEmpty) {
+                ws.add(_pdfElectionHeader(elecHeader, font, bold));
+                ws.add(pw.SizedBox(height: 4));
+              }
+              ws.addAll(_pdfTab2(sz, z, font, bold));
+              return ws;
+            },
           ));
         }
       }
     } else {
-      // Print ALL tab3 items (not just current page)
       for (final item in _allTab3Items) {
         final sz = item['sz'] as Map;
         final z  = item['z']  as Map;
@@ -249,7 +727,15 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
         doc.addPage(pw.MultiPage(
           pageFormat: PdfPageFormat.a4.landscape,
           margin: const pw.EdgeInsets.all(14),
-          build: (_) => _pdfTab3(sz, z, s, gp, font, bold),
+          build: (_) {
+            final ws = <pw.Widget>[];
+            if (elecHeader.isNotEmpty) {
+              ws.add(_pdfElectionHeader(elecHeader, font, bold));
+              ws.add(pw.SizedBox(height: 4));
+            }
+            ws.addAll(_pdfTab3(sz, z, s, gp, font, bold));
+            return ws;
+          },
         ));
       }
     }
@@ -259,6 +745,20 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     }
     await Printing.layoutPdf(onLayout: (_) async => doc.save());
   }
+
+  // ─── PDF election header ──────────────────────────────────────────────────
+  pw.Widget _pdfElectionHeader(String text, pw.Font font, pw.Font bold) =>
+      pw.Container(
+        padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+        decoration: pw.BoxDecoration(
+          color: const PdfColor.fromInt(0xFFFFF3CD),
+          border: pw.Border.all(color: const PdfColor.fromInt(0xFFFFD700), width: 0.5),
+          borderRadius: pw.BorderRadius.circular(4),
+        ),
+        child: pw.Text(text,
+            style: pw.TextStyle(font: bold, fontSize: 9,
+                color: const PdfColor.fromInt(0xFF856404))),
+      );
 
   // ─── PDF helpers ──────────────────────────────────────────────────────────
   pw.Widget _pdfTh(String t, pw.Font bold) => pw.Container(
@@ -274,7 +774,6 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
         textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
   );
 
-  // Helper: get officer string exactly as shown on screen
   String _officerStr(List officers) {
     if (officers.isEmpty) return '—';
     return officers.map((o) {
@@ -445,20 +944,32 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     ];
   }
 
-  // ─── PDF Tab 3 ────────────────────────────────────────────────────────────
+  // ─── PDF Tab 3 — ONE ROW PER matdan_sthal, rooms inside name cell ───────
   List<pw.Widget> _pdfTab3(Map sz, Map z, Map s, Map gp, pw.Font font, pw.Font bold) {
     final centers = gp['centers'] as List? ?? [];
 
+    // Count total kendras for header stats
     int totalKendra = 0;
     for (final c in centers) {
       final k = (c['kendras'] as List? ?? []);
       totalKendra += k.isEmpty ? 1 : k.length;
     }
 
+    // r[0]=serial, r[1]=center name+rooms, r[2]=sthal serial,
+    // r[3]=sthal name, r[4]=zone, r[5]=sector, r[6]=thana,
+    // r[7]=duty, r[8]=mobile, r[9]=bus
     final rows = <List<String>>[];
-    int sthalNo = 1, kendraGlobal = 1;
+    int sthalNo = 1;
     for (final c in centers) {
-      final kendras      = c['kendras'] as List? ?? [];
+      final kendras     = c['kendras'] as List? ?? [];
+      final roomNos     = kendras.isEmpty
+          ? ''
+          : kendras.map((k) => '${k['room_number']}').join(', ');
+      final nameWithRooms = roomNos.isNotEmpty
+          ? '${c['name']}\nक.नं. $roomNos'
+          : '${c['name']}';
+      final cType = (c['center_type'] ?? 'C').toString();
+
       final dutyOfficers = c['duty_officers'] as List? ?? [];
       final dutyText = dutyOfficers.isNotEmpty
           ? dutyOfficers.map((d) =>
@@ -470,40 +981,20 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           : '—';
       final busNo = (c['bus_no'] ?? '—').toString();
       final thana = (c['thana'] ?? gp['thana'] ?? '—').toString();
-      final cType = (c['center_type'] ?? 'C').toString();
 
-      if (kendras.isEmpty) {
-        rows.add([
-          '$kendraGlobal',
-          '${c['name']}\n$cType',
-          '$sthalNo',
-          '${c['name']}',
-          '${z['name']}',
-          '${s['name']}',
-          thana,
-          dutyText,
-          mobileText,
-          busNo,
-        ]);
-        sthalNo++; kendraGlobal++;
-      } else {
-        for (int ki = 0; ki < kendras.length; ki++) {
-          rows.add([
-            '$kendraGlobal',
-            '${c['name']} क.नं. ${kendras[ki]['room_number']}\n$cType',
-            ki == 0 ? '$sthalNo' : '',
-            ki == 0 ? '${c['name']}' : '',
-            '${z['name']}',
-            '${s['name']}',
-            thana,
-            ki == 0 ? dutyText : '',
-            ki == 0 ? mobileText : '',
-            ki == 0 ? busNo : '',
-          ]);
-          kendraGlobal++;
-        }
-        sthalNo++;
-      }
+      rows.add([
+        '$sthalNo',            // 0 serial
+        '$nameWithRooms\n$cType', // 1 name + rooms + type
+        '$sthalNo',            // 2 sthal serial (same)
+        '${c['name']}',       // 3 sthal name
+        '${z['name']}',       // 4 zone
+        '${s['name']}',       // 5 sector
+        thana,                 // 6 thana
+        dutyText,              // 7 duty officer
+        mobileText,            // 8 mobile
+        busNo,                 // 9 bus
+      ]);
+      sthalNo++;
     }
 
     return [
@@ -529,16 +1020,21 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       pw.Table(
         border: pw.TableBorder.all(width: 0.5),
         columnWidths: const {
-          0: pw.FixedColumnWidth(24), 1: pw.FlexColumnWidth(2.2),
-          2: pw.FixedColumnWidth(24), 3: pw.FlexColumnWidth(2.0),
-          4: pw.FixedColumnWidth(30), 5: pw.FixedColumnWidth(30),
-          6: pw.FlexColumnWidth(1.2), 7: pw.FlexColumnWidth(2.5),
-          8: pw.FlexColumnWidth(1.4), 9: pw.FixedColumnWidth(28),
+          0: pw.FixedColumnWidth(22),   // serial
+          1: pw.FlexColumnWidth(2.4),   // center name + rooms + type
+          2: pw.FixedColumnWidth(22),   // sthal serial
+          3: pw.FlexColumnWidth(2.0),   // sthal name
+          4: pw.FixedColumnWidth(28),   // zone
+          5: pw.FixedColumnWidth(28),   // sector
+          6: pw.FlexColumnWidth(1.2),   // thana
+          7: pw.FlexColumnWidth(2.5),   // duty officer
+          8: pw.FlexColumnWidth(1.4),   // mobile
+          9: pw.FixedColumnWidth(26),   // bus
         },
         children: [
           pw.TableRow(children: [
-            _pdfTh('मतदान\nकेन्द्र की\nसंख्या', bold),
-            _pdfTh('मतदान केन्द्र\nका नाम', bold),
+            _pdfTh('मतदान\nकेन्द्र\nसंख्या', bold),
+            _pdfTh('मतदान केन्द्र का नाम', bold),
             _pdfTh('मतदेय\nसं.', bold),
             _pdfTh('मतदान स्थल\nका नाम', bold),
             _pdfTh('जोन\nसंख्या', bold),
@@ -566,101 +1062,131 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   }
 
   // ── CRUD dialogs ──────────────────────────────────────────────────────────
-  void _addSuperZone() => _openDialog(
-    title: 'सुपर जोन जोड़ें', color: _kPrimary, icon: Icons.layers_outlined,
-    fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.post('/admin/super-zones', Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _addSuperZone() {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'सुपर जोन जोड़ें', color: _kPrimary, icon: Icons.layers_outlined,
+      fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.post('/admin/super-zones', Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _editSZ(Map sz) => _openDialog(
-    title: 'सुपर जोन संपादित करें', color: _kPrimary, icon: Icons.edit_outlined,
-    fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
-    initial: {'name': sz['name'], 'district': sz['district'], 'block': sz['block']},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.put('/admin/hierarchy/super-zone/${sz['id']}',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _editSZ(Map sz) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'सुपर जोन संपादित करें', color: _kPrimary, icon: Icons.edit_outlined,
+      fields: {'name': 'नाम', 'district': 'जिला', 'block': 'ब्लॉक'},
+      initial: {'name': sz['name'], 'district': sz['district'], 'block': sz['block']},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.put('/admin/hierarchy/super-zone/${sz['id']}',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _addZone(Map sz) => _openDialog(
-    title: 'जोन जोड़ें – ${sz['name']}', color: _kGreen, icon: Icons.map_outlined,
-    fields: {'name': 'जोन का नाम', 'hqAddress': 'मुख्यालय पता'},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.post('/admin/super-zones/${sz['id']}/zones',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _addZone(Map sz) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'जोन जोड़ें – ${sz['name']}', color: _kGreen, icon: Icons.map_outlined,
+      fields: {'name': 'जोन का नाम', 'hqAddress': 'मुख्यालय पता'},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.post('/admin/super-zones/${sz['id']}/zones',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _editZone(Map z) => _openDialog(
-    title: 'जोन संपादित करें', color: _kGreen, icon: Icons.edit_outlined,
-    fields: {'name': 'जोन का नाम', 'hqAddress': 'मुख्यालय पता'},
-    initial: {'name': z['name'], 'hqAddress': z['hq_address'] ?? z['hqAddress'] ?? ''},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.put('/admin/zones/${z['id']}',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _editZone(Map z) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'जोन संपादित करें', color: _kGreen, icon: Icons.edit_outlined,
+      fields: {'name': 'जोन का नाम', 'hqAddress': 'मुख्यालय पता'},
+      initial: {'name': z['name'], 'hqAddress': z['hq_address'] ?? z['hqAddress'] ?? ''},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.put('/admin/zones/${z['id']}',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _addSector(Map z) => _openDialog(
-    title: 'सैक्टर जोड़ें – ${z['name']}', color: _kGreen, icon: Icons.add,
-    fields: {'name': 'सैक्टर का नाम', 'hqAddress': 'मुख्यालय पता'},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.post('/admin/zones/${z['id']}/sectors',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _addSector(Map z) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'सैक्टर जोड़ें – ${z['name']}', color: _kGreen, icon: Icons.add,
+      fields: {'name': 'सैक्टर का नाम', 'hqAddress': 'मुख्यालय पता'},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.post('/admin/zones/${z['id']}/sectors',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _editSector(Map s) => _openDialog(
-    title: 'सैक्टर संपादित करें', color: _kGreen, icon: Icons.edit_outlined,
-    fields: {'name': 'सैक्टर का नाम', 'hqAddress': 'मुख्यालय पता'},
-    initial: {
-      'name': s['name'],
-      'hqAddress': s['hq_address'] ?? s['hqAddress'] ?? s['hq'] ?? '',
-    },
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.put('/admin/hierarchy/sector/${s['id']}',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _editSector(Map s) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'सैक्टर संपादित करें', color: _kGreen, icon: Icons.edit_outlined,
+      fields: {'name': 'सैक्टर का नाम', 'hqAddress': 'मुख्यालय पता'},
+      initial: {
+        'name': s['name'],
+        'hqAddress': s['hq_address'] ?? s['hqAddress'] ?? s['hq'] ?? '',
+      },
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.put('/admin/hierarchy/sector/${s['id']}',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _addGP(Map s) => _openDialog(
-    title: 'ग्राम पंचायत जोड़ें – ${s['name']}', color: _kPurple, icon: Icons.add,
-    fields: {'name': 'ग्राम पंचायत का नाम', 'address': 'पता'},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.post('/admin/sectors/${s['id']}/gram-panchayats',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _addGP(Map s) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'ग्राम पंचायत जोड़ें – ${s['name']}', color: _kPurple, icon: Icons.add,
+      fields: {'name': 'ग्राम पंचायत का नाम', 'address': 'पता'},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.post('/admin/sectors/${s['id']}/gram-panchayats',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
-  void _addCenter(Map gp) => _openCenterDialog(null, gpId: gp['id']);
-  void _editCenter(Map c)  => _openCenterDialog(c);
+  void _addCenter(Map gp) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openCenterDialog(null, gpId: gp['id']);
+  }
+  void _editCenter(Map c) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openCenterDialog(c);
+  }
 
-  void _addKendra(Map c) => _openDialog(
-    title: 'मतदेय स्थल (कक्ष) जोड़ें', color: _kPurple, icon: Icons.add,
-    fields: {'roomNumber': 'कक्ष संख्या'},
-    onSave: (data) async {
-      final t = await AuthService.getToken();
-      await ApiService.post('/admin/centers/${c['id']}/rooms',
-          Map<String, dynamic>.from(data), token: t);
-      _load();
-    },
-  );
+  void _addKendra(Map c) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
+    _openDialog(
+      title: 'मतदेय स्थल (कक्ष) जोड़ें', color: _kPurple, icon: Icons.add,
+      fields: {'roomNumber': 'कक्ष संख्या'},
+      onSave: (data) async {
+        final t = await AuthService.getToken();
+        await ApiService.post('/admin/centers/${c['id']}/rooms',
+            Map<String, dynamic>.from(data), token: t);
+        _load();
+      },
+    );
+  }
 
   void _openCenterDialog(Map? center, {int? gpId}) {
     final nameCtrl    = TextEditingController(text: center?['name'] ?? '');
@@ -748,6 +1274,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   }
 
   void _openStaffDialog(Map center) {
+    if (!_canEdit) { _snack('इतिहास मोड में स्टाफ असाइन अक्षम है', _kOrange); return; }
     showDialog(
       context: context,
       builder: (ctx) => _PaginatedStaffDialog(
@@ -849,11 +1376,12 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   // ── Build ─────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
-    // Title subtitle reflects district scope when master picked one
-    final scopeLine = (widget.role.toLowerCase() == 'master' &&
-            (widget.district ?? '').trim().isNotEmpty)
-        ? 'जनपद: ${widget.district}'
-        : 'Administrative Hierarchy Report';
+    final scopeLine = widget.electionName != null
+        ? 'चुनाव: ${widget.electionName}'
+        : (widget.role.toLowerCase() == 'master' &&
+                (widget.district ?? '').trim().isNotEmpty)
+            ? 'जनपद: ${widget.district}'
+            : 'Administrative Hierarchy Report';
 
     return Scaffold(
       backgroundColor: _kBg,
@@ -868,15 +1396,18 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
               style: TextStyle(
                   color: Colors.white, fontSize: 15, fontWeight: FontWeight.w800)),
           Text(scopeLine,
-              style: const TextStyle(color: Colors.white54, fontSize: 10)),
+              style: const TextStyle(color: Colors.white54, fontSize: 10),
+              overflow: TextOverflow.ellipsis),
         ]),
         actions: [
           IconButton(
               icon: const Icon(Icons.print_outlined, color: Colors.white),
               onPressed: _print, tooltip: 'प्रिंट'),
-          IconButton(
-              icon: const Icon(Icons.add_circle_outline, color: Colors.white),
-              onPressed: _addSuperZone, tooltip: 'सुपर जोन जोड़ें'),
+          if (_canEdit) ...[
+            IconButton(
+                icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+                onPressed: _addSuperZone, tooltip: 'सुपर जोन जोड़ें'),
+          ],
           IconButton(
               icon: const Icon(Icons.refresh_rounded, color: Colors.white),
               onPressed: _load),
@@ -898,6 +1429,9 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           : _error != null
               ? _ErrorView(error: _error!, onRetry: _load)
               : Column(children: [
+                  // ── History banner ──────────────────────────────────────
+                  if (widget.isHistory) _HistoryBanner(
+                      electionName: widget.electionName ?? 'पिछला चुनाव'),
                   _buildFilterBar(),
                   Expanded(child: TabBarView(controller: _tab, children: [
                     _buildTab1(),
@@ -968,6 +1502,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       itemCount: _filteredSZ.length,
       itemBuilder: (_, i) => _Tab1Card(
         sz: _filteredSZ[i],
+        isHistory: widget.isHistory,
         onEdit:    () => _editSZ(_filteredSZ[i]),
         onDelete:  () => _delete('/admin/hierarchy/super-zone',
             _filteredSZ[i]['id'], '${_filteredSZ[i]['name']}'),
@@ -998,6 +1533,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       itemCount: items.length,
       itemBuilder: (_, i) => _Tab2Card(
         sz: items[i]['sz'], z: items[i]['z'],
+        isHistory: widget.isHistory,
         onEditZone:   () => _editZone(items[i]['z']),
         onDeleteZone: () => _delete('/admin/zones',
             items[i]['z']['id'], '${items[i]['z']['name']}'),
@@ -1024,7 +1560,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
   // TAB 3 — with pagination
   // ══════════════════════════════════════════════════════════════════════════
   Widget _buildTab3() {
-    final allItems  = _allTab3Items;
+    final allItems   = _allTab3Items;
     final totalPages = _tab3TotalPages;
     final pagedItems = _pagedTab3Items;
 
@@ -1033,10 +1569,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
     return Column(
       children: [
         _Tab3PaginationBar(
-          currentPage: _tab3Page,
-          totalPages: totalPages,
-          totalItems: allItems.length,
-          pageSize: _tab3PageSize,
+          currentPage: _tab3Page, totalPages: totalPages,
+          totalItems: allItems.length, pageSize: _tab3PageSize,
           onPageChanged: (p) => setState(() => _tab3Page = p),
         ),
         Expanded(
@@ -1048,6 +1582,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
               return _Tab3Card(
                 sz: item['sz'], z: item['z'],
                 s:  item['s'],  gp: item['gp'],
+                isHistory: widget.isHistory,
                 onAddCenter:    () => _addCenter(item['gp']),
                 onEditCenter:   _editCenter,
                 onDeleteCenter: (c) => _delete(
@@ -1061,10 +1596,8 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
           ),
         ),
         _Tab3PaginationBar(
-          currentPage: _tab3Page,
-          totalPages: totalPages,
-          totalItems: allItems.length,
-          pageSize: _tab3PageSize,
+          currentPage: _tab3Page, totalPages: totalPages,
+          totalItems: allItems.length, pageSize: _tab3PageSize,
           onPageChanged: (p) => setState(() => _tab3Page = p),
           compact: true,
         ),
@@ -1074,6 +1607,7 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
 
   void _openOfficerDialog(
       String title, Color color, String endpoint, List officers) {
+    if (!_canEdit) { _snack('इतिहास मोड में संपादन अक्षम है', _kOrange); return; }
     showDialog(
       context: context,
       builder: (ctx) => _OfficersDialog(
@@ -1083,6 +1617,33 @@ class _HierarchyReportPageState extends State<HierarchyReportPage>
       ),
     );
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+// HISTORY BANNER
+// ══════════════════════════════════════════════════════════════════════════════
+class _HistoryBanner extends StatelessWidget {
+  final String electionName;
+  const _HistoryBanner({required this.electionName});
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+    color: _kAmber,
+    child: Row(children: [
+      const Icon(Icons.history_outlined, color: _kAmberDark, size: 16),
+      const SizedBox(width: 8),
+      Expanded(
+        child: Text(
+          'इतिहास देख रहे हैं: $electionName  •  संपादन अक्षम है',
+          style: const TextStyle(
+              color: _kAmberDark, fontSize: 12, fontWeight: FontWeight.w700),
+          overflow: TextOverflow.ellipsis,
+        ),
+      ),
+      const Icon(Icons.lock_outline, color: _kAmberDark, size: 14),
+    ]),
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1124,16 +1685,14 @@ class _Tab3PaginationBar extends StatelessWidget {
           horizontal: 12, vertical: compact ? 4 : 8),
       child: compact
           ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-              _navBtn(Icons.first_page, currentPage > 1,
-                  () => onPageChanged(1)),
+              _navBtn(Icons.first_page, currentPage > 1, () => onPageChanged(1)),
               _navBtn(Icons.chevron_left, currentPage > 1,
                   () => onPageChanged(currentPage - 1)),
               Padding(
                 padding: const EdgeInsets.symmetric(horizontal: 12),
                 child: Text('$currentPage / $totalPages',
-                    style: const TextStyle(
-                        fontSize: 12, fontWeight: FontWeight.w700,
-                        color: _kPrimary)),
+                    style: const TextStyle(fontSize: 12,
+                        fontWeight: FontWeight.w700, color: _kPrimary)),
               ),
               _navBtn(Icons.chevron_right, currentPage < totalPages,
                   () => onPageChanged(currentPage + 1)),
@@ -1147,16 +1706,14 @@ class _Tab3PaginationBar extends StatelessWidget {
                 style: const TextStyle(fontSize: 11, color: _kSubtle),
               )),
               Row(children: [
-                _navBtn(Icons.first_page, currentPage > 1,
-                    () => onPageChanged(1)),
+                _navBtn(Icons.first_page, currentPage > 1, () => onPageChanged(1)),
                 _navBtn(Icons.chevron_left, currentPage > 1,
                     () => onPageChanged(currentPage - 1)),
                 ...pages.map((p) => p == -1
                     ? const Padding(
                         padding: EdgeInsets.symmetric(horizontal: 2),
                         child: Text('…', style: TextStyle(color: _kSubtle)))
-                    : _pageBtn(p, p == currentPage,
-                        () => onPageChanged(p))),
+                    : _pageBtn(p, p == currentPage, () => onPageChanged(p))),
                 _navBtn(Icons.chevron_right, currentPage < totalPages,
                     () => onPageChanged(currentPage + 1)),
                 _navBtn(Icons.last_page, currentPage < totalPages,
@@ -1172,8 +1729,7 @@ class _Tab3PaginationBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(6),
         child: Padding(
           padding: const EdgeInsets.all(4),
-          child: Icon(icon,
-              size: 18,
+          child: Icon(icon, size: 18,
               color: enabled ? _kPrimary : _kBorder),
         ),
       );
@@ -1191,8 +1747,7 @@ class _Tab3PaginationBar extends StatelessWidget {
             border: Border.all(color: active ? _kPrimary : _kBorder),
           ),
           child: Center(child: Text('$page',
-              style: TextStyle(
-                  fontSize: 11, fontWeight: FontWeight.w700,
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
                   color: active ? Colors.white : _kDark))),
         ),
       );
@@ -1246,9 +1801,7 @@ class _PaginatedStaffDialogState extends State<_PaginatedStaffDialog> {
 
   void _onScroll() {
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 150
-        && !_loading && _hasMore) {
-      _loadStaff();
-    }
+        && !_loading && _hasMore) _loadStaff();
   }
 
   void _onSearch() {
@@ -1438,8 +1991,7 @@ class _PaginatedStaffDialogState extends State<_PaginatedStaffDialog> {
                                         child: Center(child: SizedBox(
                                             width: 16, height: 16,
                                             child: CircularProgressIndicator(
-                                                strokeWidth: 2,
-                                                color: _kPurple))));
+                                                strokeWidth: 2, color: _kPurple))));
                                   }
                                   final s   = _staff[i];
                                   final sel = _selectedId == s['id'];
@@ -1468,8 +2020,7 @@ class _PaginatedStaffDialogState extends State<_PaginatedStaffDialog> {
                                               : null),
                                         const SizedBox(width: 10),
                                         Expanded(child: Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.start,
+                                            crossAxisAlignment: CrossAxisAlignment.start,
                                             children: [
                                           Text('${s['name']}', style: TextStyle(
                                               color: sel ? _kPurple : _kDark,
@@ -1772,10 +2323,11 @@ class _OfficersDialogState extends State<_OfficersDialog> {
 // ══════════════════════════════════════════════════════════════════════════════
 class _Tab1Card extends StatelessWidget {
   final Map sz;
+  final bool isHistory;
   final VoidCallback onEdit, onDelete, onAddZone, onManageOfficers;
-  const _Tab1Card({required this.sz, required this.onEdit,
-      required this.onDelete, required this.onAddZone,
-      required this.onManageOfficers});
+  const _Tab1Card({required this.sz, required this.isHistory,
+      required this.onEdit, required this.onDelete,
+      required this.onAddZone, required this.onManageOfficers});
 
   @override
   Widget build(BuildContext context) {
@@ -1838,12 +2390,14 @@ class _Tab1Card extends StatelessWidget {
                 Text('जिला: ${sz['district'] ?? '—'}  |  कुल ग्राम पंचायत: $gpTotal',
                     style: const TextStyle(color: Colors.white60, fontSize: 11)),
               ])),
-              _IAB(icon: Icons.person_add_outlined, color: Colors.teal[200]!,
-                  onTap: onManageOfficers, tooltip: 'अधिकारी'),
-              _IAB(icon: Icons.add_circle_outline, color: _kAccent,
-                  onTap: onAddZone, tooltip: 'जोन जोड़ें'),
-              _IAB(icon: Icons.edit_outlined, color: _kAccent, onTap: onEdit),
-              _IAB(icon: Icons.delete_outline, color: Colors.red[300]!, onTap: onDelete),
+              if (!isHistory) ...[
+                _IAB(icon: Icons.person_add_outlined, color: Colors.teal[200]!,
+                    onTap: onManageOfficers, tooltip: 'अधिकारी'),
+                _IAB(icon: Icons.add_circle_outline, color: _kAccent,
+                    onTap: onAddZone, tooltip: 'जोन जोड़ें'),
+                _IAB(icon: Icons.edit_outlined, color: _kAccent, onTap: onEdit),
+                _IAB(icon: Icons.delete_outline, color: Colors.red[300]!, onTap: onDelete),
+              ],
             ]),
             const SizedBox(height: 6),
             Row(children: [
@@ -1881,12 +2435,10 @@ class _Tab1Card extends StatelessWidget {
           ),
 
         if (rows.isEmpty)
-          const Padding(
-              padding: EdgeInsets.all(16),
+          const Padding(padding: EdgeInsets.all(16),
               child: _Empty(text: 'कोई जोन/सैक्टर नहीं'))
         else
-          Padding(
-              padding: const EdgeInsets.all(8),
+          Padding(padding: const EdgeInsets.all(8),
               child: _Tab1Table(rows: rows, sz: sz)),
       ]),
     );
@@ -1968,8 +2520,7 @@ class _Tab1Table extends StatelessWidget {
           }).join('\n---\n')
         : '—';
     final sHq = r.s != null
-        ? ((r.s!['hq'] ?? r.s!['hq_address'] ?? r.s!['hqAddress'] ?? '—')
-            .toString())
+        ? ((r.s!['hq'] ?? r.s!['hq_address'] ?? r.s!['hqAddress'] ?? '—').toString())
         : '—';
 
     return Container(
@@ -1998,14 +2549,12 @@ class _Tab1Table extends StatelessWidget {
         Container(width: _ws[2], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: true, bottom: false),
             child: isFirstInZone
-                ? Text(zOffText,
-                    style: const TextStyle(fontSize: 11, color: _kDark))
+                ? Text(zOffText, style: const TextStyle(fontSize: 11, color: _kDark))
                 : const SizedBox()),
         Container(width: _ws[3], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: true, bottom: false),
             child: isFirstInZone
-                ? Text(
-                    '${r.z['hq_address'] ?? r.z['hqAddress'] ?? '—'}',
+                ? Text('${r.z['hq_address'] ?? r.z['hqAddress'] ?? '—'}',
                     style: const TextStyle(fontSize: 11, color: _kDark))
                 : const SizedBox()),
         Container(width: _ws[4], padding: const EdgeInsets.all(6),
@@ -2017,20 +2566,16 @@ class _Tab1Table extends StatelessWidget {
                 : const SizedBox()),
         Container(width: _ws[5], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: true, bottom: false),
-            child: Text(sText,
-                style: const TextStyle(fontSize: 11, color: _kDark))),
+            child: Text(sText, style: const TextStyle(fontSize: 11, color: _kDark))),
         Container(width: _ws[6], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: true, bottom: false),
-            child: Text(sHq,
-                style: const TextStyle(fontSize: 11, color: _kDark))),
+            child: Text(sHq, style: const TextStyle(fontSize: 11, color: _kDark))),
         Container(width: _ws[7], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: true, bottom: false),
-            child: Text(r.gpNames,
-                style: const TextStyle(fontSize: 11, color: _kDark))),
+            child: Text(r.gpNames, style: const TextStyle(fontSize: 11, color: _kDark))),
         Container(width: _ws[8], padding: const EdgeInsets.all(6),
             decoration: _cellDec(right: false, bottom: false),
-            child: Text(r.thanas,
-                style: const TextStyle(fontSize: 11, color: _kDark))),
+            child: Text(r.thanas, style: const TextStyle(fontSize: 11, color: _kDark))),
       ]),
     );
   }
@@ -2041,11 +2586,12 @@ class _Tab1Table extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 class _Tab2Card extends StatelessWidget {
   final Map sz, z;
+  final bool isHistory;
   final VoidCallback onEditZone, onDeleteZone, onAddSector, onManageZoneOfficers;
   final void Function(Map) onEditSector, onAddGP, onManageSectorOfficers;
   final Future<void> Function(Map) onDeleteSector;
   const _Tab2Card({
-    required this.sz, required this.z,
+    required this.sz, required this.z, required this.isHistory,
     required this.onEditZone, required this.onDeleteZone,
     required this.onAddSector, required this.onManageZoneOfficers,
     required this.onEditSector, required this.onDeleteSector,
@@ -2084,12 +2630,14 @@ class _Tab2Card extends StatelessWidget {
                 Text('सुपर जोन: ${sz['name']}  |  ब्लॉक: ${sz['block'] ?? '—'}',
                     style: const TextStyle(color: Colors.white60, fontSize: 11)),
               ])),
-              _IAB(icon: Icons.person_add_outlined, color: Colors.teal[200]!,
-                  onTap: onManageZoneOfficers, tooltip: 'अधिकारी'),
-              _IAB(icon: Icons.add_circle_outline, color: _kAccent,
-                  onTap: onAddSector, tooltip: 'सैक्टर जोड़ें'),
-              _IAB(icon: Icons.edit_outlined, color: _kAccent, onTap: onEditZone),
-              _IAB(icon: Icons.delete_outline, color: Colors.red[300]!, onTap: onDeleteZone),
+              if (!isHistory) ...[
+                _IAB(icon: Icons.person_add_outlined, color: Colors.teal[200]!,
+                    onTap: onManageZoneOfficers, tooltip: 'अधिकारी'),
+                _IAB(icon: Icons.add_circle_outline, color: _kAccent,
+                    onTap: onAddSector, tooltip: 'सैक्टर जोड़ें'),
+                _IAB(icon: Icons.edit_outlined, color: _kAccent, onTap: onEditZone),
+                _IAB(icon: Icons.delete_outline, color: Colors.red[300]!, onTap: onDeleteZone),
+              ],
             ]),
             if (zOff.isNotEmpty) ...[
               const SizedBox(height: 6),
@@ -2109,6 +2657,7 @@ class _Tab2Card extends StatelessWidget {
           padding: const EdgeInsets.all(8),
           child: _Tab2Table(
               sectors: sectors,
+              isHistory: isHistory,
               onEdit: onEditSector,
               onDelete: onDeleteSector,
               onAddGP: onAddGP,
@@ -2121,11 +2670,12 @@ class _Tab2Card extends StatelessWidget {
 
 class _Tab2Table extends StatelessWidget {
   final List sectors;
+  final bool isHistory;
   final void Function(Map) onEdit, onAddGP, onManageOfficers;
   final Future<void> Function(Map) onDelete;
-  const _Tab2Table({required this.sectors, required this.onEdit,
-      required this.onDelete, required this.onAddGP,
-      required this.onManageOfficers});
+  const _Tab2Table({required this.sectors, required this.isHistory,
+      required this.onEdit, required this.onDelete,
+      required this.onAddGP, required this.onManageOfficers});
 
   static const _ws = <int, double>{
     0: 40, 1: 180, 2: 180, 3: 120, 4: 180, 5: 90, 6: 88,
@@ -2231,17 +2781,19 @@ class _Tab2Table extends StatelessWidget {
                     style: const TextStyle(fontSize: 11, color: _kDark))),
                 _cell(5, Text(kStr.isEmpty ? '—' : kStr,
                     style: const TextStyle(fontSize: 11, color: _kDark))),
-                _cell(6, Wrap(spacing: 2, runSpacing: 2, children: [
-                  _IAB(icon: Icons.person_add_outlined, color: Colors.teal,
-                      tooltip: 'अधिकारी',
-                      onTap: () => onManageOfficers(s)),
-                  _IAB(icon: Icons.add, color: _kGreen,
-                      onTap: () => onAddGP(s), tooltip: 'GP जोड़ें'),
-                  _IAB(icon: Icons.edit_outlined, color: _kGreen,
-                      onTap: () => onEdit(s)),
-                  _IAB(icon: Icons.delete_outline, color: _kRed,
-                      onTap: () => onDelete(s)),
-                ]), last: true),
+                _cell(6, isHistory
+                    ? const Center(child: Icon(Icons.lock_outline,
+                        size: 14, color: _kSubtle))
+                    : Wrap(spacing: 2, runSpacing: 2, children: [
+                        _IAB(icon: Icons.person_add_outlined, color: Colors.teal,
+                            tooltip: 'अधिकारी', onTap: () => onManageOfficers(s)),
+                        _IAB(icon: Icons.add, color: _kGreen,
+                            onTap: () => onAddGP(s), tooltip: 'GP जोड़ें'),
+                        _IAB(icon: Icons.edit_outlined, color: _kGreen,
+                            onTap: () => onEdit(s)),
+                        _IAB(icon: Icons.delete_outline, color: _kRed,
+                            onTap: () => onDelete(s)),
+                      ]), last: true),
               ]),
             );
           }),
@@ -2270,11 +2822,13 @@ class _Tab2Table extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 class _Tab3Card extends StatelessWidget {
   final Map sz, z, s, gp;
+  final bool isHistory;
   final VoidCallback onAddCenter;
   final void Function(Map) onEditCenter, onAddKendra, onManageStaff;
   final Future<void> Function(Map) onDeleteCenter, onDeleteKendra;
   const _Tab3Card({required this.sz, required this.z, required this.s,
-      required this.gp, required this.onAddCenter, required this.onEditCenter,
+      required this.gp, required this.isHistory,
+      required this.onAddCenter, required this.onEditCenter,
       required this.onDeleteCenter, required this.onAddKendra,
       required this.onDeleteKendra, required this.onManageStaff});
 
@@ -2287,22 +2841,21 @@ class _Tab3Card extends StatelessWidget {
       totalKendra += k.isEmpty ? 1 : k.length;
     }
 
+    // ONE ROW PER CENTER (matdan_sthal) — kendra room numbers joined in one cell
     final rows = <Map>[];
-    int sthalNo = 1, kendraG = 1;
+    int sthalNo = 1;
     for (final c in centers) {
       final kendras = c['kendras'] as List? ?? [];
-      if (kendras.isEmpty) {
-        rows.add({'c': c, 'k': null, 'kNo': kendraG,
-            'sNo': sthalNo, 'first': true});
-        sthalNo++; kendraG++;
-      } else {
-        for (int ki = 0; ki < kendras.length; ki++) {
-          rows.add({'c': c, 'k': kendras[ki], 'kNo': kendraG,
-              'sNo': ki == 0 ? sthalNo : null, 'first': ki == 0});
-          kendraG++;
-        }
-        sthalNo++;
-      }
+      // e.g. "101, 102, 103" or empty when no rooms defined
+      final roomNos = kendras.isEmpty
+          ? ''
+          : kendras.map((k) => '${k['room_number']}').join(', ');
+      rows.add({
+        'c':       c,
+        'sthalNo': sthalNo,    // simple serial shown in both col0 and col2
+        'roomNos': roomNos,    // combined room numbers shown inside name cell
+      });
+      sthalNo++;
     }
 
     return Container(
@@ -2344,32 +2897,33 @@ class _Tab3Card extends StatelessWidget {
                 _GoldChip('मतदान केन्द्र: $totalKendra'),
               ]),
             ]),
-            const SizedBox(height: 6),
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.white.withOpacity(0.2),
-                  foregroundColor: Colors.white, elevation: 0,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 12, vertical: 6),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8))),
-              icon: const Icon(Icons.add, size: 14),
-              label: const Text('मतदेय स्थल जोड़ें',
-                  style: TextStyle(fontSize: 11)),
-              onPressed: onAddCenter,
-            ),
+            if (!isHistory) ...[
+              const SizedBox(height: 6),
+              ElevatedButton.icon(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.white.withOpacity(0.2),
+                    foregroundColor: Colors.white, elevation: 0,
+                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(8))),
+                icon: const Icon(Icons.add, size: 14),
+                label: const Text('मतदेय स्थल जोड़ें',
+                    style: TextStyle(fontSize: 11)),
+                onPressed: onAddCenter,
+              ),
+            ],
           ]),
         ),
 
         if (rows.isEmpty)
-          const Padding(
-              padding: EdgeInsets.all(16),
+          const Padding(padding: EdgeInsets.all(16),
               child: _Empty(text: 'कोई मतदेय स्थल नहीं'))
         else
           Padding(
             padding: const EdgeInsets.all(8),
             child: _Tab3Table(
                 rows: rows, z: z, s: s, gp: gp,
+                isHistory: isHistory,
                 onEditCenter:   onEditCenter,
                 onDeleteCenter: onDeleteCenter,
                 onAddKendra:    onAddKendra,
@@ -2383,16 +2937,27 @@ class _Tab3Card extends StatelessWidget {
 
 class _Tab3Table extends StatelessWidget {
   final List<Map> rows; final Map z, s, gp;
+  final bool isHistory;
   final void Function(Map) onEditCenter, onAddKendra, onManageStaff;
   final Future<void> Function(Map) onDeleteCenter, onDeleteKendra;
   const _Tab3Table({required this.rows, required this.z, required this.s,
-      required this.gp, required this.onEditCenter,
-      required this.onDeleteCenter, required this.onAddKendra,
-      required this.onDeleteKendra, required this.onManageStaff});
+      required this.gp, required this.isHistory,
+      required this.onEditCenter, required this.onDeleteCenter,
+      required this.onAddKendra, required this.onDeleteKendra,
+      required this.onManageStaff});
 
   static const _ws = <int, double>{
-    0: 44, 1: 160, 2: 44, 3: 160, 4: 54, 5: 58, 6: 80,
-    7: 200, 8: 115, 9: 50, 10: 88,
+    0: 44,   // kendra serial (1, 2, 3…)
+    1: 170,  // center name + room nos + type badge
+    2: 44,   // sthal serial
+    3: 150,  // sthal name + address
+    4: 54,   // zone
+    5: 58,   // sector
+    6: 80,   // thana
+    7: 200,  // duty officer
+    8: 115,  // mobile
+    9: 50,   // bus no
+    10: 88,  // actions
   };
 
   @override
@@ -2403,13 +2968,14 @@ class _Tab3Table extends StatelessWidget {
       child: ConstrainedBox(
         constraints: BoxConstraints(minWidth: totalW),
         child: Column(children: [
+          // ── Header ──────────────────────────────────────────────────────
           Container(
             decoration: BoxDecoration(color: const Color(0xFFF3E5F5),
                 border: Border.all(color: _kBorder, width: 0.7)),
             child: Row(children: [
-              _th(0, 'मतदान\nकेन्द्र की\nसंख्या'),
+              _th(0, 'मतदान\nकेन्द्र\nसंख्या'),
               _th(1, 'मतदान केन्द्र\nका नाम'),
-              _th(2, 'मतदेय\nसं.'),
+              _th(2, 'मतदेय\nस्थल सं.'),
               _th(3, 'मतदान स्थल\nका नाम'),
               _th(4, 'जोन\nसंख्या'),
               _th(5, 'सैक्टर\nसंख्या'),
@@ -2420,12 +2986,21 @@ class _Tab3Table extends StatelessWidget {
               _th(10, 'एक्शन', last: true),
             ]),
           ),
+          // ── One row per matdan_sthal (center) ───────────────────────────
           ...rows.asMap().entries.map((e) {
-            final i     = e.key; final r = e.value;
-            final c     = r['c']     as Map;
-            final k     = r['k']     as Map?;
-            final first = r['first'] as bool? ?? true;
-            final bg    = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
+            final i   = e.key;
+            final r   = e.value;
+            final c   = r['c'] as Map;
+            final bg  = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
+
+            // Simple serial number for this center (1, 2, 3…)
+            // Room numbers shown inside the center name cell
+            final roomNos = (r['roomNos'] as String? ?? '');
+            final nameWithRooms = roomNos.isNotEmpty
+                ? '${c['name']}\nक.नं. $roomNos'
+                : '${c['name']}';
+
+            final typeColor = _sensitivityColor(c['center_type'] as String?);
 
             final duty  = c['duty_officers'] as List? ?? [];
             final dText = duty.isNotEmpty
@@ -2438,12 +3013,6 @@ class _Tab3Table extends StatelessWidget {
                     .where((m) => m.isNotEmpty).join('\n')
                 : '—';
 
-            final kLabel = k != null
-                ? '${c['name']} क.नं. ${k['room_number']}'
-                : '${c['name']}';
-            final typeColor =
-                _sensitivityColor(c['center_type'] as String?);
-
             return Container(
               decoration: BoxDecoration(color: bg,
                   border: const Border(
@@ -2451,79 +3020,74 @@ class _Tab3Table extends StatelessWidget {
                     right:  BorderSide(color: _kBorder, width: 0.7),
                     bottom: BorderSide(color: _kBorder, width: 0.7),
                   )),
-              child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                _cell(0, Center(child: Text('${r['kNo']}',
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                // col 0 — simple serial number
+                _cell(0, Center(child: Text('${r['sthalNo']}',
                     style: const TextStyle(color: _kPurple,
                         fontWeight: FontWeight.w800, fontSize: 13)))),
+                // col 1 — center name + room nos + type badge
                 _cell(1, Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  Text(kLabel,
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(nameWithRooms,
                       style: const TextStyle(color: _kDark, fontSize: 11)),
                   Container(
                     margin: const EdgeInsets.only(top: 3),
-                    padding: const EdgeInsets.symmetric(
-                        horizontal: 5, vertical: 2),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
                     decoration: BoxDecoration(
                         color: typeColor.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(4),
-                        border: Border.all(
-                            color: typeColor.withOpacity(0.4))),
+                        border: Border.all(color: typeColor.withOpacity(0.4))),
                     child: Text('${c['center_type'] ?? 'C'}',
                         style: TextStyle(color: typeColor,
                             fontSize: 10, fontWeight: FontWeight.w800))),
                 ])),
-                _cell(2, first && r['sNo'] != null
-                    ? Center(child: Text('${r['sNo']}',
-                        style: const TextStyle(color: _kDark,
-                            fontWeight: FontWeight.w700, fontSize: 12)))
-                    : const SizedBox()),
-                _cell(3, first
-                    ? Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                        Text('${c['name']}',
-                            style: const TextStyle(
-                                color: _kDark, fontSize: 11)),
-                        if ((c['address'] ?? '').toString().isNotEmpty)
-                          Text('${c['address']}',
-                              style: const TextStyle(
-                                  color: _kSubtle, fontSize: 9)),
-                      ])
-                    : const SizedBox()),
+                // col 2 — sthal serial number
+                _cell(2, Center(child: Text('${r['sthalNo']}',
+                    style: const TextStyle(color: _kDark,
+                        fontWeight: FontWeight.w700, fontSize: 12)))),
+                // col 3 — sthal name + address
+                _cell(3, Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${c['name']}',
+                      style: const TextStyle(color: _kDark, fontSize: 11)),
+                  if ((c['address'] ?? '').toString().isNotEmpty)
+                    Text('${c['address']}',
+                        style: const TextStyle(color: _kSubtle, fontSize: 9)),
+                ])),
+                // col 4 — zone
                 _cell(4, Center(child: Text('${z['name']}',
                     style: const TextStyle(color: _kDark, fontSize: 10)))),
+                // col 5 — sector
                 _cell(5, Center(child: Text('${s['name']}',
                     style: const TextStyle(color: _kDark, fontSize: 10)))),
-                _cell(6, Text(
-                    '${c['thana'] ?? gp['thana'] ?? '—'}',
+                // col 6 — thana
+                _cell(6, Text('${c['thana'] ?? gp['thana'] ?? '—'}',
                     style: const TextStyle(color: _kDark, fontSize: 11))),
+                // col 7 — duty officer
                 _cell(7, Text(dText,
                     style: const TextStyle(color: _kDark, fontSize: 11))),
+                // col 8 — mobile
                 _cell(8, Text(mText,
                     style: const TextStyle(color: _kDark, fontSize: 11,
                         fontFamily: 'monospace'))),
+                // col 9 — bus no
                 _cell(9, Center(child: Text('${c['bus_no'] ?? '—'}',
                     style: const TextStyle(color: _kDark,
                         fontWeight: FontWeight.w700, fontSize: 11)))),
-                _cell(10, Wrap(spacing: 2, runSpacing: 2, children: [
-                  _IAB(icon: Icons.people_alt_outlined, color: _kGreen,
-                      tooltip: 'स्टाफ',
-                      onTap: () => onManageStaff(c)),
-                  _IAB(icon: Icons.add_box_outlined, color: _kPrimary,
-                      tooltip: 'कक्ष जोड़ें',
-                      onTap: () => onAddKendra(c)),
-                  _IAB(icon: Icons.edit_outlined, color: _kPurple,
-                      onTap: () => onEditCenter(c)),
-                  _IAB(icon: Icons.delete_outline, color: _kRed,
-                      onTap: () => onDeleteCenter(c)),
-                  if (k != null)
-                    _IAB(icon: Icons.remove_circle_outline,
-                        color: Colors.orange, tooltip: 'कक्ष हटाएं',
-                        onTap: () => onDeleteKendra(k)),
-                ]), last: true),
+                // col 10 — actions
+                _cell(10, isHistory
+                    ? const Center(child: Icon(Icons.lock_outline,
+                        size: 14, color: _kSubtle))
+                    : Wrap(spacing: 2, runSpacing: 2, children: [
+                        _IAB(icon: Icons.people_alt_outlined, color: _kGreen,
+                            tooltip: 'स्टाफ', onTap: () => onManageStaff(c)),
+                        _IAB(icon: Icons.add_box_outlined, color: _kPrimary,
+                            tooltip: 'कक्ष जोड़ें', onTap: () => onAddKendra(c)),
+                        _IAB(icon: Icons.edit_outlined, color: _kPurple,
+                            onTap: () => onEditCenter(c)),
+                        _IAB(icon: Icons.delete_outline, color: _kRed,
+                            onTap: () => onDeleteCenter(c)),
+                      ]), last: true),
               ]),
             );
           }),
@@ -2571,8 +3135,7 @@ class _FDrop extends StatelessWidget {
               color: Colors.white,
               borderRadius: BorderRadius.circular(8),
               border: Border.all(
-                  color: value != null ? _kPrimary : _kBorder,
-                  width: 1.5)),
+                  color: value != null ? _kPrimary : _kBorder, width: 1.5)),
           child: DropdownButton<String>(
             value: value, underline: const SizedBox(), isExpanded: true,
             hint: Text(placeholder,

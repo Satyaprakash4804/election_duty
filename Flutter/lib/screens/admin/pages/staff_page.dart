@@ -13,7 +13,7 @@ import '../../../core/rank_helper.dart';
 import '../core/widgets.dart';
 import 'dart:typed_data';
 
-// ── Palette ───────────────────────────────────────────────────────────────────
+// ── Palette ──────────────────────────────────────────────────────────────────
 const _kBg      = Color(0xFFFDF6E3);
 const _kSurface = Color(0xFFF5E6C8);
 const _kPrimary = Color(0xFF8B6914);
@@ -26,6 +26,8 @@ const _kSuccess = Color(0xFF2D6A1E);
 const _kInfo    = Color(0xFF1A5276);
 const _kArmed   = Color(0xFF1B5E20);
 const _kUnarmed = Color(0xFF37474F);
+const _kAmber   = Color(0xFFF59E0B);
+const _kWarning = Color(0xFFE65100);
 
 const _pageSize = 50;
 
@@ -34,24 +36,30 @@ const _kAllRanks = [
 ];
 
 const _kRequiredHeaders = [
-  {'col': 'pno',      'hi': 'PNO / बैज नंबर',   'req': true},
-  {'col': 'name',     'hi': 'नाम',               'req': true},
-  {'col': 'mobile',   'hi': 'मोबाइल (10 अंक)',   'req': false},
-  {'col': 'thana',    'hi': 'थाना',               'req': false},
-  {'col': 'district', 'hi': 'जिला',               'req': false},
-  {'col': 'rank',     'hi': 'पद / रैंक',           'req': false},
+  {'col': 'pno',      'hi': 'PNO / बैज नंबर',    'req': true},
+  {'col': 'name',     'hi': 'नाम',                'req': true},
+  {'col': 'mobile',   'hi': 'मोबाइल (10 अंक)',    'req': false},
+  {'col': 'thana',    'hi': 'थाना',                'req': false},
+  {'col': 'district', 'hi': 'जिला',                'req': false},
+  {'col': 'rank',     'hi': 'पद / रैंक',            'req': false},
   {'col': 'sastra',   'hi': 'सशस्त्र (1/yes/हाँ)', 'req': false},
 ];
 
-// ── Mobile validation regex (exactly 10 digits) ──────────────────────────────
 final RegExp _kMobile10 = RegExp(r'^\d{10}$');
 
-/// Strips non-digits from input (for CSV/Excel mobile fields that may have
-/// dashes, spaces, or +91 prefix). Returns up-to-last 10 digits if longer.
 String _normalizeMobile(String raw) {
   final digits = raw.replaceAll(RegExp(r'\D'), '');
   if (digits.length > 10) return digits.substring(digits.length - 10);
   return digits;
+}
+
+// ── Election state ────────────────────────────────────────────────────────────
+class _ElectionInfo {
+  final int?   id;
+  final String name;
+  final bool   isActive;
+  const _ElectionInfo({this.id, required this.name, required this.isActive});
+  factory _ElectionInfo.none() => const _ElectionInfo(id: null, name: '', isActive: false);
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -136,8 +144,7 @@ class UploadProgressBanner extends StatelessWidget {
                     child: isErr
                         ? const Icon(Icons.error_outline, color: _kError, size: 20)
                         : isDone
-                            ? const Icon(Icons.check_circle_outline,
-                                color: _kSuccess, size: 20)
+                            ? const Icon(Icons.check_circle_outline, color: _kSuccess, size: 20)
                             : _SpinIcon(color: color),
                   ),
                   const SizedBox(width: 10),
@@ -161,8 +168,7 @@ class UploadProgressBanner extends StatelessWidget {
                   if (isDone || isErr)
                     GestureDetector(
                         onTap: UploadProgress.instance.reset,
-                        child: const Icon(Icons.close,
-                            color: Colors.white54, size: 18)),
+                        child: const Icon(Icons.close, color: Colors.white54, size: 18)),
                 ]),
                 const SizedBox(height: 8),
                 ClipRRect(
@@ -224,14 +230,12 @@ class _SpinIcon extends StatefulWidget {
   State<_SpinIcon> createState() => _SpinIconState();
 }
 
-class _SpinIconState extends State<_SpinIcon>
-    with SingleTickerProviderStateMixin {
+class _SpinIconState extends State<_SpinIcon> with SingleTickerProviderStateMixin {
   late AnimationController _c;
   @override
   void initState() {
     super.initState();
-    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1))
-      ..repeat();
+    _c = AnimationController(vsync: this, duration: const Duration(seconds: 1))..repeat();
   }
   @override
   void dispose() { _c.dispose(); super.dispose(); }
@@ -239,6 +243,196 @@ class _SpinIconState extends State<_SpinIcon>
   Widget build(BuildContext context) => RotationTransition(
       turns: _c,
       child: Icon(Icons.upload_rounded, color: widget.color, size: 18));
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ELECTION GUARD BANNER — shown when no active election
+// ══════════════════════════════════════════════════════════════════════════════
+
+class _ElectionGuardBanner extends StatelessWidget {
+  final _ElectionInfo election;
+  final bool loading;
+  final VoidCallback onRefresh;
+
+  const _ElectionGuardBanner({
+    required this.election,
+    required this.loading,
+    required this.onRefresh,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    if (loading) {
+      return Container(
+        color: _kDark.withOpacity(0.95),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        child: const Row(children: [
+          SizedBox(width: 12, height: 12,
+              child: CircularProgressIndicator(strokeWidth: 2, color: _kAmber)),
+          SizedBox(width: 8),
+          Text('चुनाव स्थिति लोड हो रही है...',
+              style: TextStyle(color: _kAmber, fontSize: 11, fontWeight: FontWeight.w600)),
+        ]),
+      );
+    }
+
+    final hasElection = election.isActive && election.id != null;
+
+    if (hasElection) {
+      return Container(
+        color: _kSuccess.withOpacity(0.1),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+        child: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(5),
+            decoration: BoxDecoration(
+              color: _kSuccess.withOpacity(0.15), shape: BoxShape.circle),
+            child: const Icon(Icons.how_to_vote_outlined, size: 12, color: _kSuccess),
+          ),
+          const SizedBox(width: 8),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('सक्रिय चुनाव',
+                  style: TextStyle(color: _kSuccess, fontSize: 9,
+                      fontWeight: FontWeight.w700, letterSpacing: 0.5)),
+              Text(election.name,
+                  style: const TextStyle(color: _kDark, fontSize: 11,
+                      fontWeight: FontWeight.w800),
+                  maxLines: 1, overflow: TextOverflow.ellipsis),
+            ],
+          )),
+          GestureDetector(
+            onTap: onRefresh,
+            child: const Icon(Icons.refresh, size: 13, color: _kSuccess),
+          ),
+        ]),
+      );
+    }
+
+    // No active election — prominent warning
+    return GestureDetector(
+      onTap: () => _showNoElectionDialog(context),
+      child: Container(
+        color: _kError.withOpacity(0.08),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(children: [
+          Container(
+            padding: const EdgeInsets.all(6),
+            decoration: BoxDecoration(
+              color: _kError.withOpacity(0.12), shape: BoxShape.circle),
+            child: const Icon(Icons.warning_amber_rounded, size: 14, color: _kError),
+          ),
+          const SizedBox(width: 10),
+          Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text('⚠️ कोई सक्रिय चुनाव नहीं',
+                  style: TextStyle(color: _kError, fontSize: 11,
+                      fontWeight: FontWeight.w800)),
+              const Text('Duty assignment बंद है — विवरण के लिए टैप करें',
+                  style: TextStyle(color: _kSubtle, fontSize: 10)),
+            ],
+          )),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: _kError.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(6),
+              border: Border.all(color: _kError.withOpacity(0.3)),
+            ),
+            child: const Text('सहायता', style: TextStyle(color: _kError, fontSize: 10,
+                fontWeight: FontWeight.w700)),
+          ),
+        ]),
+      ),
+    );
+  }
+
+  static void _showNoElectionDialog(BuildContext context) {
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: _kBg,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(16),
+          side: const BorderSide(color: _kError, width: 1.5),
+        ),
+        title: const Row(children: [
+          Icon(Icons.warning_amber_rounded, color: _kError, size: 22),
+          SizedBox(width: 10),
+          Expanded(child: Text('सक्रिय चुनाव नहीं',
+              style: TextStyle(color: _kError, fontWeight: FontWeight.w800, fontSize: 15))),
+        ]),
+        content: Column(mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Text(
+            'Staff duty assignment के लिए एक सक्रिय चुनाव configuration आवश्यक है।',
+            style: TextStyle(color: _kDark, fontSize: 13, height: 1.5),
+          ),
+          const SizedBox(height: 12),
+          Container(
+            padding: const EdgeInsets.all(12),
+            decoration: BoxDecoration(
+              color: _kAmber.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: _kAmber.withOpacity(0.3)),
+            ),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Row(children: [
+                Icon(Icons.info_outline, size: 14, color: _kAmber),
+                SizedBox(width: 6),
+                Text('क्या करें?',
+                    style: TextStyle(color: _kAmber, fontSize: 12,
+                        fontWeight: FontWeight.w800)),
+              ]),
+              const SizedBox(height: 8),
+              _bulletPoint('अपने जिले के Election Cell से संपर्क करें'),
+              _bulletPoint('उनसे Election Configuration सक्रिय करने का अनुरोध करें'),
+              _bulletPoint('Config सक्रिय होने पर यह banner हरा हो जाएगा'),
+            ]),
+          ),
+          const SizedBox(height: 10),
+          Container(
+            padding: const EdgeInsets.all(10),
+            decoration: BoxDecoration(
+              color: _kInfo.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(color: _kInfo.withOpacity(0.2)),
+            ),
+            child: const Row(children: [
+              Icon(Icons.phone_outlined, size: 14, color: _kInfo),
+              SizedBox(width: 6),
+              Expanded(child: Text(
+                'नोट: Staff जोड़ना और देखना अभी भी संभव है। केवल duty assignment बंद है।',
+                style: TextStyle(color: _kInfo, fontSize: 11, height: 1.4),
+              )),
+            ]),
+          ),
+        ]),
+        actions: [
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: _kPrimary, foregroundColor: Colors.white,
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
+            child: const Text('समझ गया'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  static Widget _bulletPoint(String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 4),
+    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      const Text('• ', style: TextStyle(color: _kDark, fontSize: 11)),
+      Expanded(child: Text(text,
+          style: const TextStyle(color: _kDark, fontSize: 11, height: 1.4))),
+    ]),
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
@@ -251,9 +445,12 @@ class StaffPage extends StatefulWidget {
   State<StaffPage> createState() => _StaffPageState();
 }
 
-class _StaffPageState extends State<StaffPage>
-    with SingleTickerProviderStateMixin {
+class _StaffPageState extends State<StaffPage> with SingleTickerProviderStateMixin {
   late TabController _tabs;
+
+  // Election state
+  _ElectionInfo _election = _ElectionInfo.none();
+  bool _electionLoading = true;
 
   String  _selectedRank  = 'All';
   String  _armedFilter   = 'All';
@@ -299,7 +496,136 @@ class _StaffPageState extends State<StaffPage>
       });
     });
     UploadProgress.instance.addListener(_onUploadChanged);
+    _fetchElection();
     _refresh();
+  }
+
+  /// Fetches the active election config scoped to the admin's district.
+  /// Uses the same 3-tier fallback as DashboardPage to ensure consistency.
+  ///
+  /// PRIMARY:   /admin/election-config/active  — canonical endpoint
+  /// SECONDARY: /admin/election/finalize/status — fallback
+  /// TERTIARY:  none → mark as inactive
+  Future<void> _fetchElection() async {
+    if (!mounted) return;
+    setState(() => _electionLoading = true);
+
+    try {
+      final token = await AuthService.getToken();
+
+      // ── PRIMARY: /admin/election-config/active ──────────────────────────
+      try {
+        final res     = await ApiService.get('/admin/election-config/active', token: token);
+        final outer   = (res is Map ? res['data'] : null) as Map<String, dynamic>? ?? {};
+        final hasActive = outer['hasActiveConfig'] as bool? ?? false;
+        final cfg     = outer['config'] as Map<String, dynamic>? ?? {};
+
+        if (!mounted) return;
+
+        if (hasActive && cfg.isNotEmpty) {
+          final isFinalized = cfg['isFinalized'] as bool? ??
+              (cfg['is_finalized'] == 1) ?? false;
+
+          // Finalized elections are no longer "active" for assignment purposes
+          if (isFinalized) {
+            setState(() {
+              _election = _ElectionInfo.none();
+              _electionLoading = false;
+            });
+            return;
+          }
+
+          final id   = _asInt(cfg['id']);
+          final name = _asStr(cfg['electionName']);
+
+          setState(() {
+            _election = _ElectionInfo(
+              id:       id,
+              name:     name,
+              isActive: id != null && name.isNotEmpty,
+            );
+            _electionLoading = false;
+          });
+          return;
+        }
+
+        // hasActiveConfig == false → no active election for this district
+        setState(() {
+          _election = _ElectionInfo.none();
+          _electionLoading = false;
+        });
+        return;
+
+      } catch (e1) {
+        debugPrint('[StaffPage] election-config/active failed: $e1');
+        // fall through to secondary
+      }
+
+      // ── SECONDARY: /admin/election/finalize/status ─────────────────────
+      try {
+        final res       = await ApiService.get('/admin/election/finalize/status', token: token);
+        final outer     = res is Map ? res : <String, dynamic>{};
+        final hasActive = outer['hasActiveConfig'] as bool? ?? false;
+        final cfg       = outer['config'] as Map<String, dynamic>? ?? {};
+        final finalized = _asBool(cfg['isFinalized']) || _asBool(outer['alreadyFinalized']);
+        final name      = _asStr(cfg['electionName']);
+        final id        = _asInt(cfg['id'] ?? outer['electionId']);
+
+        if (!mounted) return;
+
+        if (!hasActive || finalized) {
+          setState(() {
+            _election = _ElectionInfo.none();
+            _electionLoading = false;
+          });
+          return;
+        }
+
+        setState(() {
+          _election = _ElectionInfo(
+            id:       id,
+            name:     name,
+            isActive: id != null && name.isNotEmpty && !finalized,
+          );
+          _electionLoading = false;
+        });
+        return;
+
+      } catch (e2) {
+        debugPrint('[StaffPage] finalize/status failed: $e2');
+        // fall through to failure
+      }
+
+      // ── TERTIARY: mark as inactive ─────────────────────────────────────
+      if (!mounted) return;
+      setState(() {
+        _election = _ElectionInfo.none();
+        _electionLoading = false;
+      });
+
+    } catch (e) {
+      debugPrint('[StaffPage] _fetchElection outer error: $e');
+      if (!mounted) return;
+      setState(() {
+        _election = _ElectionInfo.none();
+        _electionLoading = false;
+      });
+    }
+  }
+
+  // ── Parse helpers (mirrors DashboardPage) ─────────────────────────────────
+  static String _asStr(dynamic v) => (v as String? ?? '').trim();
+  static bool   _asBool(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int)  return v == 1;
+    return false;
+  }
+  static int? _asInt(dynamic v) {
+    if (v == null) return null;
+    if (v is int)    return v;
+    if (v is double) return v.toInt();
+    return int.tryParse('$v');
   }
 
   void _onUploadChanged() {
@@ -327,7 +653,6 @@ class _StaffPageState extends State<StaffPage>
     super.dispose();
   }
 
-  // ── Query helpers ─────────────────────────────────────────────────────────
   String get _rankParam => _selectedRank == 'All' ? '' : _selectedRank;
   String get _armedParam {
     if (_armedFilter == 'Armed')   return 'yes';
@@ -335,7 +660,6 @@ class _StaffPageState extends State<StaffPage>
     return '';
   }
 
-  // ── Data loading ──────────────────────────────────────────────────────────
   void _refresh() {
     _selected.clear();
     setState(() {
@@ -380,45 +704,6 @@ class _StaffPageState extends State<StaffPage>
         setState(() => _assignedLoading = false);
         _snack(_msg(e), error: true);
       }
-    }
-  }
-
-  Future<void> _downloadSampleFile({bool isExcel = false}) async {
-    try {
-      final headers = ['pno', 'name', 'mobile', 'thana', 'district', 'rank', 'sastra'];
-
-      if (isExcel) {
-        final excel = ex.Excel.createExcel();
-        final sheet = excel['Sheet1'];
-        sheet.appendRow(headers.map((h) => ex.TextCellValue(h)).toList());
-        sheet.appendRow([
-          ex.TextCellValue('12345'),
-          ex.TextCellValue('Rahul Sharma'),
-          ex.TextCellValue('9876543210'),
-          ex.TextCellValue('Civil Lines'),
-          ex.TextCellValue('Lucknow'),
-          ex.TextCellValue('Constable'),
-          ex.TextCellValue('yes'),
-        ]);
-        final bytes = excel.encode();
-        await FilePicker.platform.saveFile(
-          dialogTitle: 'Save Sample Excel',
-          fileName: 'staff_sample.xlsx',
-          bytes: Uint8List.fromList(bytes!),
-        );
-      } else {
-        final csv = StringBuffer();
-        csv.writeln(headers.join(','));
-        csv.writeln('12345,Rahul Sharma,9876543210,Civil Lines,Lucknow,Constable,yes');
-        await FilePicker.platform.saveFile(
-          dialogTitle: 'Save Sample CSV',
-          fileName: 'staff_sample.csv',
-          bytes: Uint8List.fromList(utf8.encode(csv.toString())),
-        );
-      }
-      _snack('Sample file downloaded');
-    } catch (e) {
-      _snack('Download failed: ${e.toString()}', error: true);
     }
   }
 
@@ -478,6 +763,15 @@ class _StaffPageState extends State<StaffPage>
 
   bool _isArmed(Map s) => s['isArmed'] == true || s['isArmed'] == 1;
 
+  // ── Election guard check before assignment operations ─────────────────────
+  bool _checkElection({bool showDialog = true}) {
+    if (!_election.isActive || _election.id == null) {
+      if (showDialog) _ElectionGuardBanner._showNoElectionDialog(context);
+      return false;
+    }
+    return true;
+  }
+
   // ── CRUD ──────────────────────────────────────────────────────────────────
   Future<void> _deleteStaff(Map s) async {
     final ok = await _confirm(
@@ -492,6 +786,7 @@ class _StaffPageState extends State<StaffPage>
   }
 
   Future<void> _removeDuty(Map s) async {
+    if (!_checkElection()) return;
     final type = _v(s['assignType']);
     if (type != 'booth') {
       _snack('अधिकारी असाइनमेंट संरचना पेज से बदलें', error: true);
@@ -543,6 +838,7 @@ class _StaffPageState extends State<StaffPage>
   }
 
   Future<void> _bulkUnassign() async {
+    if (!_checkElection()) return;
     final currentList = _tabs.index == 0 ? _assigned : _reserve;
     final boothIds = currentList
         .where((s) => _selected.contains(s['id']) && _v(s['assignType']) == 'booth')
@@ -565,6 +861,7 @@ class _StaffPageState extends State<StaffPage>
   }
 
   void _bulkAssignDialog() {
+    if (!_checkElection()) return;
     final selectedIds = _selected.toList();
     final busCtrl     = TextEditingController();
     Map?  selectedCenter;
@@ -607,6 +904,7 @@ class _StaffPageState extends State<StaffPage>
         if (centerList.isEmpty && !cLoading) loadCenters(reset: true, ss: ss);
         return _AssignDialog(
           title: '${selectedIds.length} स्टाफ को असाइन करें',
+          election: _election,
           selectedCenter: selectedCenter,
           centerList: centerList,
           cLoading: cLoading,
@@ -624,29 +922,28 @@ class _StaffPageState extends State<StaffPage>
           onCenterTap: (c) => ss(() => selectedCenter = c),
           onClearCenter: () => ss(() => selectedCenter = null),
           onCancel: () => Navigator.pop(ctx),
-          onAssign: selectedCenter == null || saving
-              ? null
-              : () async {
-                  ss(() => saving = true);
-                  try {
-                    final token = await AuthService.getToken();
-                    final res = await ApiService.post(
-                      '/admin/staff/bulk-assign',
-                      {
-                        'staffIds': selectedIds,
-                        'centerId': selectedCenter!['id'],
-                        'mode': 'manual',   // ✅ MUST BE INSIDE MAP
-                      },
-                    );
-                    if (ctx.mounted) Navigator.pop(ctx);
-                    _snack('${res['data']?['assigned'] ?? 0} स्टाफ असाइन');
-                    _clearSelection();
-                    _refresh();
-                  } catch (e) {
-                    ss(() => saving = false);
-                    _snack(_msg(e), error: true);
-                  }
+          onAssign: selectedCenter == null || saving ? null : () async {
+            ss(() => saving = true);
+            try {
+              final token = await AuthService.getToken();
+              final res = await ApiService.post(
+                '/admin/staff/bulk-assign',
+                {
+                  'staffIds': selectedIds,
+                  'centerId': selectedCenter!['id'],
+                  'mode': 'manual',
                 },
+                token: token,
+              );
+              if (ctx.mounted) Navigator.pop(ctx);
+              _snack('${res['data']?['assigned'] ?? 0} स्टाफ असाइन');
+              _clearSelection();
+              _refresh();
+            } catch (e) {
+              ss(() => saving = false);
+              _snack(_msg(e), error: true);
+            }
+          },
           assignLabel: '${selectedIds.length} असाइन करें',
         );
       }),
@@ -664,11 +961,9 @@ class _StaffPageState extends State<StaffPage>
           title: Row(children: [
             const Icon(Icons.warning_amber_rounded, color: _kError, size: 20),
             const SizedBox(width: 8),
-            Expanded(
-              child: Text(title,
-                  style: const TextStyle(color: _kError,
-                      fontWeight: FontWeight.w800, fontSize: 15)),
-            ),
+            Expanded(child: Text(title,
+                style: const TextStyle(color: _kError,
+                    fontWeight: FontWeight.w800, fontSize: 15))),
           ]),
           content: Text(content,
               style: const TextStyle(color: _kDark, fontSize: 13, height: 1.5)),
@@ -679,10 +974,8 @@ class _StaffPageState extends State<StaffPage>
             ElevatedButton(
               onPressed: () => Navigator.pop(ctx, true),
               style: ElevatedButton.styleFrom(
-                  backgroundColor: _kError,
-                  foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8))),
+                  backgroundColor: _kError, foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8))),
               child: Text(confirmText),
             ),
           ],
@@ -691,6 +984,7 @@ class _StaffPageState extends State<StaffPage>
 
   // ── Assign single ─────────────────────────────────────────────────────────
   void _showAssignDialog(Map staff) {
+    if (!_checkElection()) return;
     final busCtrl = TextEditingController();
     Map?  selectedCenter;
     String centerQ = '';
@@ -733,6 +1027,7 @@ class _StaffPageState extends State<StaffPage>
         return _AssignDialog(
           title: 'ड्यूटी असाइन करें',
           staffCard: _staffInfoCard(staff),
+          election: _election,
           selectedCenter: selectedCenter,
           centerList: centerList,
           cLoading: cLoading,
@@ -750,33 +1045,26 @@ class _StaffPageState extends State<StaffPage>
           onCenterTap: (c) => ss(() => selectedCenter = c),
           onClearCenter: () => ss(() => selectedCenter = null),
           onCancel: () => Navigator.pop(ctx),
-          onAssign: selectedCenter == null || saving
-              ? null
-              : () async {
-                  ss(() => saving = true);
-                  try {
-                    await ApiService.post(
-                      '/admin/duties',
-                      {
-                        'staffId': staff['id'],
-                        'centerId': selectedCenter!['id'],
-                        'mode': 'manual', // ✅ MUST ADD THIS
-                      },
-                      token: await AuthService.getToken(),
-                    );
-
-                    if (ctx.mounted) Navigator.pop(ctx);
-
-                    _snack('${_v(staff['name'])} असाइन किया गया');
-                    _refresh();
-
-                  } catch (e) {
-                    _snack(_msg(e), error: true);
-                  } catch (e) {
-                    ss(() => saving = false);
-                    _snack(_msg(e), error: true);
-                  }
+          onAssign: selectedCenter == null || saving ? null : () async {
+            ss(() => saving = true);
+            try {
+              await ApiService.post(
+                '/admin/duties',
+                {
+                  'staffId': staff['id'],
+                  'centerId': selectedCenter!['id'],
+                  'mode': 'manual',
                 },
+                token: await AuthService.getToken(),
+              );
+              if (ctx.mounted) Navigator.pop(ctx);
+              _snack('${_v(staff['name'])} असाइन किया गया');
+              _refresh();
+            } catch (e) {
+              ss(() => saving = false);
+              _snack(_msg(e), error: true);
+            }
+          },
           assignLabel: 'ड्यूटी असाइन करें',
         );
       }),
@@ -809,17 +1097,14 @@ class _StaffPageState extends State<StaffPage>
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                  child: Form(
-                    key: fk,
-                    child: Column(children: [
-                      _field(nc, 'पूरा नाम *', Icons.person_outline, req: true),
-                      _field(pc, 'PNO *', Icons.badge_outlined, req: true),
-                      _mobileField(mc),
-                      _field(tc, 'थाना', Icons.local_police_outlined),
-                      _RankInputField(controller: rc),
-                      _armedToggle(value: isArmed, onChanged: (v) => ss(() => isArmed = v)),
-                    ]),
-                  ),
+                  child: Form(key: fk, child: Column(children: [
+                    _field(nc, 'पूरा नाम *', Icons.person_outline, req: true),
+                    _field(pc, 'PNO *', Icons.badge_outlined, req: true),
+                    _mobileField(mc),
+                    _field(tc, 'थाना', Icons.local_police_outlined),
+                    _RankInputField(controller: rc),
+                    _armedToggle(value: isArmed, onChanged: (v) => ss(() => isArmed = v)),
+                  ])),
                 ),
               ),
               _dlgActions(ctx, saving, onSave: () async {
@@ -876,18 +1161,15 @@ class _StaffPageState extends State<StaffPage>
               Flexible(
                 child: SingleChildScrollView(
                   padding: const EdgeInsets.fromLTRB(20, 16, 20, 0),
-                  child: Form(
-                    key: fk,
-                    child: Column(children: [
-                      _field(pc, 'PNO *', Icons.badge_outlined, req: true),
-                      _field(nc, 'पूरा नाम *', Icons.person_outline, req: true),
-                      _mobileField(mc),
-                      _field(tc, 'थाना', Icons.local_police_outlined),
-                      _field(dc, 'जिला', Icons.location_city_outlined),
-                      _RankInputField(controller: rc),
-                      _armedToggle(value: isArmed, onChanged: (v) => ss(() => isArmed = v)),
-                    ]),
-                  ),
+                  child: Form(key: fk, child: Column(children: [
+                    _field(pc, 'PNO *', Icons.badge_outlined, req: true),
+                    _field(nc, 'पूरा नाम *', Icons.person_outline, req: true),
+                    _mobileField(mc),
+                    _field(tc, 'थाना', Icons.local_police_outlined),
+                    _field(dc, 'जिला', Icons.location_city_outlined),
+                    _RankInputField(controller: rc),
+                    _armedToggle(value: isArmed, onChanged: (v) => ss(() => isArmed = v)),
+                  ])),
                 ),
               ),
               _dlgActions(ctx, saving, saveLabel: 'जोड़ें', onSave: () async {
@@ -918,6 +1200,37 @@ class _StaffPageState extends State<StaffPage>
     );
   }
 
+  // ── Sample file download ──────────────────────────────────────────────────
+  Future<void> _downloadSampleFile({bool isExcel = false}) async {
+    try {
+      final headers = ['pno', 'name', 'mobile', 'thana', 'district', 'rank', 'sastra'];
+      if (isExcel) {
+        final excel = ex.Excel.createExcel();
+        final sheet = excel['Sheet1'];
+        sheet.appendRow(headers.map((h) => ex.TextCellValue(h)).toList());
+        sheet.appendRow([
+          ex.TextCellValue('12345'), ex.TextCellValue('Rahul Sharma'),
+          ex.TextCellValue('9876543210'), ex.TextCellValue('Civil Lines'),
+          ex.TextCellValue('Lucknow'), ex.TextCellValue('Constable'), ex.TextCellValue('yes'),
+        ]);
+        final bytes = excel.encode();
+        await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Sample Excel', fileName: 'staff_sample.xlsx',
+          bytes: Uint8List.fromList(bytes!),
+        );
+      } else {
+        final csv = StringBuffer();
+        csv.writeln(headers.join(','));
+        csv.writeln('12345,Rahul Sharma,9876543210,Civil Lines,Lucknow,Constable,yes');
+        await FilePicker.platform.saveFile(
+          dialogTitle: 'Save Sample CSV', fileName: 'staff_sample.csv',
+          bytes: Uint8List.fromList(utf8.encode(csv.toString())),
+        );
+      }
+      _snack('Sample file downloaded');
+    } catch (e) { _snack('Download failed: ${e.toString()}', error: true); }
+  }
+
   // ══════════════════════════════════════════════════════════════════════════
   //  UPLOAD HINT DIALOG
   // ══════════════════════════════════════════════════════════════════════════
@@ -934,259 +1247,138 @@ class _StaffPageState extends State<StaffPage>
             decoration: BoxDecoration(
               color: Colors.white,
               borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(color: Colors.black.withOpacity(0.1),
-                    blurRadius: 20, offset: const Offset(0, 6)),
-              ],
+              boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.1),
+                  blurRadius: 20, offset: const Offset(0, 6))],
             ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.stretch,
-              children: [
-                Padding(
-                  padding: const EdgeInsets.fromLTRB(18, 16, 12, 16),
-                  child: Row(children: [
-                    const Icon(Icons.upload_file_outlined, color: _kPrimary, size: 20),
-                    const SizedBox(width: 10),
-                    const Expanded(
-                      child: Text('फ़ाइल अपलोड करें',
-                          style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700,
-                              color: _kDark)),
-                    ),
-                    IconButton(
-                      onPressed: () => Navigator.pop(ctx, false),
+            child: Column(mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(18, 16, 12, 16),
+                child: Row(children: [
+                  const Icon(Icons.upload_file_outlined, color: _kPrimary, size: 20),
+                  const SizedBox(width: 10),
+                  const Expanded(child: Text('फ़ाइल अपलोड करें',
+                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.w700, color: _kDark))),
+                  IconButton(onPressed: () => Navigator.pop(ctx, false),
                       icon: const Icon(Icons.close, size: 18, color: _kSubtle),
-                      padding: EdgeInsets.zero,
-                      constraints: const BoxConstraints(),
+                      padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+                ]),
+              ),
+              const Divider(height: 1),
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(18),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Row(children: [
+                      _formatChip('Excel', '.xlsx / .xls', Icons.table_chart_outlined, _kSuccess),
+                      const SizedBox(width: 8),
+                      _formatChip('CSV', '.csv', Icons.description_outlined, _kInfo),
+                    ]),
+                    const SizedBox(height: 14),
+                    _hintBox(Icons.translate, _kInfo,
+                        'समर्थित: Unicode (Mangal), Krutidev, ANSI/Windows-1252.\nपुरानी एक्सेल फ़ाइलें भी पढ़ी जाएंगी।'),
+                    const SizedBox(height: 8),
+                    _hintBox(Icons.auto_fix_high, _kPrimary,
+                        'रैंक अंग्रेज़ी में सेव होगी (फ़िल्टर के लिए):\nआरक्षी → Constable, मुख्य आरक्षी → Head Constable,\nउप निरीक्षक/दरोगा → SI, निरीक्षक → Inspector'),
+                    const SizedBox(height: 14),
+                    const Text('आवश्यक कॉलम',
+                        style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
+                            color: _kSubtle, letterSpacing: 0.4)),
+                    const SizedBox(height: 8),
+                    Container(
+                      decoration: BoxDecoration(border: Border.all(color: _kBorder),
+                          borderRadius: BorderRadius.circular(10)),
+                      clipBehavior: Clip.antiAlias,
+                      child: Column(
+                        children: _kRequiredHeaders.asMap().entries.map((e) {
+                          final req = e.value['req'] as bool;
+                          return Container(
+                            color: e.key.isEven ? Colors.white : const Color(0xFFF8F9FA),
+                            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 9),
+                            child: Row(children: [
+                              Text(e.value['col'] as String,
+                                  style: const TextStyle(fontFamily: 'monospace',
+                                      fontSize: 11, fontWeight: FontWeight.w700,
+                                      color: Color(0xFF2C3E50))),
+                              const SizedBox(width: 10),
+                              Expanded(child: Text(e.value['hi'] as String,
+                                  style: const TextStyle(fontSize: 12, color: _kDark))),
+                              Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: req ? _kError.withOpacity(0.08) : _kSuccess.withOpacity(0.08),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Text(req ? 'ज़रूरी' : 'वैकल्पिक',
+                                    style: TextStyle(color: req ? _kError : _kSuccess,
+                                        fontSize: 10, fontWeight: FontWeight.w600)),
+                              ),
+                            ]),
+                          );
+                        }).toList(),
+                      ),
                     ),
+                    const SizedBox(height: 12),
+                    _hintBox(Icons.info_outline, _kArmed,
+                        'sastra: 1, yes, हाँ, armed → सशस्त्र\nबाकी या खाली → निःशस्त्र\nmobile: केवल 10 अंक रखे जाएंगे (-, +91 हटा दिए जाएंगे)'),
                   ]),
                 ),
-                const Divider(height: 1),
-                Flexible(
-                  child: SingleChildScrollView(
-                    padding: const EdgeInsets.all(18),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Row(children: [
-                          _formatChip('Excel', '.xlsx / .xls',
-                              Icons.table_chart_outlined, _kSuccess),
-                          const SizedBox(width: 8),
-                          _formatChip('CSV', '.csv',
-                              Icons.description_outlined, _kInfo),
-                        ]),
-                        const SizedBox(height: 14),
-
-                        // Encoding support hint
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: _kInfo.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: _kInfo.withOpacity(0.2)),
-                          ),
-                          child: const Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(Icons.translate, size: 13, color: _kInfo),
-                              SizedBox(width: 7),
-                              Expanded(
-                                child: Text(
-                                  'समर्थित: Unicode (Mangal), Krutidev, ANSI/Windows-1252.\n'
-                                  'पुरानी एक्सेल फ़ाइलें भी पढ़ी जाएंगी।',
-                                  style: TextStyle(fontSize: 11, color: _kDark, height: 1.5),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(height: 8),
-
-                        // Rank auto-conversion hint
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: _kPrimary.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: _kPrimary.withOpacity(0.2)),
-                          ),
-                          child: const Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(Icons.auto_fix_high, size: 13, color: _kPrimary),
-                              SizedBox(width: 7),
-                              Expanded(
-                                child: Text(
-                                  'रैंक अंग्रेज़ी में सेव होगी (फ़िल्टर के लिए):\n'
-                                  'आरक्षी → Constable, मुख्य आरक्षी → Head Constable,\n'
-                                  'उप निरीक्षक/दरोगा → SI, निरीक्षक → Inspector',
-                                  style: TextStyle(fontSize: 11, color: _kDark, height: 1.5),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-
-                        const SizedBox(height: 14),
-                        const Text('आवश्यक कॉलम',
-                            style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700,
-                                color: _kSubtle, letterSpacing: 0.4)),
-                        const SizedBox(height: 8),
-                        Container(
-                          decoration: BoxDecoration(
-                            border: Border.all(color: _kBorder),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          clipBehavior: Clip.antiAlias,
-                          child: Column(
-                            children: _kRequiredHeaders.asMap().entries.map((e) {
-                              final req = e.value['req'] as bool;
-                              return Container(
-                                color: e.key.isEven
-                                    ? Colors.white
-                                    : const Color(0xFFF8F9FA),
-                                padding: const EdgeInsets.symmetric(
-                                    horizontal: 12, vertical: 9),
-                                child: Row(children: [
-                                  Text(e.value['col'] as String,
-                                      style: const TextStyle(
-                                        fontFamily: 'monospace',
-                                        fontSize: 11,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF2C3E50),
-                                      )),
-                                  const SizedBox(width: 10),
-                                  Expanded(
-                                    child: Text(e.value['hi'] as String,
-                                        style: const TextStyle(fontSize: 12, color: _kDark)),
-                                  ),
-                                  Container(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 7, vertical: 2),
-                                    decoration: BoxDecoration(
-                                      color: req ? _kError.withOpacity(0.08)
-                                          : _kSuccess.withOpacity(0.08),
-                                      borderRadius: BorderRadius.circular(20),
-                                    ),
-                                    child: Text(req ? 'ज़रूरी' : 'वैकल्पिक',
-                                        style: TextStyle(
-                                          color: req ? _kError : _kSuccess,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w600,
-                                        )),
-                                  ),
-                                ]),
-                              );
-                            }).toList(),
-                          ),
-                        ),
-                        const SizedBox(height: 12),
-                        Container(
-                          padding: const EdgeInsets.all(10),
-                          decoration: BoxDecoration(
-                            color: _kArmed.withOpacity(0.05),
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: _kArmed.withOpacity(0.2)),
-                          ),
-                          child: const Row(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Icon(Icons.info_outline, size: 13, color: _kArmed),
-                              SizedBox(width: 7),
-                              Expanded(
-                                child: Text(
-                                  'sastra: 1, yes, हाँ, armed → सशस्त्र\n'
-                                  'बाकी या खाली → निःशस्त्र\n'
-                                  'mobile: केवल 10 अंक रखे जाएंगे (-, +91 हटा दिए जाएंगे)',
-                                  style: TextStyle(
-                                      fontSize: 11, color: _kDark, height: 1.5),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-                const Divider(height: 1),
-                Padding(
-                  padding: const EdgeInsets.all(16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      Row(children: [
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _downloadSampleFile(isExcel: false),
-                            icon: const Icon(Icons.download, size: 14),
-                            label: const Text('CSV'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _kSubtle,
-                              side: const BorderSide(color: _kBorder),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              textStyle: const TextStyle(fontSize: 13),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: OutlinedButton.icon(
-                            onPressed: () => _downloadSampleFile(isExcel: true),
-                            icon: const Icon(Icons.download, size: 14),
-                            label: const Text('Excel'),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _kSubtle,
-                              side: const BorderSide(color: _kBorder),
-                              padding: const EdgeInsets.symmetric(vertical: 10),
-                              textStyle: const TextStyle(fontSize: 13),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                        ),
-                      ]),
-                      const SizedBox(height: 10),
-                      Row(children: [
-                        Expanded(
-                          child: OutlinedButton(
-                            onPressed: () => Navigator.pop(ctx, false),
-                            style: OutlinedButton.styleFrom(
-                              foregroundColor: _kSubtle,
-                              side: const BorderSide(color: _kBorder),
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                            child: const Text('रद्द', style: TextStyle(fontSize: 13)),
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          flex: 2,
-                          child: ElevatedButton.icon(
-                            onPressed: () => Navigator.pop(ctx, true),
-                            icon: const Icon(Icons.upload_file, size: 15),
-                            label: const Text('फ़ाइल चुनें', style: TextStyle(fontSize: 13)),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: _kPrimary,
-                              foregroundColor: Colors.white,
-                              elevation: 0,
-                              padding: const EdgeInsets.symmetric(vertical: 12),
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(8)),
-                            ),
-                          ),
-                        ),
-                      ]),
-                    ],
-                  ),
-                ),
-              ],
-            ),
+              ),
+              const Divider(height: 1),
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
+                  Row(children: [
+                    Expanded(child: OutlinedButton.icon(
+                      onPressed: () => _downloadSampleFile(isExcel: false),
+                      icon: const Icon(Icons.download, size: 14),
+                      label: const Text('CSV'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _kSubtle, side: const BorderSide(color: _kBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        textStyle: const TextStyle(fontSize: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    )),
+                    const SizedBox(width: 8),
+                    Expanded(child: OutlinedButton.icon(
+                      onPressed: () => _downloadSampleFile(isExcel: true),
+                      icon: const Icon(Icons.download, size: 14),
+                      label: const Text('Excel'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _kSubtle, side: const BorderSide(color: _kBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 10),
+                        textStyle: const TextStyle(fontSize: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    )),
+                  ]),
+                  const SizedBox(height: 10),
+                  Row(children: [
+                    Expanded(child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx, false),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: _kSubtle, side: const BorderSide(color: _kBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                      child: const Text('रद्द', style: TextStyle(fontSize: 13)),
+                    )),
+                    const SizedBox(width: 10),
+                    Expanded(flex: 2, child: ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(ctx, true),
+                      icon: const Icon(Icons.upload_file, size: 15),
+                      label: const Text('फ़ाइल चुनें', style: TextStyle(fontSize: 13)),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: _kPrimary, foregroundColor: Colors.white,
+                        elevation: 0, padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                      ),
+                    )),
+                  ]),
+                ]),
+              ),
+            ]),
           ),
         ),
       ),
@@ -1194,28 +1386,39 @@ class _StaffPageState extends State<StaffPage>
     return result == true;
   }
 
-  Widget _formatChip(String format, String ext, IconData icon, Color color) =>
-      Expanded(
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.07),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.25)),
-          ),
-          child: Row(children: [
-            Icon(icon, size: 16, color: color),
-            const SizedBox(width: 6),
-            Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(format,
-                  style: TextStyle(color: color,
-                      fontWeight: FontWeight.w800, fontSize: 12)),
-              Text(ext,
-                  style: const TextStyle(color: _kSubtle, fontSize: 10)),
-            ]),
-          ]),
-        ),
-      );
+  Widget _hintBox(IconData icon, Color color, String text) => Container(
+    margin: const EdgeInsets.only(bottom: 4),
+    padding: const EdgeInsets.all(10),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.05),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: color.withOpacity(0.2)),
+    ),
+    child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Icon(icon, size: 13, color: color),
+      const SizedBox(width: 7),
+      Expanded(child: Text(text, style: TextStyle(fontSize: 11, color: _kDark, height: 1.5))),
+    ]),
+  );
+
+  Widget _formatChip(String format, String ext, IconData icon, Color color) => Expanded(
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.07),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.25)),
+      ),
+      child: Row(children: [
+        Icon(icon, size: 16, color: color),
+        const SizedBox(width: 6),
+        Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(format, style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12)),
+          Text(ext, style: const TextStyle(color: _kSubtle, fontSize: 10)),
+        ]),
+      ]),
+    ),
+  );
 
   Future<void> _pickFile() async {
     final proceed = await _showUploadHint();
@@ -1259,18 +1462,15 @@ class _StaffPageState extends State<StaffPage>
     }
   }
 
-  // ── CSV processing (uses encoding_helper for byte→string + cell normalize) ─
+  // ── CSV processing ────────────────────────────────────────────────────────
   Future<void> _processCSV(List<int> bytes) async {
     UploadProgress.instance.update(
-        p: _UploadPhase.parsing,
-        msg: 'CSV पार्स हो रही है...',
+        p: _UploadPhase.parsing, msg: 'CSV पार्स हो रही है...',
         pp: 0.1, hp: 0, ip: 0, a: 0, t: 0);
-
     await Future.delayed(const Duration(milliseconds: 16));
 
     String content;
     try {
-      // Use encoding helper — handles UTF-8/Win-1252/ANSI automatically + strips BOM
       content = decodeCsvBytes(bytes);
     } catch (e) {
       UploadProgress.instance.reset();
@@ -1293,25 +1493,17 @@ class _StaffPageState extends State<StaffPage>
         final ch = line[i];
         if (ch == '"') {
           if (inQuote && i + 1 < line.length && line[i + 1] == '"') {
-            buf.write('"');
-            i++;
-          } else {
-            inQuote = !inQuote;
-          }
+            buf.write('"'); i++;
+          } else { inQuote = !inQuote; }
         } else if (ch == ',' && !inQuote) {
-          result.add(buf.toString().trim());
-          buf.clear();
-        } else {
-          buf.write(ch);
-        }
+          result.add(buf.toString().trim()); buf.clear();
+        } else { buf.write(ch); }
       }
       result.add(buf.toString().trim());
       return result;
     }
 
-    final headers = parseCSVLine(lines.first)
-        .map((h) => h.toLowerCase().trim()).toList();
-
+    final headers = parseCSVLine(lines.first).map((h) => h.toLowerCase().trim()).toList();
     int? iPno, iName, iMob, iThana, iDist, iRank, iArmed;
     for (int ci = 0; ci < headers.length; ci++) {
       final h = headers[ci];
@@ -1323,86 +1515,59 @@ class _StaffPageState extends State<StaffPage>
       if (iRank  == null && (h.contains('rank') || h.contains('post') || h.contains('पद'))) iRank = ci;
       if (iArmed == null && (h.contains('sastra') || h.contains('armed') || h.contains('weapon') || h.contains('सशस्त्र'))) iArmed = ci;
     }
-
-    iPno  ??= 0; iName ??= 1; iMob   ??= 2;
-    iThana ??= 3; iDist  ??= 4; iRank  ??= 5;
+    iPno ??= 0; iName ??= 1; iMob ??= 2; iThana ??= 3; iDist ??= 4; iRank ??= 5;
 
     const armedVals = {'1', 'yes', 'हाँ', 'han', 'sastra', 'सशस्त्र', 'armed', 'true'};
-
     String cell(List<String> row, int? idx) {
       if (idx == null || idx >= row.length) return '';
-      // Normalize each cell — applies Krutidev → Unicode if needed
       return normalizeCell(row[idx]);
     }
 
     final preview = <Map<String, dynamic>>[];
-    int mobileFixed = 0, mobileInvalid = 0;
-    int rankConverted = 0;
+    int mobileFixed = 0, mobileInvalid = 0, rankConverted = 0;
     final dataLines = lines.skip(1).toList();
     final total = dataLines.length;
-
     UploadProgress.instance.update(msg: 'Rows पढ़ रहे हैं...', pp: 0.2, t: total);
 
     for (int ri = 0; ri < dataLines.length; ri++) {
       final line = dataLines[ri].trim();
       if (line.isEmpty) continue;
       final row = parseCSVLine(line);
-      final pno  = cell(row, iPno);
-      final name = cell(row, iName);
+      final pno = cell(row, iPno); final name = cell(row, iName);
       if (pno.isEmpty && name.isEmpty) continue;
 
-      // Mobile validation/normalization
       final rawMobile = cell(row, iMob);
-      String mobile = '';
-      bool   mobileOk = true;
+      String mobile = ''; bool mobileOk = true;
       if (rawMobile.isNotEmpty) {
         final norm = _normalizeMobile(rawMobile);
         if (_kMobile10.hasMatch(norm)) {
-          mobile = norm;
-          if (norm != rawMobile) mobileFixed++;
-        } else {
-          mobile = norm;       // keep so user can see/edit
-          mobileOk = false;
-          mobileInvalid++;
-        }
+          mobile = norm; if (norm != rawMobile) mobileFixed++;
+        } else { mobile = norm; mobileOk = false; mobileInvalid++; }
       }
 
-      // Rank: normalize Hindi/Mangal/Krutidev/abbrev → canonical English
-      final rawRank   = cell(row, iRank);
+      final rawRank = cell(row, iRank);
       final cleanRank = normalizeRank(rawRank);
       if (rawRank.isNotEmpty && cleanRank != rawRank) rankConverted++;
 
       final armedRaw = iArmed != null ? cell(row, iArmed).toLowerCase() : '';
-      final isArmed = armedVals.contains(armedRaw) ? 1 : 0;
-
       preview.add({
-        'pno':         pno,
-        'name':        name,
-        'mobile':      mobile,
-        '_mobileRaw':  rawMobile,
-        '_mobileOk':   mobileOk,
-        'thana':       cell(row, iThana),
-        'district':    cell(row, iDist),
-        'rank':        cleanRank,
-        '_rankRaw':    rawRank,
-        'is_armed':    isArmed,
-        '_row':        ri + 2,
+        'pno': pno, 'name': name, 'mobile': mobile,
+        '_mobileRaw': rawMobile, '_mobileOk': mobileOk,
+        'thana': cell(row, iThana), 'district': cell(row, iDist),
+        'rank': cleanRank, '_rankRaw': rawRank,
+        'is_armed': armedVals.contains(armedRaw) ? 1 : 0, '_row': ri + 2,
       });
 
       if (ri % 200 == 0) {
         UploadProgress.instance.update(
             pp: (0.2 + (ri / total.clamp(1, 999999)) * 0.8).clamp(0, 1),
-            a: preview.length,
-            msg: '${preview.length} rows मिले...');
+            a: preview.length, msg: '${preview.length} rows मिले...');
         await Future.delayed(Duration.zero);
       }
     }
 
     UploadProgress.instance.reset();
-    if (preview.isEmpty) {
-      _snack('CSV में कोई डेटा नहीं', error: true);
-      return;
-    }
+    if (preview.isEmpty) { _snack('CSV में कोई डेटा नहीं', error: true); return; }
     if (!mounted) return;
 
     if (mobileFixed > 0 || mobileInvalid > 0 || rankConverted > 0) {
@@ -1415,13 +1580,11 @@ class _StaffPageState extends State<StaffPage>
     _showPreviewDialog(preview);
   }
 
-  // ── Excel processing (per-cell Krutidev normalize) ────────────────────────
+  // ── Excel processing ──────────────────────────────────────────────────────
   Future<void> _processExcel(List<int> bytes) async {
     UploadProgress.instance.update(
-        p: _UploadPhase.parsing,
-        msg: 'Excel पार्स हो रही है...',
+        p: _UploadPhase.parsing, msg: 'Excel पार्स हो रही है...',
         pp: 0.1, hp: 0, ip: 0, a: 0, t: 0);
-
     await Future.delayed(const Duration(milliseconds: 16));
 
     ex.Excel excel;
@@ -1434,28 +1597,18 @@ class _StaffPageState extends State<StaffPage>
     }
 
     if (excel.tables.isEmpty) {
-      UploadProgress.instance.reset();
-      _snack('कोई शीट नहीं', error: true);
-      return;
+      UploadProgress.instance.reset(); _snack('कोई शीट नहीं', error: true); return;
     }
 
     final sheetNames = excel.tables.keys.toList();
-    String? chosen = sheetNames.length == 1
-        ? sheetNames.first
-        : await _pickSheet(sheetNames);
-    if (chosen == null || !mounted) {
-      UploadProgress.instance.reset();
-      return;
-    }
+    String? chosen = sheetNames.length == 1 ? sheetNames.first : await _pickSheet(sheetNames);
+    if (chosen == null || !mounted) { UploadProgress.instance.reset(); return; }
 
     final sheet = excel.tables[chosen]!;
     if (sheet.rows.isEmpty) {
-      UploadProgress.instance.reset();
-      _snack('शीट खाली', error: true);
-      return;
+      UploadProgress.instance.reset(); _snack('शीट खाली', error: true); return;
     }
 
-    // Per-cell normalize — applies Krutidev → Unicode if needed
     String cs(int ri, int ci) {
       if (ri >= sheet.rows.length) return '';
       final row = sheet.rows[ri];
@@ -1465,12 +1618,8 @@ class _StaffPageState extends State<StaffPage>
 
     int hRow = -1;
     int? iPno, iName, iMob, iThana, iDist, iRank, iArmed;
-
     for (int ri = 0; ri < sheet.rows.length.clamp(0, 5); ri++) {
-      // Headers: lowercase + normalize for Hindi header rows in Krutidev
-      final vals = sheet.rows[ri]
-          .map((c) => normalizeCell(c?.value).toLowerCase())
-          .toList();
+      final vals = sheet.rows[ri].map((c) => normalizeCell(c?.value).toLowerCase()).toList();
       int? p, n, m, t, d, r, a;
       for (int ci = 0; ci < vals.length; ci++) {
         final h = vals[ci];
@@ -1483,88 +1632,58 @@ class _StaffPageState extends State<StaffPage>
         if (a == null && (h.contains('sastra') || h.contains('armed') || h.contains('weapon') || h.contains('सशस्त्र'))) a = ci;
       }
       if (p != null || n != null) {
-        hRow = ri;
-        iPno = p; iName = n; iMob = m;
-        iThana = t; iDist = d; iRank = r; iArmed = a;
-        break;
+        hRow = ri; iPno = p; iName = n; iMob = m; iThana = t; iDist = d; iRank = r; iArmed = a; break;
       }
     }
 
     final dataStart = hRow >= 0 ? hRow + 1 : 0;
-    iPno  ??= 0; iName ??= 1; iMob   ??= 2;
-    iThana ??= 3; iDist  ??= 4; iRank  ??= 5;
+    iPno ??= 0; iName ??= 1; iMob ??= 2; iThana ??= 3; iDist ??= 4; iRank ??= 5;
 
     const armedVals = {'1', 'yes', 'हाँ', 'han', 'sastra', 'सशस्त्र', 'armed', 'true'};
-
     final preview = <Map<String, dynamic>>[];
-    int mobileFixed = 0, mobileInvalid = 0;
-    int rankConverted = 0;
-    const chunk   = 500;
+    int mobileFixed = 0, mobileInvalid = 0, rankConverted = 0;
+    const chunk = 500;
     final totalRows = sheet.rows.length - dataStart;
-
     UploadProgress.instance.update(msg: 'Rows पढ़ रहे हैं...', pp: 0.2, t: totalRows);
 
     for (int ri = dataStart; ri < sheet.rows.length; ri += chunk) {
       final end = (ri + chunk).clamp(0, sheet.rows.length);
       for (int r = ri; r < end; r++) {
         final row = sheet.rows[r];
-        if (row.every((c) => c == null || (c.value?.toString().trim().isEmpty ?? true)))
-          continue;
-        final pno  = cs(r, iPno!);
-        final name = cs(r, iName!);
+        if (row.every((c) => c == null || (c.value?.toString().trim().isEmpty ?? true))) continue;
+        final pno = cs(r, iPno!); final name = cs(r, iName!);
         if (pno.isEmpty && name.isEmpty) continue;
 
-        // Mobile validation
         final rawMobile = cs(r, iMob!);
-        String mobile = '';
-        bool   mobileOk = true;
+        String mobile = ''; bool mobileOk = true;
         if (rawMobile.isNotEmpty) {
           final norm = _normalizeMobile(rawMobile);
           if (_kMobile10.hasMatch(norm)) {
-            mobile = norm;
-            if (norm != rawMobile) mobileFixed++;
-          } else {
-            mobile = norm;
-            mobileOk = false;
-            mobileInvalid++;
-          }
+            mobile = norm; if (norm != rawMobile) mobileFixed++;
+          } else { mobile = norm; mobileOk = false; mobileInvalid++; }
         }
 
-        // Rank: normalize Hindi/Mangal/Krutidev/abbrev → canonical English
-        final rawRank   = cs(r, iRank!);
+        final rawRank = cs(r, iRank!);
         final cleanRank = normalizeRank(rawRank);
         if (rawRank.isNotEmpty && cleanRank != rawRank) rankConverted++;
 
         final armedRaw = iArmed != null ? cs(r, iArmed!).toLowerCase() : '';
-        final isArmed  = armedVals.contains(armedRaw) ? 1 : 0;
-
         preview.add({
-          'pno':        pno,
-          'name':       name,
-          'mobile':     mobile,
-          '_mobileRaw': rawMobile,
-          '_mobileOk':  mobileOk,
-          'thana':      cs(r, iThana!),
-          'district':   cs(r, iDist!),
-          'rank':       cleanRank,
-          '_rankRaw':   rawRank,
-          'is_armed':   isArmed,
-          '_row':       r + 1,
+          'pno': pno, 'name': name, 'mobile': mobile,
+          '_mobileRaw': rawMobile, '_mobileOk': mobileOk,
+          'thana': cs(r, iThana!), 'district': cs(r, iDist!),
+          'rank': cleanRank, '_rankRaw': rawRank,
+          'is_armed': armedVals.contains(armedRaw) ? 1 : 0, '_row': r + 1,
         });
       }
       await Future.delayed(Duration.zero);
       UploadProgress.instance.update(
-          pp: (0.2 + ((end - dataStart) / totalRows.clamp(1, 999999)) * 0.8)
-              .clamp(0, 1),
-          a: preview.length,
-          msg: '${preview.length} rows मिले...');
+          pp: (0.2 + ((end - dataStart) / totalRows.clamp(1, 999999)) * 0.8).clamp(0, 1),
+          a: preview.length, msg: '${preview.length} rows मिले...');
     }
 
     UploadProgress.instance.reset();
-    if (preview.isEmpty) {
-      _snack('कोई डेटा नहीं', error: true);
-      return;
-    }
+    if (preview.isEmpty) { _snack('कोई डेटा नहीं', error: true); return; }
     if (!mounted) return;
 
     if (mobileFixed > 0 || mobileInvalid > 0 || rankConverted > 0) {
@@ -1577,28 +1696,24 @@ class _StaffPageState extends State<StaffPage>
     _showPreviewDialog(preview);
   }
 
-  Future<String?> _pickSheet(List<String> names) =>
-      showDialog<String>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          backgroundColor: _kBg,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(14),
-              side: const BorderSide(color: _kBorder)),
-          title: const Text('शीट चुनें',
-              style: TextStyle(color: _kDark, fontWeight: FontWeight.w800)),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: names
-                .map((n) => ListTile(
-                      title: Text(n, style: const TextStyle(color: _kDark)),
-                      trailing: const Icon(Icons.chevron_right, color: _kSubtle),
-                      onTap: () => Navigator.pop(ctx, n),
-                    ))
-                .toList(),
-          ),
-        ),
-      );
+  Future<String?> _pickSheet(List<String> names) => showDialog<String>(
+    context: context,
+    builder: (ctx) => AlertDialog(
+      backgroundColor: _kBg,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(14),
+          side: const BorderSide(color: _kBorder)),
+      title: const Text('शीट चुनें',
+          style: TextStyle(color: _kDark, fontWeight: FontWeight.w800)),
+      content: Column(mainAxisSize: MainAxisSize.min,
+        children: names.map((n) => ListTile(
+          title: Text(n, style: const TextStyle(color: _kDark)),
+          trailing: const Icon(Icons.chevron_right, color: _kSubtle),
+          onTap: () => Navigator.pop(ctx, n),
+        )).toList(),
+      ),
+    ),
+  );
 
   // ══════════════════════════════════════════════════════════════════════════
   //  PREVIEW DIALOG
@@ -1606,24 +1721,19 @@ class _StaffPageState extends State<StaffPage>
   void _showPreviewDialog(List<Map<String, dynamic>> initial) {
     final allRows  = List<Map<String, dynamic>>.from(initial);
     final workRows = List<Map<String, dynamic>>.from(initial);
-    String previewQ = '';
-    int    previewPage = 1;
-    const  ppSize = 50;
-    final  psCtrl = TextEditingController();
-    Timer? pdebounce;
+    String previewQ = ''; int previewPage = 1; const ppSize = 50;
+    final psCtrl = TextEditingController(); Timer? pdebounce;
 
     showDialog(
       context: context,
       barrierDismissible: false,
       builder: (ctx) => StatefulBuilder(builder: (ctx, ss) {
-        final filtered = previewQ.isEmpty
-            ? workRows
-            : workRows.where((r) {
-                final q = previewQ.toLowerCase();
-                return (r['name'] as String? ?? '').toLowerCase().contains(q) ||
-                    (r['pno'] as String? ?? '').toLowerCase().contains(q) ||
-                    (r['thana'] as String? ?? '').toLowerCase().contains(q);
-              }).toList();
+        final filtered = previewQ.isEmpty ? workRows : workRows.where((r) {
+          final q = previewQ.toLowerCase();
+          return (r['name'] as String? ?? '').toLowerCase().contains(q) ||
+              (r['pno'] as String? ?? '').toLowerCase().contains(q) ||
+              (r['thana'] as String? ?? '').toLowerCase().contains(q);
+        }).toList();
 
         final totalPages = ((filtered.length - 1) ~/ ppSize) + 1;
         final sp = previewPage.clamp(1, totalPages.clamp(1, 9999));
@@ -1631,7 +1741,6 @@ class _StaffPageState extends State<StaffPage>
         final pe = (ps + ppSize).clamp(0, filtered.length);
         final pageRows = filtered.sublist(ps, pe);
 
-        // Validation: pno + name + mobile (if present, must be valid)
         bool isRowValid(Map<String, dynamic> r) {
           if ((r['pno'] as String? ?? '').isEmpty) return false;
           if ((r['name'] as String? ?? '').isEmpty) return false;
@@ -1657,33 +1766,25 @@ class _StaffPageState extends State<StaffPage>
               child: Column(mainAxisSize: MainAxisSize.min, children: [
                 _dlgHeader('Preview — ${workRows.length}/${allRows.length} rows',
                     Icons.upload_file_outlined, ctx),
-
-                // Stats row
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 10, 14, 4),
                   child: Wrap(spacing: 6, runSpacing: 6, children: [
                     _pill('$valid मान्य', _kSuccess),
                     _pill('${workRows.length - valid} त्रुटि', _kError),
-                    if (mobileBad > 0)
-                      _pill('📱 $mobileBad अमान्य', _kError),
+                    if (mobileBad > 0) _pill('📱 $mobileBad अमान्य', _kError),
                     _armedPill(armedCount, true),
                     _armedPill(unarmedCount, false),
                   ]),
                 ),
-
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 4, 14, 4),
                   child: Row(children: [
                     const Icon(Icons.touch_app_outlined, size: 11, color: _kSubtle),
                     const SizedBox(width: 3),
-                    const Expanded(
-                      child: Text('× से row हटाएं  •  📱 अमान्य = 10 अंक नहीं',
-                          style: TextStyle(color: _kSubtle, fontSize: 10)),
-                    ),
+                    const Expanded(child: Text('× से row हटाएं  •  📱 अमान्य = 10 अंक नहीं',
+                        style: TextStyle(color: _kSubtle, fontSize: 10))),
                   ]),
                 ),
-
-                // Search
                 Padding(
                   padding: const EdgeInsets.fromLTRB(12, 6, 12, 6),
                   child: TextField(
@@ -1692,31 +1793,20 @@ class _StaffPageState extends State<StaffPage>
                     onChanged: (v) {
                       pdebounce?.cancel();
                       pdebounce = Timer(const Duration(milliseconds: 250), () {
-                        ss(() {
-                          previewQ = v.trim();
-                          previewPage = 1;
-                        });
+                        ss(() { previewQ = v.trim(); previewPage = 1; });
                       });
                     },
                     decoration: _searchDec('नाम, PNO, थाना से खोजें...',
                         onClear: previewQ.isNotEmpty
-                            ? () {
-                                psCtrl.clear();
-                                ss(() { previewQ = ''; previewPage = 1; });
-                              }
+                            ? () { psCtrl.clear(); ss(() { previewQ = ''; previewPage = 1; }); }
                             : null),
                   ),
                 ),
-
-                // List
                 Flexible(
                   child: pageRows.isEmpty
-                      ? const Padding(
-                          padding: EdgeInsets.all(24),
+                      ? const Padding(padding: EdgeInsets.all(24),
                           child: Text('कोई row नहीं',
-                              style: TextStyle(color: _kSubtle),
-                              textAlign: TextAlign.center),
-                        )
+                              style: TextStyle(color: _kSubtle), textAlign: TextAlign.center))
                       : ListView.builder(
                           shrinkWrap: true,
                           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
@@ -1732,93 +1822,59 @@ class _StaffPageState extends State<StaffPage>
                                 color: isOk ? Colors.white : _kError.withOpacity(0.04),
                                 borderRadius: BorderRadius.circular(9),
                                 border: Border.all(
-                                    color: isOk
-                                        ? _kBorder.withOpacity(0.4)
-                                        : _kError.withOpacity(0.35)),
+                                    color: isOk ? _kBorder.withOpacity(0.4) : _kError.withOpacity(0.35)),
                               ),
                               child: Row(children: [
                                 Container(
-                                  width: 32,
-                                  alignment: Alignment.center,
+                                  width: 32, alignment: Alignment.center,
                                   padding: const EdgeInsets.symmetric(vertical: 10),
                                   decoration: BoxDecoration(
-                                    color: isOk
-                                        ? _kSurface.withOpacity(0.6)
-                                        : _kError.withOpacity(0.06),
+                                    color: isOk ? _kSurface.withOpacity(0.6) : _kError.withOpacity(0.06),
                                     borderRadius: const BorderRadius.only(
-                                      topLeft: Radius.circular(9),
-                                      bottomLeft: Radius.circular(9),
-                                    ),
+                                      topLeft: Radius.circular(9), bottomLeft: Radius.circular(9)),
                                   ),
                                   child: Text('${r['_row']}',
-                                      style: TextStyle(
-                                          color: isOk ? _kSubtle : _kError,
-                                          fontSize: 10,
-                                          fontWeight: FontWeight.w700)),
+                                      style: TextStyle(color: isOk ? _kSubtle : _kError,
+                                          fontSize: 10, fontWeight: FontWeight.w700)),
                                 ),
                                 Expanded(
                                   child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        horizontal: 10, vertical: 8),
-                                    child: Column(
-                                        crossAxisAlignment: CrossAxisAlignment.start,
-                                        children: [
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                                    child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                                       Row(children: [
-                                        Expanded(
-                                          child: Text(
-                                            (r['name'] as String).isNotEmpty
-                                                ? r['name'] as String
-                                                : '⚠ नाम आवश्यक',
-                                            style: TextStyle(
-                                              color: (r['name'] as String).isNotEmpty
-                                                  ? _kDark : _kError,
-                                              fontWeight: FontWeight.w700,
-                                              fontSize: 13,
-                                            ),
-                                          ),
-                                        ),
+                                        Expanded(child: Text(
+                                          (r['name'] as String).isNotEmpty ? r['name'] as String : '⚠ नाम आवश्यक',
+                                          style: TextStyle(
+                                            color: (r['name'] as String).isNotEmpty ? _kDark : _kError,
+                                            fontWeight: FontWeight.w700, fontSize: 13),
+                                        )),
                                         Container(
-                                          padding: const EdgeInsets.symmetric(
-                                              horizontal: 6, vertical: 2),
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                                           decoration: BoxDecoration(
-                                            color: armed
-                                                ? _kArmed.withOpacity(0.12)
-                                                : _kUnarmed.withOpacity(0.08),
+                                            color: armed ? _kArmed.withOpacity(0.12) : _kUnarmed.withOpacity(0.08),
                                             borderRadius: BorderRadius.circular(4),
                                           ),
-                                          child: Text(
-                                            armed ? '🔫 सशस्त्र' : '🛡 निःशस्त्र',
-                                            style: TextStyle(
-                                                color: armed ? _kArmed : _kUnarmed,
-                                                fontSize: 9,
-                                                fontWeight: FontWeight.w700),
-                                          ),
+                                          child: Text(armed ? '🔫 सशस्त्र' : '🛡 निःशस्त्र',
+                                              style: TextStyle(color: armed ? _kArmed : _kUnarmed,
+                                                  fontSize: 9, fontWeight: FontWeight.w700)),
                                         ),
                                       ]),
                                       const SizedBox(height: 3),
                                       Wrap(spacing: 8, runSpacing: 2, children: [
                                         _miniTag(Icons.badge_outlined,
-                                            (r['pno'] as String).isNotEmpty
-                                                ? 'PNO: ${r['pno']}'
-                                                : '⚠ PNO आवश्यक',
+                                            (r['pno'] as String).isNotEmpty ? 'PNO: ${r['pno']}' : '⚠ PNO आवश्यक',
                                             (r['pno'] as String).isEmpty ? _kError : null),
                                         if ((r['mobile'] as String).isNotEmpty || !mobileOk)
-                                          _miniTag(
-                                              Icons.phone_outlined,
-                                              mobileOk
-                                                  ? r['mobile'] as String
+                                          _miniTag(Icons.phone_outlined,
+                                              mobileOk ? r['mobile'] as String
                                                   : '⚠ ${(r['_mobileRaw'] as String?) ?? r['mobile']}',
                                               mobileOk ? null : _kError),
                                         if ((r['thana'] as String).isNotEmpty)
-                                          _miniTag(Icons.local_police_outlined,
-                                              r['thana'] as String, null),
+                                          _miniTag(Icons.local_police_outlined, r['thana'] as String, null),
                                         if ((r['rank'] as String).isNotEmpty)
-                                          _miniTag(
-                                              Icons.military_tech_outlined,
-                                              ((r['_rankRaw'] as String? ?? '').isNotEmpty &&
-                                                      r['_rankRaw'] != r['rank'])
-                                                  ? '${r['rank']}  ⟵ ${r['_rankRaw']}'
-                                                  : r['rank'] as String,
+                                          _miniTag(Icons.military_tech_outlined,
+                                              ((r['_rankRaw'] as String? ?? '').isNotEmpty && r['_rankRaw'] != r['rank'])
+                                                  ? '${r['rank']}  ⟵ ${r['_rankRaw']}' : r['rank'] as String,
                                               _kInfo),
                                       ]),
                                     ]),
@@ -1827,30 +1883,18 @@ class _StaffPageState extends State<StaffPage>
                                 InkWell(
                                   onTap: () => ss(() {
                                     workRows.remove(r);
-                                    final nf = previewQ.isEmpty
-                                        ? workRows
+                                    final nf = previewQ.isEmpty ? workRows
                                         : workRows.where((x) =>
-                                            (x['name'] as String? ?? '')
-                                                .toLowerCase()
-                                                .contains(previewQ.toLowerCase()) ||
-                                            (x['pno'] as String? ?? '')
-                                                .toLowerCase()
-                                                .contains(previewQ.toLowerCase())).toList();
-                                    final ntp = ((nf.length - 1) ~/ ppSize)
-                                            .clamp(0, 9999) + 1;
-                                    if (previewPage > ntp)
-                                      previewPage = ntp.clamp(1, 9999);
+                                            (x['name'] as String? ?? '').toLowerCase().contains(previewQ.toLowerCase()) ||
+                                            (x['pno'] as String? ?? '').toLowerCase().contains(previewQ.toLowerCase())).toList();
+                                    final ntp = ((nf.length - 1) ~/ ppSize).clamp(0, 9999) + 1;
+                                    if (previewPage > ntp) previewPage = ntp.clamp(1, 9999);
                                   }),
                                   borderRadius: const BorderRadius.only(
-                                    topRight: Radius.circular(9),
-                                    bottomRight: Radius.circular(9),
-                                  ),
+                                    topRight: Radius.circular(9), bottomRight: Radius.circular(9)),
                                   child: Container(
-                                    width: 36,
-                                    height: 52,
-                                    alignment: Alignment.center,
-                                    child: const Icon(Icons.close,
-                                        size: 15, color: _kError),
+                                    width: 36, height: 52, alignment: Alignment.center,
+                                    child: const Icon(Icons.close, size: 15, color: _kError),
                                   ),
                                 ),
                               ]),
@@ -1858,83 +1902,58 @@ class _StaffPageState extends State<StaffPage>
                           },
                         ),
                 ),
-
-                // Pagination
                 if (totalPages > 1)
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                     decoration: BoxDecoration(
                       color: _kSurface.withOpacity(0.5),
-                      border: Border(
-                          top: BorderSide(color: _kBorder.withOpacity(0.3))),
-                    ),
-                    child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
-                      _pageBtn(Icons.chevron_left, sp > 1,
-                          () => ss(() => previewPage = sp - 1)),
+                      border: Border(top: BorderSide(color: _kBorder.withOpacity(0.3)))),
+                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+                      _pageBtn(Icons.chevron_left, sp > 1, () => ss(() => previewPage = sp - 1)),
                       const SizedBox(width: 8),
                       Container(
                         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 5),
                         decoration: BoxDecoration(
-                          color: _kPrimary.withOpacity(0.1),
-                          borderRadius: BorderRadius.circular(8),
-                          border: Border.all(color: _kBorder.withOpacity(0.4)),
-                        ),
+                          color: _kPrimary.withOpacity(0.1), borderRadius: BorderRadius.circular(8),
+                          border: Border.all(color: _kBorder.withOpacity(0.4))),
                         child: Text('$sp / $totalPages  (${filtered.length} rows)',
-                            style: const TextStyle(
-                                color: _kDark, fontSize: 12,
-                                fontWeight: FontWeight.w700)),
+                            style: const TextStyle(color: _kDark, fontSize: 12, fontWeight: FontWeight.w700)),
                       ),
                       const SizedBox(width: 8),
-                      _pageBtn(Icons.chevron_right, sp < totalPages,
-                          () => ss(() => previewPage = sp + 1)),
+                      _pageBtn(Icons.chevron_right, sp < totalPages, () => ss(() => previewPage = sp + 1)),
                     ]),
                   ),
-
-                // Upload button
                 Padding(
                   padding: const EdgeInsets.fromLTRB(14, 8, 14, 16),
                   child: Row(children: [
-                    Expanded(
-                      child: OutlinedButton(
-                        onPressed: () => Navigator.pop(ctx),
-                        style: OutlinedButton.styleFrom(
-                            foregroundColor: _kSubtle,
-                            side: const BorderSide(color: _kBorder),
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10))),
-                        child: const Text('रद्द'),
-                      ),
-                    ),
+                    Expanded(child: OutlinedButton(
+                      onPressed: () => Navigator.pop(ctx),
+                      style: OutlinedButton.styleFrom(
+                          foregroundColor: _kSubtle, side: const BorderSide(color: _kBorder),
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                      child: const Text('रद्द'),
+                    )),
                     const SizedBox(width: 12),
-                    Expanded(
-                      child: ElevatedButton.icon(
-                        style: ElevatedButton.styleFrom(
-                            backgroundColor: valid == 0 ? _kSubtle : _kPrimary,
-                            foregroundColor: Colors.white,
-                            padding: const EdgeInsets.symmetric(vertical: 13),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10))),
-                        onPressed: valid == 0
-                            ? null
-                            : () {
-                                Navigator.pop(ctx);
-                                final toUpload = workRows.where(isRowValid).map((r) {
-                                  final m = Map<String, dynamic>.from(r)
-                                    ..remove('_row')
-                                    ..remove('_mobileRaw')
-                                    ..remove('_mobileOk')
-                                    ..remove('_rankRaw');
-                                  return m;
-                                }).toList();
-                                _startBackgroundUpload(toUpload);
-                              },
-                        icon: const Icon(Icons.upload, size: 16),
-                        label: Text('$valid अपलोड करें'),
-                      ),
-                    ),
+                    Expanded(child: ElevatedButton.icon(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: valid == 0 ? _kSubtle : _kPrimary,
+                          foregroundColor: Colors.white,
+                          padding: const EdgeInsets.symmetric(vertical: 13),
+                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                      onPressed: valid == 0 ? null : () {
+                        Navigator.pop(ctx);
+                        final toUpload = workRows.where(isRowValid).map((r) {
+                          final m = Map<String, dynamic>.from(r)
+                            ..remove('_row')..remove('_mobileRaw')
+                            ..remove('_mobileOk')..remove('_rankRaw');
+                          return m;
+                        }).toList();
+                        _startBackgroundUpload(toUpload);
+                      },
+                      icon: const Icon(Icons.upload, size: 16),
+                      label: Text('$valid अपलोड करें'),
+                    )),
                   ]),
                 ),
               ]),
@@ -1948,11 +1967,8 @@ class _StaffPageState extends State<StaffPage>
   // ── Background SSE upload ─────────────────────────────────────────────────
   Future<void> _startBackgroundUpload(List<Map<String, dynamic>> toUpload) async {
     final up = UploadProgress.instance;
-    up.update(
-        p: _UploadPhase.uploading,
-        t: toUpload.length,
-        pp: 0, hp: 0, ip: 0, a: 0,
-        msg: 'सर्वर पर भेज रहे हैं...');
+    up.update(p: _UploadPhase.uploading, t: toUpload.length,
+        pp: 0, hp: 0, ip: 0, a: 0, msg: 'सर्वर पर भेज रहे हैं...');
     http.Client? client;
     try {
       final token = await AuthService.getToken();
@@ -1978,33 +1994,26 @@ class _StaffPageState extends State<StaffPage>
           final js = line.substring(5).trim();
           if (js.isEmpty) continue;
           Map<String, dynamic> data;
-          try {
-            data = jsonDecode(js) as Map<String, dynamic>;
-          } catch (_) { continue; }
+          try { data = jsonDecode(js) as Map<String, dynamic>; } catch (_) { continue; }
           final phase = data['phase'] as String? ?? '';
           final pct   = (data['pct'] as num?)?.toDouble() ?? 0;
           if (phase == 'parse') {
             up.update(p: _UploadPhase.uploading,
-                pp: (pct / 100.0).clamp(0, 1),
-                msg: data['msg'] as String? ?? '...');
+                pp: (pct / 100.0).clamp(0, 1), msg: data['msg'] as String? ?? '...');
           } else if (phase == 'hash') {
-            up.update(pp: 1.0,
-                hp: ((pct - 25.0) / 30.0).clamp(0, 1),
+            up.update(pp: 1.0, hp: ((pct - 25.0) / 30.0).clamp(0, 1),
                 msg: data['msg'] as String? ?? '...');
           } else if (phase == 'insert') {
-            up.update(pp: 1.0, hp: 1.0,
-                ip: ((pct - 55.0) / 43.0).clamp(0, 1),
+            up.update(pp: 1.0, hp: 1.0, ip: ((pct - 55.0) / 43.0).clamp(0, 1),
                 a: (data['added'] as num?)?.toInt() ?? 0,
                 t: (data['total'] as num?)?.toInt() ?? toUpload.length,
                 msg: '${data['added'] ?? 0}/${data['total'] ?? toUpload.length} rows');
           } else if (phase == 'done') {
             final added = (data['added'] as num?)?.toInt() ?? 0;
             final skipped = (data['skipped'] as List?)?.length ?? 0;
-            up.update(p: _UploadPhase.done,
-                pp: 1.0, hp: 1.0, ip: 1.0, a: added,
+            up.update(p: _UploadPhase.done, pp: 1.0, hp: 1.0, ip: 1.0, a: added,
                 msg: '$added जोड़े गए, $skipped छोड़े गए');
-            client.close();
-            return;
+            client.close(); return;
           } else if (phase == 'error') {
             throw Exception(data['message'] as String? ?? 'Server error');
           }
@@ -2012,8 +2021,7 @@ class _StaffPageState extends State<StaffPage>
       }
     } catch (e) {
       client?.close();
-      UploadProgress.instance.update(
-          p: _UploadPhase.error, msg: _msg(e), err: _msg(e));
+      UploadProgress.instance.update(p: _UploadPhase.error, msg: _msg(e), err: _msg(e));
     }
   }
 
@@ -2045,38 +2053,29 @@ class _StaffPageState extends State<StaffPage>
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
           decoration: BoxDecoration(
-            color: config.$2.withOpacity(0.12),
-            borderRadius: BorderRadius.circular(4),
-          ),
+            color: config.$2.withOpacity(0.12), borderRadius: BorderRadius.circular(4)),
           child: Text(config.$3,
-              style: TextStyle(color: config.$2, fontSize: 9,
-                  fontWeight: FontWeight.w800)),
+              style: TextStyle(color: config.$2, fontSize: 9, fontWeight: FontWeight.w800)),
         ),
         const SizedBox(width: 5),
-        Flexible(
-          child: Text(label,
-              style: TextStyle(color: config.$2, fontSize: 11,
-                  fontWeight: FontWeight.w600),
-              maxLines: 1, overflow: TextOverflow.ellipsis),
-        ),
+        Flexible(child: Text(label,
+            style: TextStyle(color: config.$2, fontSize: 11, fontWeight: FontWeight.w600),
+            maxLines: 1, overflow: TextOverflow.ellipsis)),
         if (detail.isNotEmpty) ...[
-          Text('  •  ',
-              style: TextStyle(color: config.$2.withOpacity(0.5), fontSize: 10)),
-          Flexible(
-            child: Text(detail,
-                style: TextStyle(color: config.$2.withOpacity(0.7), fontSize: 10),
-                maxLines: 1, overflow: TextOverflow.ellipsis),
-          ),
+          Text('  •  ', style: TextStyle(color: config.$2.withOpacity(0.5), fontSize: 10)),
+          Flexible(child: Text(detail,
+              style: TextStyle(color: config.$2.withOpacity(0.7), fontSize: 10),
+              maxLines: 1, overflow: TextOverflow.ellipsis)),
         ],
       ]),
     );
   }
 
   Widget _staffCard(Map s, {required bool assigned}) {
-    final id        = s['id'] as int;
+    final id         = s['id'] as int;
     final isSelected = _selected.contains(id);
-    final name      = _v(s['name']);
-    final initials  = name.trim()
+    final name       = _v(s['name']);
+    final initials   = name.trim()
         .split(' ').where((w) => w.isNotEmpty)
         .take(2).map((w) => w[0].toUpperCase()).join();
     final avatarColor = assigned ? _kSuccess : _kAccent;
@@ -2085,10 +2084,7 @@ class _StaffPageState extends State<StaffPage>
 
     return RepaintBoundary(
       child: GestureDetector(
-        onLongPress: () {
-          HapticFeedback.mediumImpact();
-          _toggleSelect(id);
-        },
+        onLongPress: () { HapticFeedback.mediumImpact(); _toggleSelect(id); },
         onTap: _selectMode ? () => _toggleSelect(id) : null,
         child: AnimatedContainer(
           duration: const Duration(milliseconds: 150),
@@ -2099,69 +2095,44 @@ class _StaffPageState extends State<StaffPage>
             border: Border.all(
                 color: isSelected ? _kPrimary : _kBorder.withOpacity(0.4),
                 width: isSelected ? 2 : 1),
-            boxShadow: [
-              BoxShadow(color: _kPrimary.withOpacity(0.04),
-                  blurRadius: 6, offset: const Offset(0, 2))
-            ],
+            boxShadow: [BoxShadow(color: _kPrimary.withOpacity(0.04),
+                blurRadius: 6, offset: const Offset(0, 2))],
           ),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
-            child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
+            child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
               GestureDetector(
                 onTap: () => _toggleSelect(id),
                 child: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 200),
                   child: _selectMode
-                      ? Container(
-                          key: const ValueKey('cb'),
+                      ? Container(key: const ValueKey('cb'),
                           width: 44, height: 44,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: isSelected ? _kPrimary : Colors.white,
-                            border: Border.all(
-                                color: isSelected ? _kPrimary : _kBorder, width: 2),
-                          ),
-                          child: Icon(isSelected ? Icons.check : null,
-                              color: Colors.white, size: 22))
-                      : Container(
-                          key: const ValueKey('av'),
+                          decoration: BoxDecoration(shape: BoxShape.circle,
+                              color: isSelected ? _kPrimary : Colors.white,
+                              border: Border.all(color: isSelected ? _kPrimary : _kBorder, width: 2)),
+                          child: Icon(isSelected ? Icons.check : null, color: Colors.white, size: 22))
+                      : Container(key: const ValueKey('av'),
                           width: 44, height: 44,
-                          decoration: BoxDecoration(
-                            shape: BoxShape.circle,
-                            color: avatarColor.withOpacity(0.12),
-                            border: Border.all(color: avatarColor.withOpacity(0.35)),
-                          ),
-                          child: Center(
-                            child: Text(
-                              initials.isEmpty ? 'S' : initials,
-                              style: TextStyle(
-                                  color: avatarColor,
-                                  fontWeight: FontWeight.w900,
-                                  fontSize: initials.length <= 1 ? 18 : 13),
-                            ),
-                          )),
+                          decoration: BoxDecoration(shape: BoxShape.circle,
+                              color: avatarColor.withOpacity(0.12),
+                              border: Border.all(color: avatarColor.withOpacity(0.35))),
+                          child: Center(child: Text(
+                            initials.isEmpty ? 'S' : initials,
+                            style: TextStyle(color: avatarColor, fontWeight: FontWeight.w900,
+                                fontSize: initials.length <= 1 ? 18 : 13)))),
                 ),
               ),
               const SizedBox(width: 10),
-
               Expanded(
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
-                    Expanded(
-                      child: Text(
-                        name.isNotEmpty ? name : '—',
+                    Expanded(child: Text(name.isNotEmpty ? name : '—',
                         style: const TextStyle(color: _kDark,
                             fontWeight: FontWeight.w700, fontSize: 14),
-                        maxLines: 1, overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
                     const SizedBox(width: 4),
-                    _badge(assigned ? 'असाइन' : 'रिज़र्व',
-                        assigned ? _kSuccess : _kAccent),
+                    _badge(assigned ? 'असाइन' : 'रिज़र्व', assigned ? _kSuccess : _kAccent),
                     const SizedBox(width: 4),
                     _armedBadge(armed),
                   ]),
@@ -2184,21 +2155,18 @@ class _StaffPageState extends State<StaffPage>
                   ],
                 ]),
               ),
-
               const SizedBox(width: 4),
-
-              // Actions
               Column(mainAxisSize: MainAxisSize.min, children: [
                 _iconBtn(Icons.edit_outlined, _kInfo, () => _showEditDialog(s)),
                 const SizedBox(height: 4),
                 _iconBtn(Icons.delete_outline, _kError, () => _deleteStaff(s)),
                 const SizedBox(height: 4),
                 if (!assigned)
-                  _iconBtn(Icons.how_to_vote_outlined, _kPrimary,
+                  _iconBtn(Icons.how_to_vote_outlined,
+                      _election.isActive ? _kPrimary : _kSubtle,
                       () => _showAssignDialog(s))
                 else if (assignType == 'booth')
-                  _iconBtn(Icons.person_remove_outlined, _kError,
-                      () => _removeDuty(s))
+                  _iconBtn(Icons.person_remove_outlined, _kError, () => _removeDuty(s))
                 else
                   _iconBtn(Icons.lock_outline, _kSubtle.withOpacity(0.5),
                       () => _snack('अधिकारी असाइनमेंट संरचना पेज से बदलें')),
@@ -2217,35 +2185,28 @@ class _StaffPageState extends State<StaffPage>
       margin: const EdgeInsets.fromLTRB(12, 0, 12, 8),
       padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
       decoration: BoxDecoration(
-        color: _kDark,
-        borderRadius: BorderRadius.circular(12),
-        boxShadow: [
-          BoxShadow(color: _kDark.withOpacity(0.3),
-              blurRadius: 12, offset: const Offset(0, 4))
-        ],
+        color: _kDark, borderRadius: BorderRadius.circular(12),
+        boxShadow: [BoxShadow(color: _kDark.withOpacity(0.3),
+            blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Row(children: [
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
           decoration: BoxDecoration(
-            color: _kBorder.withOpacity(0.25),
-            borderRadius: BorderRadius.circular(20),
-          ),
+            color: _kBorder.withOpacity(0.25), borderRadius: BorderRadius.circular(20)),
           child: Text('${_selected.length} चुने',
-              style: const TextStyle(color: _kBorder,
-                  fontWeight: FontWeight.w800, fontSize: 13)),
+              style: const TextStyle(color: _kBorder, fontWeight: FontWeight.w800, fontSize: 13)),
         ),
         const SizedBox(width: 6),
         _miniActionBtn('सभी', Icons.select_all, Colors.white70, _selectAll),
         const Spacer(),
         if (!isAssignedTab) ...[
-          _miniActionBtn('असाइन', Icons.how_to_vote_outlined, _kBorder,
-              _bulkAssignDialog),
+          _miniActionBtn('असाइन', Icons.how_to_vote_outlined,
+              _election.isActive ? _kBorder : _kSubtle, _bulkAssignDialog),
           const SizedBox(width: 6),
         ],
         if (isAssignedTab) ...[
-          _miniActionBtn('रिज़र्व', Icons.person_remove_outlined, _kAccent,
-              _bulkUnassign),
+          _miniActionBtn('रिज़र्व', Icons.person_remove_outlined, _kAccent, _bulkUnassign),
           const SizedBox(width: 6),
         ],
         _miniActionBtn('हटाएं', Icons.delete_outline, _kError, _bulkDelete),
@@ -2254,10 +2215,7 @@ class _StaffPageState extends State<StaffPage>
           onTap: _clearSelection,
           child: Container(
             padding: const EdgeInsets.all(7),
-            decoration: BoxDecoration(
-              color: Colors.white12,
-              borderRadius: BorderRadius.circular(8),
-            ),
+            decoration: BoxDecoration(color: Colors.white12, borderRadius: BorderRadius.circular(8)),
             child: const Icon(Icons.close, size: 16, color: Colors.white70),
           ),
         ),
@@ -2268,7 +2226,6 @@ class _StaffPageState extends State<StaffPage>
   // ══════════════════════════════════════════════════════════════════════════
   //  BUILD
   // ══════════════════════════════════════════════════════════════════════════
-
   @override
   Widget build(BuildContext context) {
     final totalAll = _assignedTotal + _reserveTotal;
@@ -2277,6 +2234,12 @@ class _StaffPageState extends State<StaffPage>
 
     return Stack(children: [
       Column(children: [
+        // ── Election guard banner ────────────────────────────────────────
+        _ElectionGuardBanner(
+          election: _election,
+          loading: _electionLoading,
+          onRefresh: _fetchElection,
+        ),
 
         // ── Top toolbar ──────────────────────────────────────────────────
         Container(
@@ -2288,21 +2251,14 @@ class _StaffPageState extends State<StaffPage>
                 controller: _searchCtrl,
                 style: const TextStyle(color: _kDark, fontSize: 13),
                 decoration: _searchDec(
-                    isWide
-                        ? 'नाम, PNO, मोबाइल, थाना, जिला खोजें...'
-                        : 'खोजें...',
-                    onClear: _q.isNotEmpty
-                        ? () {
-                            _searchCtrl.clear();
-                            _q = '';
-                            _refresh();
-                          }
-                        : null),
+                    isWide ? 'नाम, PNO, मोबाइल, थाना, जिला खोजें...' : 'खोजें...',
+                    onClear: _q.isNotEmpty ? () {
+                      _searchCtrl.clear(); _q = ''; _refresh();
+                    } : null),
               ),
             ),
             const SizedBox(width: 8),
-            _actionBtn(Icons.person_add_outlined,
-                isWide ? 'जोड़ें' : '', _kPrimary, _showAddDialog),
+            _actionBtn(Icons.person_add_outlined, isWide ? 'जोड़ें' : '', _kPrimary, _showAddDialog),
             const SizedBox(width: 6),
             AnimatedBuilder(
               animation: UploadProgress.instance,
@@ -2311,29 +2267,22 @@ class _StaffPageState extends State<StaffPage>
                 if (_fileLoading || up.phase == _UploadPhase.parsing) {
                   return Container(
                     padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-                    decoration: BoxDecoration(
-                        color: _kDark, borderRadius: BorderRadius.circular(10)),
-                    child: const Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
+                    decoration: BoxDecoration(color: _kDark, borderRadius: BorderRadius.circular(10)),
+                    child: const Row(mainAxisSize: MainAxisSize.min, children: [
                       SizedBox(width: 14, height: 14,
-                          child: CircularProgressIndicator(
-                              color: Colors.white, strokeWidth: 2)),
+                          child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2)),
                       SizedBox(width: 6),
-                      Text('लोड...',
-                          style: TextStyle(color: Colors.white,
-                              fontSize: 12, fontWeight: FontWeight.w700)),
+                      Text('लोड...', style: TextStyle(color: Colors.white,
+                          fontSize: 12, fontWeight: FontWeight.w700)),
                     ]),
                   );
                 }
                 if (up.isActive) {
                   final overall = ((up.parsePct * 0.15) + (up.hashPct * 0.30) +
-                          (up.insertPct * 0.55))
-                      .clamp(0.0, 1.0);
+                          (up.insertPct * 0.55)).clamp(0.0, 1.0);
                   return Container(
                     padding: const EdgeInsets.symmetric(horizontal: 11, vertical: 9),
-                    decoration: BoxDecoration(
-                        color: _kDark, borderRadius: BorderRadius.circular(10)),
+                    decoration: BoxDecoration(color: _kDark, borderRadius: BorderRadius.circular(10)),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
                       SizedBox(width: 14, height: 14,
                           child: CircularProgressIndicator(
@@ -2362,10 +2311,7 @@ class _StaffPageState extends State<StaffPage>
               children: _kAllRanks.map((rank) {
                 final isSel = _selectedRank == rank;
                 return GestureDetector(
-                  onTap: () {
-                    setState(() => _selectedRank = rank);
-                    _refresh();
-                  },
+                  onTap: () { setState(() => _selectedRank = rank); _refresh(); },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     margin: const EdgeInsets.only(right: 6),
@@ -2373,18 +2319,14 @@ class _StaffPageState extends State<StaffPage>
                     decoration: BoxDecoration(
                       color: isSel ? _kPrimary : Colors.white,
                       borderRadius: BorderRadius.circular(20),
-                      border: Border.all(
-                          color: isSel ? _kPrimary : _kBorder.withOpacity(0.5)),
-                      boxShadow: isSel
-                          ? [BoxShadow(color: _kPrimary.withOpacity(0.2),
-                                  blurRadius: 4, offset: const Offset(0, 2))]
-                          : [],
+                      border: Border.all(color: isSel ? _kPrimary : _kBorder.withOpacity(0.5)),
+                      boxShadow: isSel ? [BoxShadow(color: _kPrimary.withOpacity(0.2),
+                          blurRadius: 4, offset: const Offset(0, 2))] : [],
                     ),
-                    child: Text(rank,
-                        style: TextStyle(
-                            color: isSel ? Colors.white : _kDark,
-                            fontSize: 11,
-                            fontWeight: isSel ? FontWeight.w800 : FontWeight.w500)),
+                    child: Text(rank, style: TextStyle(
+                        color: isSel ? Colors.white : _kDark,
+                        fontSize: 11,
+                        fontWeight: isSel ? FontWeight.w800 : FontWeight.w500)),
                   ),
                 );
               }).toList(),
@@ -2408,10 +2350,7 @@ class _StaffPageState extends State<StaffPage>
                 final label = opt == 'All' ? 'सभी'
                     : opt == 'Armed' ? '🔫 सशस्त्र' : '🛡 निःशस्त्र';
                 return GestureDetector(
-                  onTap: () {
-                    setState(() => _armedFilter = opt);
-                    _refresh();
-                  },
+                  onTap: () { setState(() => _armedFilter = opt); _refresh(); },
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 150),
                     margin: const EdgeInsets.only(right: 6),
@@ -2423,11 +2362,9 @@ class _StaffPageState extends State<StaffPage>
                           color: isSel ? color : _kBorder.withOpacity(0.4),
                           width: isSel ? 1.5 : 1),
                     ),
-                    child: Text(label,
-                        style: TextStyle(
-                            color: isSel ? color : _kSubtle,
-                            fontSize: 11,
-                            fontWeight: isSel ? FontWeight.w800 : FontWeight.w500)),
+                    child: Text(label, style: TextStyle(
+                        color: isSel ? color : _kSubtle, fontSize: 11,
+                        fontWeight: isSel ? FontWeight.w800 : FontWeight.w500)),
                   ),
                 );
               }),
@@ -2440,36 +2377,49 @@ class _StaffPageState extends State<StaffPage>
           color: _kBg,
           padding: const EdgeInsets.fromLTRB(12, 2, 12, 6),
           child: Row(children: [
-            Expanded(
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(children: [
-                  _summaryChip('कुल', '$totalAll', _kPrimary),
+            Expanded(child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                _summaryChip('कुल', '$totalAll', _kPrimary),
+                const SizedBox(width: 8),
+                _summaryChip('असाइन', '$_assignedTotal', _kSuccess),
+                const SizedBox(width: 8),
+                _summaryChip('रिज़र्व', '$_reserveTotal', _kAccent),
+                if (!_election.isActive) ...[
                   const SizedBox(width: 8),
-                  _summaryChip('असाइन', '$_assignedTotal', _kSuccess),
-                  const SizedBox(width: 8),
-                  _summaryChip('रिज़र्व', '$_reserveTotal', _kAccent),
-                ]),
-              ),
-            ),
+                  GestureDetector(
+                    onTap: () => _ElectionGuardBanner._showNoElectionDialog(context),
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: _kError.withOpacity(0.08),
+                        borderRadius: BorderRadius.circular(8),
+                        border: Border.all(color: _kError.withOpacity(0.3)),
+                      ),
+                      child: const Row(mainAxisSize: MainAxisSize.min, children: [
+                        Icon(Icons.lock_outline, size: 10, color: _kError),
+                        SizedBox(width: 4),
+                        Text('Duty बंद', style: TextStyle(color: _kError, fontSize: 10,
+                            fontWeight: FontWeight.w700)),
+                      ]),
+                    ),
+                  ),
+                ],
+              ]),
+            )),
             if (_q.isNotEmpty || _selectedRank != 'All' || _armedFilter != 'All')
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
-                  color: _kInfo.withOpacity(0.08),
-                  borderRadius: BorderRadius.circular(6),
-                  border: Border.all(color: _kInfo.withOpacity(0.2)),
-                ),
+                  color: _kInfo.withOpacity(0.08), borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: _kInfo.withOpacity(0.2))),
                 child: const Text('फ़िल्टर',
-                    style: TextStyle(color: _kInfo, fontSize: 10,
-                        fontWeight: FontWeight.w700)),
+                    style: TextStyle(color: _kInfo, fontSize: 10, fontWeight: FontWeight.w700)),
               ),
             IconButton(
               icon: const Icon(Icons.refresh_rounded, size: 18, color: _kSubtle),
-              onPressed: _refresh,
-              tooltip: 'रिफ्रेश',
-              padding: EdgeInsets.zero,
-              constraints: const BoxConstraints(),
+              onPressed: _refresh, tooltip: 'रिफ्रेश',
+              padding: EdgeInsets.zero, constraints: const BoxConstraints(),
             ),
           ]),
         ),
@@ -2481,8 +2431,7 @@ class _StaffPageState extends State<StaffPage>
             labelColor: _kPrimary,
             unselectedLabelColor: _kSubtle,
             labelStyle: const TextStyle(fontWeight: FontWeight.w800, fontSize: 12),
-            unselectedLabelStyle: const TextStyle(
-                fontWeight: FontWeight.w500, fontSize: 12),
+            unselectedLabelStyle: const TextStyle(fontWeight: FontWeight.w500, fontSize: 12),
             indicatorColor: _kPrimary,
             indicatorWeight: 3,
             tabs: [
@@ -2498,28 +2447,14 @@ class _StaffPageState extends State<StaffPage>
           child: TabBarView(
             controller: _tabs,
             children: [
-              _buildList(
-                items: _assigned,
-                loading: _assignedLoading,
-                hasMore: _assignedHasMore,
-                scroll: _assignedScroll,
-                assigned: true,
-                emptyMsg: _q.isNotEmpty
-                    ? '"$_q" के लिए कोई result नहीं'
-                    : 'कोई असाइन स्टाफ नहीं',
-                emptyIcon: Icons.how_to_vote_outlined,
-              ),
-              _buildList(
-                items: _reserve,
-                loading: _reserveLoading,
-                hasMore: _reserveHasMore,
-                scroll: _reserveScroll,
-                assigned: false,
-                emptyMsg: _q.isNotEmpty
-                    ? '"$_q" के लिए कोई result नहीं'
-                    : 'सभी स्टाफ असाइन हैं!',
-                emptyIcon: Icons.badge_outlined,
-              ),
+              _buildList(items: _assigned, loading: _assignedLoading,
+                  hasMore: _assignedHasMore, scroll: _assignedScroll, assigned: true,
+                  emptyMsg: _q.isNotEmpty ? '"$_q" के लिए कोई result नहीं' : 'कोई असाइन स्टाफ नहीं',
+                  emptyIcon: Icons.how_to_vote_outlined),
+              _buildList(items: _reserve, loading: _reserveLoading,
+                  hasMore: _reserveHasMore, scroll: _reserveScroll, assigned: false,
+                  emptyMsg: _q.isNotEmpty ? '"$_q" के लिए कोई result नहीं' : 'सभी स्टाफ असाइन हैं!',
+                  emptyIcon: Icons.badge_outlined),
             ],
           ),
         ),
@@ -2530,13 +2465,9 @@ class _StaffPageState extends State<StaffPage>
   }
 
   Widget _buildList({
-    required List<Map> items,
-    required bool loading,
-    required bool hasMore,
-    required ScrollController scroll,
-    required bool assigned,
-    required String emptyMsg,
-    required IconData emptyIcon,
+    required List<Map> items, required bool loading, required bool hasMore,
+    required ScrollController scroll, required bool assigned,
+    required String emptyMsg, required IconData emptyIcon,
   }) {
     if (items.isEmpty && loading)
       return const Center(child: CircularProgressIndicator(color: _kPrimary));
@@ -2545,9 +2476,7 @@ class _StaffPageState extends State<StaffPage>
       onRefresh: () async => _refresh(),
       color: _kPrimary,
       child: Scrollbar(
-        controller: scroll,
-        thumbVisibility: true,
-        thickness: 6,
+        controller: scroll, thumbVisibility: true, thickness: 6,
         radius: const Radius.circular(3),
         child: ListView.builder(
           controller: scroll,
@@ -2556,13 +2485,9 @@ class _StaffPageState extends State<StaffPage>
           itemCount: items.length + (hasMore ? 1 : 0),
           itemBuilder: (_, i) {
             if (i >= items.length)
-              return const Padding(
-                padding: EdgeInsets.symmetric(vertical: 16),
-                child: Center(
-                    child: SizedBox(width: 20, height: 20,
-                        child: CircularProgressIndicator(
-                            strokeWidth: 2, color: _kPrimary))),
-              );
+              return const Padding(padding: EdgeInsets.symmetric(vertical: 16),
+                  child: Center(child: SizedBox(width: 20, height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2, color: _kPrimary))));
             return _staffCard(items[i], assigned: assigned);
           },
         ),
@@ -2574,663 +2499,454 @@ class _StaffPageState extends State<StaffPage>
   //  WIDGET HELPERS
   // ══════════════════════════════════════════════════════════════════════════
   BoxDecoration _dlgDec() => BoxDecoration(
-        color: _kBg,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _kBorder, width: 1.2),
-        boxShadow: [
-          BoxShadow(color: _kPrimary.withOpacity(0.15),
-              blurRadius: 20, offset: const Offset(0, 8))
-        ],
-      );
+    color: _kBg, borderRadius: BorderRadius.circular(16),
+    border: Border.all(color: _kBorder, width: 1.2),
+    boxShadow: [BoxShadow(color: _kPrimary.withOpacity(0.15),
+        blurRadius: 20, offset: const Offset(0, 8))],
+  );
 
-  Widget _dlgHeader(String title, IconData icon, BuildContext ctx) =>
-      Container(
-        padding: const EdgeInsets.fromLTRB(16, 13, 12, 13),
-        decoration: const BoxDecoration(
-          color: _kDark,
-          borderRadius: BorderRadius.only(
-              topLeft: Radius.circular(15), topRight: Radius.circular(15)),
-        ),
-        child: Row(children: [
-          Container(
-            padding: const EdgeInsets.all(6),
-            decoration: BoxDecoration(
-                color: _kPrimary.withOpacity(0.25),
-                borderRadius: BorderRadius.circular(7)),
-            child: Icon(icon, color: _kBorder, size: 16),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(title,
-                maxLines: 2, overflow: TextOverflow.ellipsis,
-                style: const TextStyle(color: Colors.white,
-                    fontWeight: FontWeight.w700, fontSize: 15)),
-          ),
-          IconButton(
-            onPressed: () => Navigator.pop(ctx),
-            icon: const Icon(Icons.close, color: Colors.white60, size: 20),
-            padding: EdgeInsets.zero,
-            constraints: const BoxConstraints(),
-          ),
-        ]),
-      );
+  Widget _dlgHeader(String title, IconData icon, BuildContext ctx) => Container(
+    padding: const EdgeInsets.fromLTRB(16, 13, 12, 13),
+    decoration: const BoxDecoration(color: _kDark,
+        borderRadius: BorderRadius.only(
+            topLeft: Radius.circular(15), topRight: Radius.circular(15))),
+    child: Row(children: [
+      Container(padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(color: _kPrimary.withOpacity(0.25),
+              borderRadius: BorderRadius.circular(7)),
+          child: Icon(icon, color: _kBorder, size: 16)),
+      const SizedBox(width: 10),
+      Expanded(child: Text(title, maxLines: 2, overflow: TextOverflow.ellipsis,
+          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15))),
+      IconButton(onPressed: () => Navigator.pop(ctx),
+          icon: const Icon(Icons.close, color: Colors.white60, size: 20),
+          padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+    ]),
+  );
 
   Widget _dlgActions(BuildContext ctx, bool saving,
-      {String saveLabel = 'अपडेट', required VoidCallback onSave}) =>
-      Padding(
-        padding: const EdgeInsets.all(20),
-        child: Row(children: [
-          Expanded(
-            child: OutlinedButton(
-              onPressed: saving ? null : () => Navigator.pop(ctx),
-              style: OutlinedButton.styleFrom(
-                  foregroundColor: _kSubtle,
-                  side: const BorderSide(color: _kBorder),
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10))),
-              child: const Text('रद्द'),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: _kPrimary,
-                  foregroundColor: Colors.white,
-                  padding: const EdgeInsets.symmetric(vertical: 13),
-                  shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(10))),
-              onPressed: saving ? null : onSave,
-              child: saving
-                  ? const SizedBox(width: 18, height: 18,
-                      child: CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2))
-                  : Text(saveLabel,
-                      style: const TextStyle(fontWeight: FontWeight.w700)),
-            ),
-          ),
-        ]),
-      );
+      {String saveLabel = 'अपडेट', required VoidCallback onSave}) => Padding(
+    padding: const EdgeInsets.all(20),
+    child: Row(children: [
+      Expanded(child: OutlinedButton(
+        onPressed: saving ? null : () => Navigator.pop(ctx),
+        style: OutlinedButton.styleFrom(foregroundColor: _kSubtle,
+            side: const BorderSide(color: _kBorder), padding: const EdgeInsets.symmetric(vertical: 13),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+        child: const Text('रद्द'),
+      )),
+      const SizedBox(width: 12),
+      Expanded(child: ElevatedButton(
+        style: ElevatedButton.styleFrom(backgroundColor: _kPrimary, foregroundColor: Colors.white,
+            padding: const EdgeInsets.symmetric(vertical: 13),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+        onPressed: saving ? null : onSave,
+        child: saving
+            ? const SizedBox(width: 18, height: 18,
+                child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+            : Text(saveLabel, style: const TextStyle(fontWeight: FontWeight.w700)),
+      )),
+    ]),
+  );
 
   Widget _field(TextEditingController c, String label, IconData icon,
-          {bool req = false, TextInputType? type}) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: TextFormField(
-          controller: c,
-          keyboardType: type,
-          style: const TextStyle(color: _kDark, fontSize: 13),
-          decoration: InputDecoration(
-            labelText: label,
-            labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-            prefixIcon: Icon(icon, size: 18, color: _kPrimary),
-            filled: true,
-            fillColor: Colors.white,
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kBorder)),
-            enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kBorder)),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kPrimary, width: 2)),
-            errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kError)),
-          ),
-          validator: req
-              ? (v) => (v?.trim().isEmpty ?? true)
-                  ? '${label.replaceAll(' *', '')} आवश्यक'
-                  : null
-              : null,
-        ),
-      );
-
-  /// Mobile field — 10 digits only, auto-strips non-digits, validates exactly 10.
-  Widget _mobileField(TextEditingController c) =>
-      Padding(
-        padding: const EdgeInsets.only(bottom: 10),
-        child: TextFormField(
-          controller: c,
-          keyboardType: TextInputType.phone,
-          style: const TextStyle(color: _kDark, fontSize: 13,
-              fontFeatures: [FontFeature.tabularFigures()]),
-          inputFormatters: [
-            FilteringTextInputFormatter.digitsOnly,
-            LengthLimitingTextInputFormatter(10),
-          ],
-          decoration: InputDecoration(
-            labelText: 'मोबाइल (10 अंक)',
-            labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-            hintText: '9XXXXXXXXX',
-            hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-            prefixIcon: const Icon(Icons.phone_outlined, size: 18, color: _kPrimary),
-            counterText: '',
-            filled: true,
-            fillColor: Colors.white,
-            isDense: true,
-            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-            border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kBorder)),
-            enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kBorder)),
-            focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kPrimary, width: 2)),
-            errorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kError)),
-            focusedErrorBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(10),
-                borderSide: const BorderSide(color: _kError, width: 2)),
-          ),
-          validator: (v) {
-            final t = v?.trim() ?? '';
-            if (t.isEmpty) return null; // mobile is optional
-            if (!_kMobile10.hasMatch(t)) return 'मोबाइल नंबर 10 अंकों का होना चाहिए';
-            return null;
-          },
-        ),
-      );
-
-  Widget _armedToggle({required bool value, required ValueChanged<bool> onChanged}) =>
-      Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-        decoration: BoxDecoration(
-          color: value ? _kArmed.withOpacity(0.06) : _kUnarmed.withOpacity(0.04),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: value ? _kArmed.withOpacity(0.3) : _kBorder.withOpacity(0.5)),
-        ),
-        child: Row(children: [
-          Icon(value ? Icons.security : Icons.shield_outlined,
-              size: 20, color: value ? _kArmed : _kUnarmed),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(value ? 'सशस्त्र पुलिस' : 'निःशस्त्र पुलिस',
-                  style: TextStyle(color: value ? _kArmed : _kUnarmed,
-                      fontWeight: FontWeight.w700, fontSize: 13)),
-              Text(value ? 'Armed Police' : 'Unarmed Police',
-                  style: const TextStyle(color: _kSubtle, fontSize: 10)),
-            ]),
-          ),
-          Switch.adaptive(
-            value: value,
-            onChanged: onChanged,
-            activeColor: _kArmed,
-            inactiveThumbColor: _kUnarmed,
-          ),
-        ]),
-      );
-
-  InputDecoration _searchDec(String hint, {VoidCallback? onClear}) =>
-      InputDecoration(
-        hintText: hint,
-        hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-        prefixIcon: const Icon(Icons.search, color: _kSubtle, size: 18),
-        suffixIcon: onClear != null
-            ? IconButton(
-                icon: const Icon(Icons.clear, size: 16, color: _kSubtle),
-                onPressed: onClear)
-            : null,
-        filled: true,
-        fillColor: Colors.white,
-        isDense: true,
-        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-        border: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+          {bool req = false, TextInputType? type}) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextFormField(
+      controller: c, keyboardType: type,
+      style: const TextStyle(color: _kDark, fontSize: 13),
+      decoration: InputDecoration(
+        labelText: label, labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+        prefixIcon: Icon(icon, size: 18, color: _kPrimary),
+        filled: true, fillColor: Colors.white, isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: _kBorder)),
-        enabledBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: _kBorder)),
-        focusedBorder: OutlineInputBorder(
-            borderRadius: BorderRadius.circular(10),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
             borderSide: const BorderSide(color: _kPrimary, width: 2)),
-      );
+        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kError)),
+      ),
+      validator: req ? (v) => (v?.trim().isEmpty ?? true)
+          ? '${label.replaceAll(' *', '')} आवश्यक' : null : null,
+    ),
+  );
+
+  Widget _mobileField(TextEditingController c) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: TextFormField(
+      controller: c, keyboardType: TextInputType.phone,
+      style: const TextStyle(color: _kDark, fontSize: 13,
+          fontFeatures: [FontFeature.tabularFigures()]),
+      inputFormatters: [FilteringTextInputFormatter.digitsOnly,
+          LengthLimitingTextInputFormatter(10)],
+      decoration: InputDecoration(
+        labelText: 'मोबाइल (10 अंक)', labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+        hintText: '9XXXXXXXXX', hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+        prefixIcon: const Icon(Icons.phone_outlined, size: 18, color: _kPrimary),
+        counterText: '', filled: true, fillColor: Colors.white, isDense: true,
+        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kBorder)),
+        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kBorder)),
+        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kPrimary, width: 2)),
+        errorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kError)),
+        focusedErrorBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+            borderSide: const BorderSide(color: _kError, width: 2)),
+      ),
+      validator: (v) {
+        final t = v?.trim() ?? '';
+        if (t.isEmpty) return null;
+        if (!_kMobile10.hasMatch(t)) return 'मोबाइल नंबर 10 अंकों का होना चाहिए';
+        return null;
+      },
+    ),
+  );
+
+  Widget _armedToggle({required bool value, required ValueChanged<bool> onChanged}) => Container(
+    margin: const EdgeInsets.only(bottom: 10),
+    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+    decoration: BoxDecoration(
+      color: value ? _kArmed.withOpacity(0.06) : _kUnarmed.withOpacity(0.04),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: value ? _kArmed.withOpacity(0.3) : _kBorder.withOpacity(0.5)),
+    ),
+    child: Row(children: [
+      Icon(value ? Icons.security : Icons.shield_outlined,
+          size: 20, color: value ? _kArmed : _kUnarmed),
+      const SizedBox(width: 10),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(value ? 'सशस्त्र पुलिस' : 'निःशस्त्र पुलिस',
+            style: TextStyle(color: value ? _kArmed : _kUnarmed,
+                fontWeight: FontWeight.w700, fontSize: 13)),
+        Text(value ? 'Armed Police' : 'Unarmed Police',
+            style: const TextStyle(color: _kSubtle, fontSize: 10)),
+      ])),
+      Switch.adaptive(value: value, onChanged: onChanged,
+          activeColor: _kArmed, inactiveThumbColor: _kUnarmed),
+    ]),
+  );
+
+  InputDecoration _searchDec(String hint, {VoidCallback? onClear}) => InputDecoration(
+    hintText: hint, hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+    prefixIcon: const Icon(Icons.search, color: _kSubtle, size: 18),
+    suffixIcon: onClear != null
+        ? IconButton(icon: const Icon(Icons.clear, size: 16, color: _kSubtle), onPressed: onClear)
+        : null,
+    filled: true, fillColor: Colors.white, isDense: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: _kBorder)),
+    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: _kBorder)),
+    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+        borderSide: const BorderSide(color: _kPrimary, width: 2)),
+  );
 
   Widget _staffInfoCard(Map s) => Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: _kSurface,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: _kBorder.withOpacity(0.5)),
-        ),
-        child: Row(children: [
-          Container(
-            width: 40, height: 40,
-            decoration: BoxDecoration(
-              shape: BoxShape.circle,
-              color: _kAccent.withOpacity(0.12),
-              border: Border.all(color: _kAccent.withOpacity(0.35)),
-            ),
-            child: Center(
-              child: Text(
-                _v(s['name']).split(' ').where((w) => w.isNotEmpty)
-                    .take(2).map((w) => w[0].toUpperCase()).join(),
-                style: const TextStyle(color: _kAccent,
-                    fontWeight: FontWeight.w800, fontSize: 14),
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Row(children: [
-                Expanded(
-                  child: Text(_v(s['name']),
-                      style: const TextStyle(color: _kDark,
-                          fontWeight: FontWeight.w700, fontSize: 14)),
-                ),
-                _armedBadge(_isArmed(s)),
-              ]),
-              const SizedBox(height: 2),
-              Wrap(spacing: 8, children: [
-                Row(mainAxisSize: MainAxisSize.min, children: [
-                  const Icon(Icons.badge_outlined, size: 11, color: _kSubtle),
-                  const SizedBox(width: 3),
-                  Text('PNO: ${_v(s['pno'])}',
-                      style: const TextStyle(color: _kSubtle, fontSize: 11)),
-                ]),
-                if (_v(s['mobile']).isNotEmpty)
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.phone_outlined, size: 11, color: _kSubtle),
-                    const SizedBox(width: 3),
-                    Text(_v(s['mobile']),
-                        style: const TextStyle(color: _kSubtle, fontSize: 11)),
-                  ]),
-                if (_v(s['thana']).isNotEmpty)
-                  Row(mainAxisSize: MainAxisSize.min, children: [
-                    const Icon(Icons.local_police_outlined,
-                        size: 11, color: _kSubtle),
-                    const SizedBox(width: 3),
-                    Flexible(
-                      child: Text(_v(s['thana']),
-                          style: const TextStyle(color: _kSubtle, fontSize: 11),
-                          overflow: TextOverflow.ellipsis),
-                    ),
-                  ]),
-              ]),
-            ]),
-          ),
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(color: _kSurface, borderRadius: BorderRadius.circular(10),
+        border: Border.all(color: _kBorder.withOpacity(0.5))),
+    child: Row(children: [
+      Container(width: 40, height: 40,
+          decoration: BoxDecoration(shape: BoxShape.circle,
+              color: _kAccent.withOpacity(0.12), border: Border.all(color: _kAccent.withOpacity(0.35))),
+          child: Center(child: Text(
+            _v(s['name']).split(' ').where((w) => w.isNotEmpty).take(2).map((w) => w[0].toUpperCase()).join(),
+            style: const TextStyle(color: _kAccent, fontWeight: FontWeight.w800, fontSize: 14)))),
+      const SizedBox(width: 10),
+      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Row(children: [
+          Expanded(child: Text(_v(s['name']),
+              style: const TextStyle(color: _kDark, fontWeight: FontWeight.w700, fontSize: 14))),
+          _armedBadge(_isArmed(s)),
         ]),
-      );
-
-  Widget _armedBadge(bool armed) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-        decoration: BoxDecoration(
-          color: armed ? _kArmed.withOpacity(0.1) : _kUnarmed.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(5),
-          border: Border.all(
-              color: armed ? _kArmed.withOpacity(0.3) : _kUnarmed.withOpacity(0.2)),
-        ),
-        child: Text(armed ? '🔫 सशस्त्र' : '🛡 निःशस्त्र',
-            style: TextStyle(color: armed ? _kArmed : _kUnarmed,
-                fontSize: 9, fontWeight: FontWeight.w700)),
-      );
-
-  Widget _armedPill(int count, bool armed) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-        decoration: BoxDecoration(
-          color: armed ? _kArmed.withOpacity(0.1) : _kUnarmed.withOpacity(0.08),
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(
-              color: armed ? _kArmed.withOpacity(0.3) : _kUnarmed.withOpacity(0.2)),
-        ),
-        child: Text(armed ? '🔫 $count सशस्त्र' : '🛡 $count निःशस्त्र',
-            style: TextStyle(color: armed ? _kArmed : _kUnarmed,
-                fontSize: 10, fontWeight: FontWeight.w700)),
-      );
-
-  Widget _tag(IconData icon, String text) =>
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 11, color: _kSubtle),
-        const SizedBox(width: 3),
-        Text(text, style: const TextStyle(color: _kSubtle,
-            fontSize: 11, fontWeight: FontWeight.w500)),
-      ]);
-
-  Widget _miniTag(IconData icon, String text, Color? color) =>
-      Row(mainAxisSize: MainAxisSize.min, children: [
-        Icon(icon, size: 10, color: color ?? _kSubtle),
-        const SizedBox(width: 2),
-        Text(text, style: TextStyle(color: color ?? _kSubtle, fontSize: 10)),
-      ]);
-
-  Widget _badge(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(7),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Text(label,
-            style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800)),
-      );
-
-  Widget _pill(String label, Color color) => Container(
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(20),
-          border: Border.all(color: color.withOpacity(0.3)),
-        ),
-        child: Text(label,
-            style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
-      );
-
-  Widget _summaryChip(String label, String count, Color color) =>
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-        decoration: BoxDecoration(
-          color: color.withOpacity(0.1),
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: color.withOpacity(0.25)),
-        ),
-        child: RichText(
-          text: TextSpan(children: [
-            TextSpan(text: '$count ',
-                style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w900)),
-            TextSpan(text: label,
+        const SizedBox(height: 2),
+        Wrap(spacing: 8, children: [
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            const Icon(Icons.badge_outlined, size: 11, color: _kSubtle),
+            const SizedBox(width: 3),
+            Text('PNO: ${_v(s['pno'])}',
                 style: const TextStyle(color: _kSubtle, fontSize: 11)),
           ]),
-        ),
-      );
+          if (_v(s['mobile']).isNotEmpty)
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.phone_outlined, size: 11, color: _kSubtle),
+              const SizedBox(width: 3),
+              Text(_v(s['mobile']), style: const TextStyle(color: _kSubtle, fontSize: 11)),
+            ]),
+          if (_v(s['thana']).isNotEmpty)
+            Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.local_police_outlined, size: 11, color: _kSubtle),
+              const SizedBox(width: 3),
+              Flexible(child: Text(_v(s['thana']),
+                  style: const TextStyle(color: _kSubtle, fontSize: 11),
+                  overflow: TextOverflow.ellipsis)),
+            ]),
+        ]),
+      ])),
+    ]),
+  );
+
+  Widget _armedBadge(bool armed) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: armed ? _kArmed.withOpacity(0.1) : _kUnarmed.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(5),
+      border: Border.all(color: armed ? _kArmed.withOpacity(0.3) : _kUnarmed.withOpacity(0.2)),
+    ),
+    child: Text(armed ? '🔫 सशस्त्र' : '🛡 निःशस्त्र',
+        style: TextStyle(color: armed ? _kArmed : _kUnarmed,
+            fontSize: 9, fontWeight: FontWeight.w700)),
+  );
+
+  Widget _armedPill(int count, bool armed) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: armed ? _kArmed.withOpacity(0.1) : _kUnarmed.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: armed ? _kArmed.withOpacity(0.3) : _kUnarmed.withOpacity(0.2)),
+    ),
+    child: Text(armed ? '🔫 $count सशस्त्र' : '🛡 $count निःशस्त्र',
+        style: TextStyle(color: armed ? _kArmed : _kUnarmed,
+            fontSize: 10, fontWeight: FontWeight.w700)),
+  );
+
+  Widget _tag(IconData icon, String text) =>
+    Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 11, color: _kSubtle),
+      const SizedBox(width: 3),
+      Text(text, style: const TextStyle(color: _kSubtle, fontSize: 11, fontWeight: FontWeight.w500)),
+    ]);
+
+  Widget _miniTag(IconData icon, String text, Color? color) =>
+    Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(icon, size: 10, color: color ?? _kSubtle),
+      const SizedBox(width: 2),
+      Text(text, style: TextStyle(color: color ?? _kSubtle, fontSize: 10)),
+    ]);
+
+  Widget _badge(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(7),
+      border: Border.all(color: color.withOpacity(0.3)),
+    ),
+    child: Text(label, style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w800)),
+  );
+
+  Widget _pill(String label, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    decoration: BoxDecoration(
+      color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20),
+      border: Border.all(color: color.withOpacity(0.3)),
+    ),
+    child: Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+  );
+
+  Widget _summaryChip(String label, String count, Color color) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+    decoration: BoxDecoration(color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.25))),
+    child: RichText(text: TextSpan(children: [
+      TextSpan(text: '$count ', style: TextStyle(color: color, fontSize: 13, fontWeight: FontWeight.w900)),
+      TextSpan(text: label, style: const TextStyle(color: _kSubtle, fontSize: 11)),
+    ])),
+  );
 
   Widget _actionBtn(IconData icon, String label, Color color, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: EdgeInsets.symmetric(
-              horizontal: label.isEmpty ? 9 : 11, vertical: 9),
-          decoration: BoxDecoration(
-              color: color, borderRadius: BorderRadius.circular(10)),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, color: Colors.white, size: 14),
-            if (label.isNotEmpty) ...[
-              const SizedBox(width: 4),
-              Text(label,
-                  style: const TextStyle(color: Colors.white,
-                      fontSize: 12, fontWeight: FontWeight.w700)),
-            ],
-          ]),
-        ),
-      );
+    GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: EdgeInsets.symmetric(horizontal: label.isEmpty ? 9 : 11, vertical: 9),
+        decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(10)),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, color: Colors.white, size: 14),
+          if (label.isNotEmpty) ...[
+            const SizedBox(width: 4),
+            Text(label, style: const TextStyle(color: Colors.white,
+                fontSize: 12, fontWeight: FontWeight.w700)),
+          ],
+        ]),
+      ),
+    );
 
-  Widget _iconBtn(IconData icon, Color color, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          width: 34, height: 34,
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.08),
+  Widget _iconBtn(IconData icon, Color color, VoidCallback onTap) => GestureDetector(
+    onTap: onTap,
+    child: Container(width: 34, height: 34,
+        decoration: BoxDecoration(color: color.withOpacity(0.08),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.25)),
-          ),
-          child: Icon(icon, size: 16, color: color),
-        ),
-      );
+            border: Border.all(color: color.withOpacity(0.25))),
+        child: Icon(icon, size: 16, color: color)),
+  );
 
-  Widget _emptyState(String msg, IconData icon) =>
-      Center(
-        child: Padding(
-          padding: const EdgeInsets.all(40),
-          child: Column(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 52, color: _kSubtle.withOpacity(0.4)),
-            const SizedBox(height: 14),
-            Text(msg,
-                style: const TextStyle(color: _kSubtle, fontSize: 13),
-                textAlign: TextAlign.center),
-          ]),
-        ),
-      );
+  Widget _emptyState(String msg, IconData icon) => Center(
+    child: Padding(padding: const EdgeInsets.all(40),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 52, color: _kSubtle.withOpacity(0.4)),
+          const SizedBox(height: 14),
+          Text(msg, style: const TextStyle(color: _kSubtle, fontSize: 13), textAlign: TextAlign.center),
+        ])),
+  );
 
-  Widget _pageBtn(IconData icon, bool enabled, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: enabled ? onTap : null,
-        child: Container(
-          width: 32, height: 32,
-          decoration: BoxDecoration(
-            color: enabled ? _kPrimary.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(
-                color: enabled ? _kBorder : Colors.grey.withOpacity(0.3)),
-          ),
-          child: Icon(icon, size: 18, color: enabled ? _kPrimary : Colors.grey),
+  Widget _pageBtn(IconData icon, bool enabled, VoidCallback onTap) => GestureDetector(
+    onTap: enabled ? onTap : null,
+    child: Container(width: 32, height: 32,
+        decoration: BoxDecoration(
+          color: enabled ? _kPrimary.withOpacity(0.1) : Colors.grey.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(8),
+          border: Border.all(color: enabled ? _kBorder : Colors.grey.withOpacity(0.3)),
         ),
-      );
+        child: Icon(icon, size: 18, color: enabled ? _kPrimary : Colors.grey)),
+  );
 
   Widget _miniActionBtn(String label, IconData icon, Color color, VoidCallback onTap) =>
-      GestureDetector(
-        onTap: onTap,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-          decoration: BoxDecoration(
-            color: color.withOpacity(0.15),
+    GestureDetector(
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: BoxDecoration(color: color.withOpacity(0.15),
             borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.4)),
-          ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Icon(icon, size: 13, color: color),
-            const SizedBox(width: 4),
-            Text(label,
-                style: TextStyle(color: color, fontSize: 11,
-                    fontWeight: FontWeight.w700)),
-          ]),
-        ),
-      );
+            border: Border.all(color: color.withOpacity(0.4))),
+        child: Row(mainAxisSize: MainAxisSize.min, children: [
+          Icon(icon, size: 13, color: color),
+          const SizedBox(width: 4),
+          Text(label, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+        ]),
+      ),
+    );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  RANK INPUT FIELD — text input + live normalize preview + canonical chips
-//
-//  Accepts any input (Hindi Mangal, Krutidev, English, abbrev) and:
-//  • Shows an inline preview of what it will be SAVED as (canonical English).
-//  • Below the field, a horizontal chip strip lets user tap a canonical rank.
-//  • On form submit, the parent calls normalizeRank() — so even raw text
-//    works correctly.
+//  RANK INPUT FIELD
 // ══════════════════════════════════════════════════════════════════════════════
 class _RankInputField extends StatefulWidget {
   final TextEditingController controller;
   const _RankInputField({required this.controller});
-
   @override
   State<_RankInputField> createState() => _RankInputFieldState();
 }
 
 class _RankInputFieldState extends State<_RankInputField> {
-  String _preview = '';
-  bool   _isKnown = false;
+  String _preview = ''; bool _isKnown = false;
 
   @override
   void initState() {
-    super.initState();
-    widget.controller.addListener(_onChange);
-    _onChange();
+    super.initState(); widget.controller.addListener(_onChange); _onChange();
   }
 
   void _onChange() {
     final raw = widget.controller.text.trim();
     if (raw.isEmpty) {
-      if (_preview.isNotEmpty || _isKnown) {
-        setState(() { _preview = ''; _isKnown = false; });
-      }
-      return;
+      if (_preview.isNotEmpty || _isKnown) setState(() { _preview = ''; _isKnown = false; }); return;
     }
-    final n = normalizeRank(raw);
-    final known = kCanonicalRanks.contains(n);
-    if (n != _preview || known != _isKnown) {
-      setState(() { _preview = n; _isKnown = known; });
-    }
+    final n = normalizeRank(raw); final known = kCanonicalRanks.contains(n);
+    if (n != _preview || known != _isKnown) setState(() { _preview = n; _isKnown = known; });
   }
 
   @override
-  void dispose() {
-    widget.controller.removeListener(_onChange);
-    super.dispose();
-  }
+  void dispose() { widget.controller.removeListener(_onChange); super.dispose(); }
 
   @override
   Widget build(BuildContext context) {
     final raw = widget.controller.text.trim();
     final showPreview = raw.isNotEmpty && _preview.isNotEmpty && _preview != raw;
 
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 10),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          // Text input
-          TextFormField(
-            controller: widget.controller,
-            style: const TextStyle(color: _kDark, fontSize: 13),
-            decoration: InputDecoration(
-              labelText: 'पद / रैंक',
-              labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-              hintText: 'उदा. आरक्षी, दरोगा, S.I., HC',
-              hintStyle: const TextStyle(color: _kSubtle, fontSize: 11),
-              prefixIcon:
-                  const Icon(Icons.military_tech_outlined,
-                      size: 18, color: _kPrimary),
-              suffixIcon: raw.isEmpty
-                  ? null
-                  : IconButton(
-                      icon: const Icon(Icons.clear, size: 16, color: _kSubtle),
-                      onPressed: () {
-                        widget.controller.clear();
-                        _onChange();
-                      },
-                    ),
-              filled: true,
-              fillColor: Colors.white,
-              isDense: true,
-              contentPadding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: _kBorder)),
-              enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: _kBorder)),
-              focusedBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(10),
-                  borderSide: const BorderSide(color: _kPrimary, width: 2)),
-            ),
+    return Padding(padding: const EdgeInsets.only(bottom: 10),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        TextFormField(
+          controller: widget.controller,
+          style: const TextStyle(color: _kDark, fontSize: 13),
+          decoration: InputDecoration(
+            labelText: 'पद / रैंक', labelStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+            hintText: 'उदा. आरक्षी, दरोगा, S.I., HC',
+            hintStyle: const TextStyle(color: _kSubtle, fontSize: 11),
+            prefixIcon: const Icon(Icons.military_tech_outlined, size: 18, color: _kPrimary),
+            suffixIcon: raw.isEmpty ? null : IconButton(
+                icon: const Icon(Icons.clear, size: 16, color: _kSubtle),
+                onPressed: () { widget.controller.clear(); _onChange(); }),
+            filled: true, fillColor: Colors.white, isDense: true,
+            contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _kBorder)),
+            enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _kBorder)),
+            focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                borderSide: const BorderSide(color: _kPrimary, width: 2)),
           ),
-
-          // Live preview banner (when input differs from canonical)
-          if (showPreview)
-            Padding(
-              padding: const EdgeInsets.only(top: 6),
-              child: Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                decoration: BoxDecoration(
-                  color: _isKnown
-                      ? _kSuccess.withOpacity(0.07)
-                      : _kAccent.withOpacity(0.06),
-                  borderRadius: BorderRadius.circular(8),
-                  border: Border.all(
-                      color: _isKnown
-                          ? _kSuccess.withOpacity(0.3)
-                          : _kAccent.withOpacity(0.3)),
-                ),
-                child: Row(children: [
-                  Icon(
-                      _isKnown
-                          ? Icons.check_circle_outline
-                          : Icons.info_outline,
-                      size: 13,
-                      color: _isKnown ? _kSuccess : _kAccent),
-                  const SizedBox(width: 6),
-                  Expanded(
-                    child: RichText(
-                      text: TextSpan(
-                        style: const TextStyle(fontSize: 11, color: _kDark),
-                        children: [
-                          const TextSpan(text: 'सेव होगा: '),
-                          TextSpan(
-                              text: _preview,
-                              style: TextStyle(
-                                  color:
-                                      _isKnown ? _kSuccess : _kAccent,
-                                  fontWeight: FontWeight.w800)),
-                          if (!_isKnown)
-                            const TextSpan(
-                                text: '  (फ़िल्टर में नहीं मिलेगा)',
-                                style: TextStyle(
-                                    color: _kSubtle, fontSize: 10)),
-                        ],
-                      ),
-                    ),
+        ),
+        if (showPreview)
+          Padding(padding: const EdgeInsets.only(top: 6),
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: _isKnown ? _kSuccess.withOpacity(0.07) : _kAccent.withOpacity(0.06),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: _isKnown ? _kSuccess.withOpacity(0.3) : _kAccent.withOpacity(0.3)),
+              ),
+              child: Row(children: [
+                Icon(_isKnown ? Icons.check_circle_outline : Icons.info_outline,
+                    size: 13, color: _isKnown ? _kSuccess : _kAccent),
+                const SizedBox(width: 6),
+                Expanded(child: RichText(text: TextSpan(
+                  style: const TextStyle(fontSize: 11, color: _kDark),
+                  children: [
+                    const TextSpan(text: 'सेव होगा: '),
+                    TextSpan(text: _preview,
+                        style: TextStyle(color: _isKnown ? _kSuccess : _kAccent,
+                            fontWeight: FontWeight.w800)),
+                    if (!_isKnown)
+                      const TextSpan(text: '  (फ़िल्टर में नहीं मिलेगा)',
+                          style: TextStyle(color: _kSubtle, fontSize: 10)),
+                  ],
+                ))),
+              ]),
+            )),
+        Padding(padding: const EdgeInsets.only(top: 8),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: Row(children: kCanonicalRanks.map((r) {
+              final isSel = _preview == r;
+              return GestureDetector(
+                onTap: () {
+                  widget.controller.text = r;
+                  widget.controller.selection = TextSelection.fromPosition(TextPosition(offset: r.length));
+                  _onChange();
+                },
+                child: AnimatedContainer(
+                  duration: const Duration(milliseconds: 140),
+                  margin: const EdgeInsets.only(right: 5),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+                  decoration: BoxDecoration(
+                    color: isSel ? _kPrimary.withOpacity(0.15) : Colors.white,
+                    borderRadius: BorderRadius.circular(14),
+                    border: Border.all(
+                        color: isSel ? _kPrimary : _kBorder.withOpacity(0.5),
+                        width: isSel ? 1.5 : 1),
                   ),
-                ]),
-              ),
-            ),
-
-          // Canonical rank quick-pick chips
-          Padding(
-            padding: const EdgeInsets.only(top: 8),
-            child: SingleChildScrollView(
-              scrollDirection: Axis.horizontal,
-              child: Row(
-                children: kCanonicalRanks.map((r) {
-                  final isSel = _preview == r;
-                  return GestureDetector(
-                    onTap: () {
-                      widget.controller.text = r;
-                      widget.controller.selection = TextSelection.fromPosition(
-                          TextPosition(offset: r.length));
-                      _onChange();
-                    },
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 140),
-                      margin: const EdgeInsets.only(right: 5),
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 10, vertical: 5),
-                      decoration: BoxDecoration(
-                        color: isSel
-                            ? _kPrimary.withOpacity(0.15)
-                            : Colors.white,
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(
-                            color: isSel
-                                ? _kPrimary
-                                : _kBorder.withOpacity(0.5),
-                            width: isSel ? 1.5 : 1),
-                      ),
-                      child: Text(r,
-                          style: TextStyle(
-                              color: isSel ? _kPrimary : _kSubtle,
-                              fontSize: 10.5,
-                              fontWeight: isSel
-                                  ? FontWeight.w800
-                                  : FontWeight.w600)),
-                    ),
-                  );
-                }).toList(),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
+                  child: Text(r, style: TextStyle(
+                      color: isSel ? _kPrimary : _kSubtle, fontSize: 10.5,
+                      fontWeight: isSel ? FontWeight.w800 : FontWeight.w600)),
+                ),
+              );
+            }).toList()),
+          )),
+      ]));
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ASSIGN DIALOG
+//  ASSIGN DIALOG — election-aware
 // ══════════════════════════════════════════════════════════════════════════════
 class _AssignDialog extends StatelessWidget {
   final String title;
   final Widget? staffCard;
+  final _ElectionInfo election;
   final Map? selectedCenter;
   final List centerList;
   final bool cLoading, cHasMore, saving;
@@ -3243,336 +2959,296 @@ class _AssignDialog extends StatelessWidget {
   final String assignLabel;
 
   const _AssignDialog({
-    required this.title,
-    this.staffCard,
-    required this.selectedCenter,
-    required this.centerList,
-    required this.cLoading,
-    required this.cHasMore,
-    required this.cScroll,
-    required this.busCtrl,
-    required this.saving,
-    required this.onSearchChanged,
-    required this.onCenterTap,
-    required this.onClearCenter,
-    required this.onCancel,
-    required this.onAssign,
-    required this.assignLabel,
+    required this.title, this.staffCard, required this.election,
+    required this.selectedCenter, required this.centerList,
+    required this.cLoading, required this.cHasMore, required this.cScroll,
+    required this.busCtrl, required this.saving,
+    required this.onSearchChanged, required this.onCenterTap,
+    required this.onClearCenter, required this.onCancel,
+    required this.onAssign, required this.assignLabel,
   });
 
   @override
   Widget build(BuildContext context) {
     final dlgDec = BoxDecoration(
-      color: _kBg,
-      borderRadius: BorderRadius.circular(16),
+      color: _kBg, borderRadius: BorderRadius.circular(16),
       border: Border.all(color: _kBorder, width: 1.2),
-      boxShadow: [
-        BoxShadow(color: _kPrimary.withOpacity(0.15),
-            blurRadius: 20, offset: const Offset(0, 8))
-      ],
+      boxShadow: [BoxShadow(color: _kPrimary.withOpacity(0.15),
+          blurRadius: 20, offset: const Offset(0, 8))],
     );
-
     String _v(dynamic v) => (v ?? '').toString().trim();
+    final hasElection = election.isActive && election.id != null;
 
     return Dialog(
       backgroundColor: Colors.transparent,
       insetPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 20),
       child: ConstrainedBox(
         constraints: BoxConstraints(
-          maxWidth: 540,
-          maxHeight: MediaQuery.of(context).size.height * 0.88,
-        ),
+            maxWidth: 540, maxHeight: MediaQuery.of(context).size.height * 0.88),
         child: Container(
           decoration: dlgDec,
           child: Column(children: [
+            // Header with election badge
             Container(
               padding: const EdgeInsets.fromLTRB(16, 13, 12, 13),
-              decoration: const BoxDecoration(
-                color: _kDark,
-                borderRadius: BorderRadius.only(
-                    topLeft: Radius.circular(15),
-                    topRight: Radius.circular(15)),
-              ),
+              decoration: const BoxDecoration(color: _kDark,
+                  borderRadius: BorderRadius.only(
+                      topLeft: Radius.circular(15), topRight: Radius.circular(15))),
               child: Row(children: [
-                Container(
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(
-                      color: _kPrimary.withOpacity(0.25),
-                      borderRadius: BorderRadius.circular(7)),
-                  child: const Icon(Icons.how_to_vote_outlined,
-                      color: _kBorder, size: 16),
-                ),
+                Container(padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(color: _kPrimary.withOpacity(0.25),
+                        borderRadius: BorderRadius.circular(7)),
+                    child: const Icon(Icons.how_to_vote_outlined, color: _kBorder, size: 16)),
                 const SizedBox(width: 10),
-                Expanded(
-                  child: Text(title,
-                      maxLines: 2, overflow: TextOverflow.ellipsis,
+                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(title, maxLines: 2, overflow: TextOverflow.ellipsis,
                       style: const TextStyle(color: Colors.white,
                           fontWeight: FontWeight.w700, fontSize: 15)),
-                ),
-                IconButton(
-                  onPressed: onCancel,
-                  icon: const Icon(Icons.close, color: Colors.white60, size: 20),
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                ),
+                  Row(children: [
+                    Icon(hasElection ? Icons.how_to_vote_outlined : Icons.warning_amber_rounded,
+                        size: 10, color: hasElection ? _kSuccess.withOpacity(0.8) : _kAmber),
+                    const SizedBox(width: 4),
+                    Expanded(child: Text(
+                      hasElection ? 'चुनाव: ${election.name}' : '⚠️ कोई सक्रिय चुनाव नहीं',
+                      style: TextStyle(color: hasElection ? Colors.white54 : _kAmber,
+                          fontSize: 9, fontWeight: FontWeight.w600),
+                      maxLines: 1, overflow: TextOverflow.ellipsis,
+                    )),
+                  ]),
+                ])),
+                IconButton(onPressed: onCancel,
+                    icon: const Icon(Icons.close, color: Colors.white60, size: 20),
+                    padding: EdgeInsets.zero, constraints: const BoxConstraints()),
               ]),
             ),
 
-            Flexible(
-              child: SingleChildScrollView(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                  if (staffCard != null) ...[
-                    staffCard!,
-                    const SizedBox(height: 16),
-                  ],
+            // Election warning if no active election
+            if (!hasElection)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                color: _kError.withOpacity(0.06),
+                child: Row(children: [
+                  const Icon(Icons.error_outline, size: 16, color: _kError),
+                  const SizedBox(width: 8),
+                  const Expanded(child: Text(
+                    'Duty assignment के लिए सक्रिय चुनाव आवश्यक है। '
+                    'कृपया Election Cell से संपर्क करें।',
+                    style: TextStyle(color: _kError, fontSize: 11, fontWeight: FontWeight.w600),
+                  )),
+                ]),
+              ),
 
-                  if (selectedCenter != null) ...[
-                    Container(
-                      padding: const EdgeInsets.all(10),
-                      decoration: BoxDecoration(
-                        color: _kSuccess.withOpacity(0.05),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: _kSuccess.withOpacity(0.3)),
-                      ),
-                      child: Row(children: [
-                        const Icon(Icons.check_circle_rounded,
-                            color: _kSuccess, size: 18),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
+            if (!hasElection)
+              Padding(
+                padding: const EdgeInsets.all(16),
+                child: Column(children: [
+                  Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(color: _kAmber.withOpacity(0.06),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: _kAmber.withOpacity(0.2))),
+                    child: Column(children: [
+                      const Icon(Icons.lock_outline, size: 48, color: _kAmber),
+                      const SizedBox(height: 12),
+                      const Text('Assignment Locked',
+                          style: TextStyle(color: _kAmber, fontWeight: FontWeight.w800, fontSize: 15)),
+                      const SizedBox(height: 6),
+                      const Text('अपने जिले के Election Cell से संपर्क करें और '
+                          'Election Configuration सक्रिय करवाएं।',
+                          style: TextStyle(color: _kDark, fontSize: 12, height: 1.4),
+                          textAlign: TextAlign.center),
+                    ]),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(width: double.infinity, child: OutlinedButton(
+                    onPressed: onCancel,
+                    style: OutlinedButton.styleFrom(foregroundColor: _kSubtle,
+                        side: const BorderSide(color: _kBorder),
+                        padding: const EdgeInsets.symmetric(vertical: 13),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                    child: const Text('बंद करें'),
+                  )),
+                ]),
+              )
+            else
+              Flexible(
+                child: SingleChildScrollView(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    if (staffCard != null) ...[staffCard!, const SizedBox(height: 16)],
+
+                    if (selectedCenter != null) ...[
+                      Container(
+                        padding: const EdgeInsets.all(10),
+                        decoration: BoxDecoration(color: _kSuccess.withOpacity(0.05),
+                            borderRadius: BorderRadius.circular(10),
+                            border: Border.all(color: _kSuccess.withOpacity(0.3))),
+                        child: Row(children: [
+                          const Icon(Icons.check_circle_rounded, color: _kSuccess, size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                             Text(_v(selectedCenter!['name']),
                                 style: const TextStyle(color: _kDark,
                                     fontWeight: FontWeight.w700, fontSize: 13)),
-                            Text(
-                                '${_v(selectedCenter!['thana'])} • ${_v(selectedCenter!['gpName'])}',
-                                style: const TextStyle(
-                                    color: _kSubtle, fontSize: 11)),
-                          ]),
-                        ),
-                        GestureDetector(
-                          onTap: onClearCenter,
-                          child: const Icon(Icons.close, size: 16, color: _kSubtle),
-                        ),
-                      ]),
-                    ),
-                    const SizedBox(height: 10),
-                  ],
+                            Text('${_v(selectedCenter!['thana'])} • ${_v(selectedCenter!['gpName'])}',
+                                style: const TextStyle(color: _kSubtle, fontSize: 11)),
+                          ])),
+                          GestureDetector(onTap: onClearCenter,
+                              child: const Icon(Icons.close, size: 16, color: _kSubtle)),
+                        ]),
+                      ),
+                      const SizedBox(height: 10),
+                    ],
 
-                  Row(children: [
-                    Container(
-                        width: 3, height: 14,
-                        decoration: BoxDecoration(
-                            color: _kPrimary,
-                            borderRadius: BorderRadius.circular(2))),
-                    const SizedBox(width: 7),
-                    const Text('मतदान केंद्र चुनें',
-                        style: TextStyle(color: _kDark,
-                            fontSize: 13, fontWeight: FontWeight.w800)),
-                  ]),
-                  const SizedBox(height: 8),
+                    Row(children: [
+                      Container(width: 3, height: 14,
+                          decoration: BoxDecoration(color: _kPrimary,
+                              borderRadius: BorderRadius.circular(2))),
+                      const SizedBox(width: 7),
+                      const Text('मतदान केंद्र चुनें',
+                          style: TextStyle(color: _kDark, fontSize: 13, fontWeight: FontWeight.w800)),
+                    ]),
+                    const SizedBox(height: 8),
 
-                  TextField(
-                    onChanged: onSearchChanged,
-                    style: const TextStyle(color: _kDark, fontSize: 13),
-                    decoration: InputDecoration(
-                      hintText: 'केंद्र, थाना, GP से खोजें...',
-                      hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-                      prefixIcon: const Icon(Icons.search, color: _kSubtle, size: 18),
-                      filled: true,
-                      fillColor: Colors.white,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 10),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: _kBorder)),
-                      enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: _kBorder)),
-                      focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: _kPrimary, width: 2)),
+                    TextField(onChanged: onSearchChanged,
+                      style: const TextStyle(color: _kDark, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'केंद्र, थाना, GP से खोजें...',
+                        hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+                        prefixIcon: const Icon(Icons.search, color: _kSubtle, size: 18),
+                        filled: true, fillColor: Colors.white, isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: _kBorder)),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: _kBorder)),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: _kPrimary, width: 2)),
+                      ),
                     ),
-                  ),
-                  const SizedBox(height: 8),
+                    const SizedBox(height: 8),
 
-                  Container(
-                    height: 220,
-                    decoration: BoxDecoration(
-                      border: Border.all(color: _kBorder),
-                      borderRadius: BorderRadius.circular(10),
-                      color: Colors.white,
-                    ),
-                    child: cLoading && centerList.isEmpty
-                        ? const Center(
-                            child: CircularProgressIndicator(
-                                color: _kPrimary, strokeWidth: 2))
-                        : centerList.isEmpty
-                            ? const Center(
-                                child: Text('कोई केंद्र नहीं मिला',
-                                    style: TextStyle(
-                                        color: _kSubtle, fontSize: 12)))
-                            : ListView.builder(
-                                controller: cScroll,
-                                padding: const EdgeInsets.symmetric(vertical: 4),
-                                itemCount: centerList.length + (cHasMore ? 1 : 0),
-                                itemBuilder: (_, i) {
-                                  if (i >= centerList.length)
-                                    return const Padding(
-                                      padding: EdgeInsets.all(10),
-                                      child: Center(
-                                          child: SizedBox(width: 18, height: 18,
+                    Container(height: 220,
+                      decoration: BoxDecoration(border: Border.all(color: _kBorder),
+                          borderRadius: BorderRadius.circular(10), color: Colors.white),
+                      child: cLoading && centerList.isEmpty
+                          ? const Center(child: CircularProgressIndicator(color: _kPrimary, strokeWidth: 2))
+                          : centerList.isEmpty
+                              ? const Center(child: Text('कोई केंद्र नहीं मिला',
+                                  style: TextStyle(color: _kSubtle, fontSize: 12)))
+                              : ListView.builder(
+                                  controller: cScroll,
+                                  padding: const EdgeInsets.symmetric(vertical: 4),
+                                  itemCount: centerList.length + (cHasMore ? 1 : 0),
+                                  itemBuilder: (_, i) {
+                                    if (i >= centerList.length)
+                                      return const Padding(padding: EdgeInsets.all(10),
+                                          child: Center(child: SizedBox(width: 18, height: 18,
                                               child: CircularProgressIndicator(
-                                                  strokeWidth: 2, color: _kPrimary))),
-                                    );
-                                  final c = centerList[i];
-                                  final isSel = selectedCenter?['id'] == c['id'];
-                                  final type = '${c['centerType'] ?? 'C'}';
-                                  final tc = type == 'A' ? _kError
-                                      : type == 'B' ? _kAccent : _kInfo;
-                                  return InkWell(
-                                    onTap: () => onCenterTap(
-                                        Map<String, dynamic>.from(c)),
-                                    child: AnimatedContainer(
-                                      duration: const Duration(milliseconds: 120),
-                                      margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
-                                      padding: const EdgeInsets.all(10),
-                                      decoration: BoxDecoration(
-                                        color: isSel
-                                            ? _kPrimary.withOpacity(0.08)
-                                            : Colors.transparent,
-                                        borderRadius: BorderRadius.circular(8),
-                                        border: Border.all(
-                                            color: isSel
-                                                ? _kPrimary
-                                                : _kBorder.withOpacity(0.4),
-                                            width: isSel ? 1.5 : 1),
-                                      ),
-                                      child: Row(children: [
-                                        Container(
-                                          width: 28, height: 28,
-                                          decoration: BoxDecoration(
-                                            shape: BoxShape.circle,
-                                            color: tc.withOpacity(0.12),
-                                            border: Border.all(
-                                                color: tc.withOpacity(0.4)),
-                                          ),
-                                          child: Center(
-                                              child: Text(type,
-                                                  style: TextStyle(color: tc,
-                                                      fontSize: 10,
-                                                      fontWeight: FontWeight.w900))),
-                                        ),
-                                        const SizedBox(width: 10),
-                                        Expanded(
-                                          child: Column(
-                                              crossAxisAlignment: CrossAxisAlignment.start,
-                                              children: [
+                                                  strokeWidth: 2, color: _kPrimary))));
+                                    final c = centerList[i];
+                                    final isSel = selectedCenter?['id'] == c['id'];
+                                    final type = '${c['centerType'] ?? 'C'}';
+                                    final tc = type == 'A' ? _kError
+                                        : type == 'B' ? _kAccent : _kInfo;
+                                    return InkWell(
+                                      onTap: () => onCenterTap(Map<String, dynamic>.from(c)),
+                                      child: AnimatedContainer(
+                                        duration: const Duration(milliseconds: 120),
+                                        margin: const EdgeInsets.fromLTRB(6, 3, 6, 3),
+                                        padding: const EdgeInsets.all(10),
+                                        decoration: BoxDecoration(
+                                          color: isSel ? _kPrimary.withOpacity(0.08) : Colors.transparent,
+                                          borderRadius: BorderRadius.circular(8),
+                                          border: Border.all(
+                                              color: isSel ? _kPrimary : _kBorder.withOpacity(0.4),
+                                              width: isSel ? 1.5 : 1)),
+                                        child: Row(children: [
+                                          Container(width: 28, height: 28,
+                                              decoration: BoxDecoration(shape: BoxShape.circle,
+                                                  color: tc.withOpacity(0.12),
+                                                  border: Border.all(color: tc.withOpacity(0.4))),
+                                              child: Center(child: Text(type,
+                                                  style: TextStyle(color: tc, fontSize: 10,
+                                                      fontWeight: FontWeight.w900)))),
+                                          const SizedBox(width: 10),
+                                          Expanded(child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start, children: [
                                             Text(_v(c['name']),
                                                 style: TextStyle(
                                                     color: isSel ? _kPrimary : _kDark,
-                                                    fontWeight: FontWeight.w700,
-                                                    fontSize: 13),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis),
+                                                    fontWeight: FontWeight.w700, fontSize: 13),
+                                                maxLines: 1, overflow: TextOverflow.ellipsis),
                                             Text('${_v(c['thana'])} • ${_v(c['gpName'])}',
-                                                style: const TextStyle(
-                                                    color: _kSubtle, fontSize: 10),
-                                                maxLines: 1,
-                                                overflow: TextOverflow.ellipsis),
-                                          ]),
-                                        ),
-                                        if (isSel)
-                                          const Icon(Icons.check_circle_rounded,
-                                              color: _kPrimary, size: 18),
-                                      ]),
-                                    ),
-                                  );
-                                },
-                              ),
-                  ),
-                  const SizedBox(height: 14),
-
-                  Row(children: [
-                    Container(
-                        width: 3, height: 14,
-                        decoration: BoxDecoration(
-                            color: _kPrimary,
-                            borderRadius: BorderRadius.circular(2))),
-                    const SizedBox(width: 7),
-                    const Text('बस संख्या (वैकल्पिक)',
-                        style: TextStyle(color: _kDark,
-                            fontSize: 13, fontWeight: FontWeight.w800)),
-                  ]),
-                  const SizedBox(height: 8),
-                  TextField(
-                    controller: busCtrl,
-                    style: const TextStyle(color: _kDark, fontSize: 13),
-                    decoration: InputDecoration(
-                      hintText: 'बस नंबर',
-                      hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
-                      prefixIcon: const Icon(Icons.directions_bus_outlined,
-                          size: 18, color: _kPrimary),
-                      filled: true,
-                      fillColor: Colors.white,
-                      isDense: true,
-                      contentPadding: const EdgeInsets.symmetric(
-                          horizontal: 12, vertical: 12),
-                      border: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: _kBorder)),
-                      enabledBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: _kBorder)),
-                      focusedBorder: OutlineInputBorder(
-                          borderRadius: BorderRadius.circular(10),
-                          borderSide: const BorderSide(color: _kPrimary, width: 2)),
+                                                style: const TextStyle(color: _kSubtle, fontSize: 10),
+                                                maxLines: 1, overflow: TextOverflow.ellipsis),
+                                          ])),
+                                          if (isSel)
+                                            const Icon(Icons.check_circle_rounded,
+                                                color: _kPrimary, size: 18),
+                                        ]),
+                                      ),
+                                    );
+                                  }),
                     ),
-                  ),
-                ]),
-              ),
-            ),
+                    const SizedBox(height: 14),
 
-            Padding(
-              padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
-              child: Row(children: [
-                Expanded(
-                  child: OutlinedButton(
+                    Row(children: [
+                      Container(width: 3, height: 14,
+                          decoration: BoxDecoration(color: _kPrimary,
+                              borderRadius: BorderRadius.circular(2))),
+                      const SizedBox(width: 7),
+                      const Text('बस संख्या (वैकल्पिक)',
+                          style: TextStyle(color: _kDark, fontSize: 13, fontWeight: FontWeight.w800)),
+                    ]),
+                    const SizedBox(height: 8),
+                    TextField(controller: busCtrl,
+                      style: const TextStyle(color: _kDark, fontSize: 13),
+                      decoration: InputDecoration(
+                        hintText: 'बस नंबर', hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
+                        prefixIcon: const Icon(Icons.directions_bus_outlined, size: 18, color: _kPrimary),
+                        filled: true, fillColor: Colors.white, isDense: true,
+                        contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+                        border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: _kBorder)),
+                        enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: _kBorder)),
+                        focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                            borderSide: const BorderSide(color: _kPrimary, width: 2)),
+                      ),
+                    ),
+                  ]),
+                ),
+              ),
+
+            if (hasElection)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 16),
+                child: Row(children: [
+                  Expanded(child: OutlinedButton(
                     onPressed: saving ? null : onCancel,
-                    style: OutlinedButton.styleFrom(
-                        foregroundColor: _kSubtle,
+                    style: OutlinedButton.styleFrom(foregroundColor: _kSubtle,
                         side: const BorderSide(color: _kBorder),
                         padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10))),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     child: const Text('रद्द'),
-                  ),
-                ),
-                const SizedBox(width: 12),
-                Expanded(
-                  child: ElevatedButton(
+                  )),
+                  const SizedBox(width: 12),
+                  Expanded(child: ElevatedButton(
                     style: ElevatedButton.styleFrom(
                         backgroundColor: selectedCenter == null ? _kSubtle : _kPrimary,
                         foregroundColor: Colors.white,
                         padding: const EdgeInsets.symmetric(vertical: 13),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10))),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
                     onPressed: onAssign,
                     child: saving
                         ? const SizedBox(width: 18, height: 18,
-                            child: CircularProgressIndicator(
-                                color: Colors.white, strokeWidth: 2))
+                            child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
                         : Text(assignLabel,
                             style: const TextStyle(fontWeight: FontWeight.w700)),
-                  ),
-                ),
-              ]),
-            ),
+                  )),
+                ]),
+              ),
           ]),
         ),
       ),

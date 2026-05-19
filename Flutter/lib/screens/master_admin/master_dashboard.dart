@@ -4,6 +4,7 @@ import '../../services/auth_service.dart';
 import '../../services/api_service.dart';
 import '../admin/pages/hierarchy_report_page.dart';
 import '../admin/map_view.dart';
+import '../admin/pages/election_history_report_page.dart';
 
 // ─────────────────────────────────────────────
 //  PALETTE
@@ -126,6 +127,66 @@ class AdminModel {
     createdBy:      j['createdBy']      ?? 'master',
     superZoneCount: j['superZoneCount'] ?? 0,
   );
+}
+
+class MultiSuperAdminModel {
+  final int          id;
+  final String       name, username;
+  final bool         isActive;
+  final DateTime     createdAt;
+  final List<String> districts;
+
+  MultiSuperAdminModel({
+    required this.id,         required this.name,
+    required this.username,   required this.isActive,
+    required this.createdAt,  required this.districts,
+  });
+
+  factory MultiSuperAdminModel.fromJson(Map<String, dynamic> j) =>
+      MultiSuperAdminModel(
+        id:        j['id'],
+        name:      j['name']     ?? '',
+        username:  j['username'] ?? '',
+        isActive:  j['isActive'] ?? true,
+        createdAt: DateTime.tryParse(j['createdAt'] ?? '') ?? DateTime.now(),
+        districts: List<String>.from(j['districts'] ?? const []),
+      );
+}
+
+class DistrictElectionStatus {
+  final String  district, status, electionName, electionType, phase,
+                electionYear, electionDate;
+  final int?    configId;
+  final bool    isActive, isArchived, isFinalized, autoFinalized;
+  final String? finalizedAt, archivedAt;
+
+  DistrictElectionStatus({
+    required this.district,      required this.status,
+    required this.electionName,  required this.electionType,
+    required this.phase,         required this.electionYear,
+    required this.electionDate,  required this.configId,
+    required this.isActive,      required this.isArchived,
+    required this.isFinalized,   required this.autoFinalized,
+    required this.finalizedAt,   required this.archivedAt,
+  });
+
+  factory DistrictElectionStatus.fromJson(Map<String, dynamic> j) =>
+      DistrictElectionStatus(
+        district:      j['district']      ?? '',
+        status:        j['status']        ?? 'none',
+        electionName:  j['electionName']  ?? '',
+        electionType:  j['electionType']  ?? '',
+        phase:         j['phase']         ?? '',
+        electionYear:  j['electionYear']  ?? '',
+        electionDate:  j['electionDate']  ?? '',
+        configId:      j['configId'],
+        isActive:      j['isActive']      ?? false,
+        isArchived:    j['isArchived']    ?? false,
+        isFinalized:   j['isFinalized']   ?? false,
+        autoFinalized: j['autoFinalized'] ?? false,
+        finalizedAt:   j['finalizedAt'],
+        archivedAt:    j['archivedAt'],
+      );
 }
 
 class ElectionConfigModel {
@@ -258,15 +319,21 @@ class _MasterDashboardState extends State<MasterDashboard>
   Map<String, dynamic>      _appConfig       = {};
   OverviewStats             _overview        = OverviewStats();
 
+  // 🆕 Multi-District Super Admins + cross-district status
+  List<MultiSuperAdminModel>   _multiSupers      = [];
+  List<DistrictElectionStatus> _districtStatus   = [];
+
   // ── Loading flags ──────────────────────────
-  bool _loadingOverview    = true;
-  bool _loadingSuperAdmins = true;
-  bool _loadingAdmins      = true;
-  bool _loadingLogs        = true;
-  bool _loadingApiLogs     = false;
-  bool _loadingStats       = true;
-  bool _loadingConfig      = true;
-  bool _loadingElectionCfg = true;
+  bool _loadingOverview       = true;
+  bool _loadingSuperAdmins    = true;
+  bool _loadingAdmins         = true;
+  bool _loadingLogs           = true;
+  bool _loadingApiLogs        = false;
+  bool _loadingStats          = true;
+  bool _loadingConfig         = true;
+  bool _loadingElectionCfg    = true;
+  bool _loadingMultiSupers    = true;   // 🆕
+  bool _loadingDistrictStatus = true;   // 🆕
 
   // ── Filters ────────────────────────────────
   String _logFilter           = 'ALL';
@@ -306,6 +373,8 @@ class _MasterDashboardState extends State<MasterDashboard>
     _fetchAdmins(),      _fetchLogs(),
     _fetchSystemStats(), _fetchConfig(),
     _fetchElectionConfigs(),
+    _fetchMultiSupers(),       // 🆕
+    _fetchDistrictStatus(),    // 🆕
   ]);
 
   Future<void> _fetchOverview() async {
@@ -457,10 +526,50 @@ class _MasterDashboardState extends State<MasterDashboard>
     }
   }
 
+  // 🆕 Multi-District Super Admins
+  Future<void> _fetchMultiSupers() async {
+    setState(() => _loadingMultiSupers = true);
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get(
+          "/master/multi-super-admins", token: token);
+      setState(() {
+        _multiSupers = (res["data"] as List? ?? [])
+            .map((e) => MultiSuperAdminModel.fromJson(e)).toList();
+      });
+    } catch (_) {
+      if (mounted) setState(() => _multiSupers = []);
+    } finally {
+      if (mounted) setState(() => _loadingMultiSupers = false);
+    }
+  }
+
+  // 🆕 Cross-district election status summary
+  Future<void> _fetchDistrictStatus() async {
+    setState(() => _loadingDistrictStatus = true);
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get(
+          "/master/elections/status-summary", token: token);
+      final d   = res["data"] as Map<String, dynamic>? ?? {};
+      final lst = d["districts"] as List? ?? [];
+      setState(() {
+        _districtStatus = lst
+            .map((e) => DistrictElectionStatus.fromJson(e))
+            .toList();
+      });
+    } catch (_) {
+      if (mounted) setState(() => _districtStatus = []);
+    } finally {
+      if (mounted) setState(() => _loadingDistrictStatus = false);
+    }
+  }
+
   void _switchTab(int i) {
     setState(() => _selectedTab = i);
     _fadeCtrl.forward(from: 0);
-    if (i == 4 && _apiLogs.isEmpty) _fetchApiLogs();
+    // API Logs tab index shifted to 5 (was 4) after inserting "बहु-जनपद" tab
+    if (i == 5 && _apiLogs.isEmpty) _fetchApiLogs();
   }
 
   // ══════════════════════════════════════════
@@ -870,7 +979,24 @@ class _MasterDashboardState extends State<MasterDashboard>
                   child: AbsorbPointer(
                     child: _dlgField(
                         dateCtrl, 'मतदान तिथि *', Icons.event_outlined,
-                        validator: _notEmpty),
+                        // 🆕 Future-date guard when CREATING a new config
+                        validator: (v) {
+                          if (v == null || v.trim().isEmpty) {
+                            return 'आवश्यक';
+                          }
+                          if (!isEdit) {
+                            final parsed = DateTime.tryParse(v.trim());
+                            if (parsed == null) {
+                              return 'सही तिथि दर्ज करें';
+                            }
+                            final today = DateTime.now();
+                            final t = DateTime(today.year, today.month, today.day);
+                            if (parsed.isBefore(t)) {
+                              return 'मतदान तिथि भविष्य की होनी चाहिए';
+                            }
+                          }
+                          return null;
+                        }),
                   ),
                 ),
                 const SizedBox(height: 12),
@@ -941,6 +1067,7 @@ class _MasterDashboardState extends State<MasterDashboard>
                           : 'नई कॉन्फ़िग सहेजी गई ✓', kSuccess);
                       _fetchElectionConfigs();
                       _fetchOverview();
+                      _fetchDistrictStatus();   // 🆕
                     } catch (e) {
                       _snack("Error: $e", kError);
                     }
@@ -1667,6 +1794,7 @@ class _MasterDashboardState extends State<MasterDashboard>
       (Icons.dashboard_outlined,       'सारांश'),
       (Icons.how_to_vote_outlined,     'निर्वाचन'),
       (Icons.supervised_user_circle,   'सुपर एडमिन'),
+      (Icons.public,                   'बहु-जनपद'),        // 🆕
       (Icons.manage_accounts_outlined, 'एडमिन'),
       (Icons.api_outlined,             'API लॉग'),
       (Icons.receipt_long_outlined,    'सिस्टम लॉग'),
@@ -1718,10 +1846,11 @@ class _MasterDashboardState extends State<MasterDashboard>
       case 0:  return _buildOverview();
       case 1:  return _buildElectionConfigs();
       case 2:  return _buildSuperAdmins();
-      case 3:  return _buildAdmins();
-      case 4:  return _buildApiLogs();
-      case 5:  return _buildLogs();
-      case 6:  return _buildConfig();
+      case 3:  return _buildMultiSupers();      // 🆕
+      case 4:  return _buildAdmins();
+      case 5:  return _buildApiLogs();
+      case 6:  return _buildLogs();
+      case 7:  return _buildConfig();
       default: return _buildOverview();
     }
   }
@@ -1811,6 +1940,12 @@ class _MasterDashboardState extends State<MasterDashboard>
               )),
             onShowPicker: _showDistrictPickerThen,
           ),
+          const SizedBox(height: 18),
+
+          // 🆕 Cross-district election status summary
+          _sectionLabel('चुनाव स्थिति (जनपद अनुसार)'),
+          const SizedBox(height: 10),
+          _buildElectionStatusSummary(),
           const SizedBox(height: 18),
 
           _sectionLabel('सिस्टम जानकारी'),
@@ -2027,6 +2162,7 @@ class _MasterDashboardState extends State<MasterDashboard>
                             {}, token: token);
                           _fetchElectionConfigs();
                           _fetchOverview();
+                          _fetchDistrictStatus();   // 🆕
                           _snack('कॉन्फ़िग आर्काइव हुई ✓', kSuccess);
                         } catch (_) { _snack('आर्काइव विफल', kError); }
                       },
@@ -2044,6 +2180,7 @@ class _MasterDashboardState extends State<MasterDashboard>
                             token: token);
                           _fetchElectionConfigs();
                           _fetchOverview();
+                          _fetchDistrictStatus();   // 🆕
                           _snack('कॉन्फ़िग हटाई गई', kError);
                         } catch (_) { _snack('हटाने में विफल', kError); }
                       },
@@ -2934,6 +3071,852 @@ class _MasterDashboardState extends State<MasterDashboard>
       _fetchConfig();
       _snack('कॉन्फ़िग अपडेट हुई ✓', kSuccess);
     } catch (_) { _snack('कॉन्फ़िग अपडेट विफल', kError); }
+  }
+
+  // ══════════════════════════════════════════
+  //  🆕 TAB — MULTI-DISTRICT SUPER ADMINS
+  // ══════════════════════════════════════════
+  Widget _buildMultiSupers() {
+    return Column(children: [
+      _listHeader(
+        title: '${_multiSupers.length} बहु-जनपद सुपर एडमिन',
+        onRefresh: _fetchMultiSupers,
+        buttonLabel: 'नया',
+        buttonIcon: Icons.add,
+        onButton: _showCreateMultiSuper,
+      ),
+      Expanded(
+        child: _loadingMultiSupers
+            ? const Center(
+                child: CircularProgressIndicator(color: kDevAccent))
+            : RefreshIndicator(
+                onRefresh: _fetchMultiSupers, color: kDevAccent,
+                child: _multiSupers.isEmpty
+                    ? _emptyState('कोई बहु-जनपद सुपर एडमिन नहीं',
+                        '"नया" पर टैप करें', Icons.public_off)
+                    : ListView.builder(
+                        padding: EdgeInsets.all(_BP.pad(context)),
+                        itemCount: _multiSupers.length,
+                        itemBuilder: (_, i) =>
+                            _multiSuperCard(_multiSupers[i]),
+                      ),
+              ),
+      ),
+    ]);
+  }
+
+  Widget _multiSuperCard(MultiSuperAdminModel u) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: kBorder.withOpacity(0.4)),
+      ),
+      child: Column(children: [
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+            color: u.isActive
+                ? kDevAccent.withOpacity(0.07)
+                : kError.withOpacity(0.06),
+            borderRadius: const BorderRadius.only(
+                topLeft: Radius.circular(13), topRight: Radius.circular(13)),
+          ),
+          child: Row(children: [
+            _idBadge('MS', u.id),
+            const SizedBox(width: 10),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text(u.name, style: const TextStyle(
+                  color: kDark, fontWeight: FontWeight.w700, fontSize: 13)),
+              Text('@${u.username}',
+                  style: const TextStyle(color: kSubtle, fontSize: 11)),
+            ])),
+            GestureDetector(
+              onTap: () async {
+                try {
+                  final token = await AuthService.getToken();
+                  await ApiService.patch(
+                      "/master/multi-super-admins/${u.id}/status",
+                      {"isActive": !u.isActive}, token: token);
+                  _fetchMultiSupers();
+                } catch (_) { _snack('स्थिति अपडेट विफल', kError); }
+              },
+              child: _statusBadge(u.isActive),
+            ),
+            const SizedBox(width: 6),
+            PopupMenuButton<String>(
+              onSelected: (v) {
+                if (v == 'edit')   _showEditMultiSuper(u);
+                if (v == 'reset')  _showResetMultiSuperPassword(u);
+                if (v == 'delete') {
+                  _confirmDestructive(
+                    'बहु-जनपद सुपर एडमिन हटाएँ?',
+                    '${u.name} स्थायी रूप से हटाया जाएगा।',
+                    () async {
+                      try {
+                        final token = await AuthService.getToken();
+                        await ApiService.delete(
+                            "/master/multi-super-admins/${u.id}",
+                            token: token);
+                        _fetchMultiSupers();
+                        _snack('हटाया गया', kError);
+                      } catch (_) { _snack('हटाने में विफल', kError); }
+                    },
+                  );
+                }
+              },
+              icon: const Icon(Icons.more_vert, size: 18, color: kSubtle),
+              itemBuilder: (_) => [
+                _menuItem('edit',   'संपादित करें',  Icons.edit_outlined),
+                _menuItem('reset',  'पासवर्ड रीसेट', Icons.lock_reset),
+                _menuItem('delete', 'हटाएँ',
+                    Icons.delete_outline, color: kError),
+              ],
+            ),
+          ]),
+        ),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(14, 10, 14, 12),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+            _infoRowWidget(Icons.calendar_today_outlined,
+                'जोड़ा ${_fmt(u.createdAt)}'),
+            const SizedBox(height: 8),
+            Row(children: [
+              const Icon(Icons.location_city_outlined,
+                  size: 14, color: kSubtle),
+              const SizedBox(width: 6),
+              Text('${u.districts.length} जनपद नियुक्त',
+                  style: const TextStyle(
+                      color: kDark, fontSize: 11.5,
+                      fontWeight: FontWeight.w700)),
+            ]),
+            const SizedBox(height: 6),
+            Wrap(spacing: 6, runSpacing: 6,
+                children: u.districts.map((d) => Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
+                  decoration: BoxDecoration(
+                    color: kDevAccent.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(
+                        color: kDevAccent.withOpacity(0.4)),
+                  ),
+                  child: Text(d, style: const TextStyle(
+                      color: kDevAccent, fontSize: 10.5,
+                      fontWeight: FontWeight.w700)),
+                )).toList(),
+            ),
+          ]),
+        ),
+      ]),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  🆕 CREATE MULTI-DISTRICT SUPER ADMIN
+  // ══════════════════════════════════════════
+  void _showCreateMultiSuper() {
+    final nameCtrl    = TextEditingController();
+    final userCtrl    = TextEditingController();
+    final passCtrl    = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    final Set<String> selected = {};
+    final searchCtrl  = TextEditingController();
+    String searchQ    = '';
+    bool obscureP = true, obscureC = true;
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          final filtered = searchQ.isEmpty
+              ? kUpDistricts
+              : kUpDistricts
+                  .where((d) => d.toLowerCase().contains(searchQ))
+                  .toList();
+
+          return _styledDialog(
+            title: 'बहु-जनपद सुपर एडमिन जोड़ें',
+            icon: Icons.public,
+            ctx: ctx,
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _dlgField(nameCtrl, 'पूरा नाम', Icons.person_outline,
+                      validator: _notEmpty),
+                  const SizedBox(height: 12),
+                  _dlgField(userCtrl, 'यूज़रनेम', Icons.alternate_email,
+                      validator: _notEmpty),
+                  const SizedBox(height: 12),
+                  _dlgField(passCtrl, 'पासवर्ड', Icons.lock_outline,
+                      obscure: obscureP,
+                      suffixIcon: _eyeIcon(
+                          obscureP,
+                          () => setDlg(() => obscureP = !obscureP)),
+                      validator: (v) => (v == null || v.length < 6)
+                          ? 'न्यूनतम 6 अक्षर' : null),
+                  const SizedBox(height: 12),
+                  _dlgField(confirmCtrl, 'पासवर्ड पुष्टि करें',
+                      Icons.lock_outline,
+                      obscure: obscureC,
+                      suffixIcon: _eyeIcon(
+                          obscureC,
+                          () => setDlg(() => obscureC = !obscureC)),
+                      validator: (v) =>
+                          v != passCtrl.text ? 'पासवर्ड समान नहीं हैं' : null),
+                  const SizedBox(height: 16),
+                  // ── DISTRICT MULTI-SELECT ──
+                  Row(children: [
+                    const Icon(Icons.location_city_outlined,
+                        size: 16, color: kPrimary),
+                    const SizedBox(width: 8),
+                    Text('जनपद चुनें (${selected.length})',
+                        style: const TextStyle(
+                            color: kDark,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13)),
+                    const Spacer(),
+                    if (selected.isNotEmpty)
+                      TextButton(
+                        onPressed: () => setDlg(() => selected.clear()),
+                        style: TextButton.styleFrom(
+                            padding: EdgeInsets.zero,
+                            minimumSize: const Size(0, 28),
+                            foregroundColor: kError),
+                        child: const Text('हटाएँ',
+                            style: TextStyle(fontSize: 11)),
+                      ),
+                  ]),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: searchCtrl,
+                    onChanged: (v) =>
+                        setDlg(() => searchQ = v.trim().toLowerCase()),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'जनपद खोजें…',
+                      hintStyle:
+                          const TextStyle(color: kSubtle, fontSize: 12),
+                      prefixIcon: const Icon(Icons.search,
+                          size: 18, color: kSubtle),
+                      isDense: true,
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide:
+                              BorderSide(color: kBorder.withOpacity(0.5))),
+                      enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide:
+                              BorderSide(color: kBorder.withOpacity(0.5))),
+                      focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide:
+                              const BorderSide(color: kDevAccent, width: 1.5)),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: kBorder.withOpacity(0.4)),
+                    ),
+                    child: filtered.isEmpty
+                        ? const Padding(
+                            padding: EdgeInsets.all(16),
+                            child: Center(
+                                child: Text('कोई जनपद नहीं मिला',
+                                    style: TextStyle(
+                                        color: kSubtle, fontSize: 12))),
+                          )
+                        : ListView.builder(
+                            shrinkWrap: true,
+                            itemCount: filtered.length,
+                            itemBuilder: (_, i) {
+                              final d     = filtered[i];
+                              final isSel = selected.contains(d);
+                              return InkWell(
+                                onTap: () => setDlg(() {
+                                  isSel
+                                      ? selected.remove(d)
+                                      : selected.add(d);
+                                }),
+                                child: Container(
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 12, vertical: 9),
+                                  decoration: BoxDecoration(
+                                    border: Border(
+                                      bottom: BorderSide(
+                                          color:
+                                              kBorder.withOpacity(0.18)),
+                                    ),
+                                  ),
+                                  child: Row(children: [
+                                    AnimatedContainer(
+                                      duration: const Duration(
+                                          milliseconds: 120),
+                                      width: 18, height: 18,
+                                      decoration: BoxDecoration(
+                                        color: isSel
+                                            ? kDevAccent
+                                            : Colors.transparent,
+                                        borderRadius:
+                                            BorderRadius.circular(4),
+                                        border: Border.all(
+                                          color: isSel
+                                              ? kDevAccent
+                                              : kBorder.withOpacity(0.6),
+                                          width: 1.5,
+                                        ),
+                                      ),
+                                      child: isSel
+                                          ? const Icon(Icons.check,
+                                              color: Colors.white,
+                                              size: 13)
+                                          : null,
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Text(d,
+                                          style: TextStyle(
+                                            color: isSel
+                                                ? kDevAccent : kDark,
+                                            fontSize: 12.5,
+                                            fontWeight: isSel
+                                                ? FontWeight.w800
+                                                : FontWeight.w500,
+                                          )),
+                                    ),
+                                  ]),
+                                ),
+                              );
+                            },
+                          ),
+                  ),
+                  if (selected.isNotEmpty) ...[
+                    const SizedBox(height: 10),
+                    Wrap(spacing: 6, runSpacing: 6,
+                      children: selected
+                          .map((d) => Chip(
+                                label: Text(d,
+                                    style:
+                                        const TextStyle(fontSize: 10.5)),
+                                onDeleted: () =>
+                                    setDlg(() => selected.remove(d)),
+                                backgroundColor:
+                                    kDevAccent.withOpacity(0.10),
+                                labelStyle: const TextStyle(
+                                    color: kDevAccent,
+                                    fontWeight: FontWeight.w700),
+                                side: BorderSide(
+                                    color: kDevAccent.withOpacity(0.4)),
+                                visualDensity: VisualDensity.compact,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                              ))
+                          .toList(),
+                    ),
+                  ],
+                  const SizedBox(height: 20),
+                  _dlgActions(
+                    onCancel: () => Navigator.pop(ctx),
+                    onConfirm: () async {
+                      if (!formKey.currentState!.validate()) return;
+                      if (selected.isEmpty) {
+                        _snack('कम से कम एक जनपद चुनें', kError);
+                        return;
+                      }
+                      try {
+                        final token = await AuthService.getToken();
+                        await ApiService.post(
+                            "/master/multi-super-admins", {
+                          "name":      nameCtrl.text.trim(),
+                          "username":  userCtrl.text.trim(),
+                          "password":  passCtrl.text,
+                          "districts": selected.toList(),
+                        }, token: token);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _snack('बहु-जनपद सुपर एडमिन जोड़ा गया ✓',
+                            kSuccess);
+                        _fetchMultiSupers();
+                        _fetchOverview();
+                      } catch (e) {
+                        _snack("Error: $e", kError);
+                      }
+                    },
+                    confirmLabel: 'जोड़ें',
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  🆕 EDIT MULTI-DISTRICT SUPER ADMIN
+  // ══════════════════════════════════════════
+  void _showEditMultiSuper(MultiSuperAdminModel u) {
+    final nameCtrl   = TextEditingController(text: u.name);
+    final userCtrl   = TextEditingController(text: u.username);
+    final Set<String> selected = Set.from(u.districts);
+    final searchCtrl = TextEditingController();
+    String searchQ   = '';
+    final formKey    = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          final filtered = searchQ.isEmpty
+              ? kUpDistricts
+              : kUpDistricts
+                  .where((d) => d.toLowerCase().contains(searchQ))
+                  .toList();
+
+          return _styledDialog(
+            title: 'संपादित करें — ${u.name}',
+            icon: Icons.public,
+            ctx: ctx,
+            child: Form(
+              key: formKey,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _dlgField(nameCtrl, 'पूरा नाम', Icons.person_outline,
+                      validator: _notEmpty),
+                  const SizedBox(height: 12),
+                  _dlgField(userCtrl, 'यूज़रनेम', Icons.alternate_email,
+                      validator: _notEmpty),
+                  const SizedBox(height: 16),
+                  Row(children: [
+                    const Icon(Icons.location_city_outlined,
+                        size: 16, color: kPrimary),
+                    const SizedBox(width: 8),
+                    Text('जनपद (${selected.length})',
+                        style: const TextStyle(
+                            color: kDark,
+                            fontWeight: FontWeight.w800,
+                            fontSize: 13)),
+                  ]),
+                  const SizedBox(height: 6),
+                  TextField(
+                    controller: searchCtrl,
+                    onChanged: (v) =>
+                        setDlg(() => searchQ = v.trim().toLowerCase()),
+                    style: const TextStyle(fontSize: 13),
+                    decoration: InputDecoration(
+                      hintText: 'जनपद खोजें…',
+                      prefixIcon: const Icon(Icons.search,
+                          size: 18, color: kSubtle),
+                      isDense: true,
+                      filled: true,
+                      fillColor: Colors.white,
+                      contentPadding: const EdgeInsets.symmetric(
+                          horizontal: 12, vertical: 10),
+                      border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8),
+                          borderSide:
+                              BorderSide(color: kBorder.withOpacity(0.5))),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Container(
+                    constraints: const BoxConstraints(maxHeight: 260),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: kBorder.withOpacity(0.4)),
+                    ),
+                    child: ListView.builder(
+                      shrinkWrap: true,
+                      itemCount: filtered.length,
+                      itemBuilder: (_, i) {
+                        final d     = filtered[i];
+                        final isSel = selected.contains(d);
+                        return InkWell(
+                          onTap: () => setDlg(() {
+                            isSel
+                                ? selected.remove(d)
+                                : selected.add(d);
+                          }),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 12, vertical: 9),
+                            decoration: BoxDecoration(
+                              border: Border(
+                                bottom: BorderSide(
+                                    color: kBorder.withOpacity(0.18)),
+                              ),
+                            ),
+                            child: Row(children: [
+                              Icon(
+                                isSel
+                                    ? Icons.check_box
+                                    : Icons.check_box_outline_blank,
+                                size: 18,
+                                color: isSel ? kDevAccent : kSubtle,
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(child: Text(d,
+                                  style: TextStyle(
+                                    color: isSel ? kDevAccent : kDark,
+                                    fontSize: 12.5,
+                                    fontWeight: isSel
+                                        ? FontWeight.w800
+                                        : FontWeight.w500,
+                                  ))),
+                            ]),
+                          ),
+                        );
+                      },
+                    ),
+                  ),
+                  const SizedBox(height: 20),
+                  _dlgActions(
+                    onCancel: () => Navigator.pop(ctx),
+                    onConfirm: () async {
+                      if (!formKey.currentState!.validate()) return;
+                      if (selected.isEmpty) {
+                        _snack('कम से कम एक जनपद चुनें', kError);
+                        return;
+                      }
+                      try {
+                        final token = await AuthService.getToken();
+                        await ApiService.put(
+                            "/master/multi-super-admins/${u.id}", {
+                          "name":      nameCtrl.text.trim(),
+                          "username":  userCtrl.text.trim(),
+                          "districts": selected.toList(),
+                        }, token: token);
+                        if (ctx.mounted) Navigator.pop(ctx);
+                        _snack('अपडेट हुआ ✓', kSuccess);
+                        _fetchMultiSupers();
+                      } catch (e) {
+                        _snack("Error: $e", kError);
+                      }
+                    },
+                    confirmLabel: 'अपडेट करें',
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  🆕 RESET MULTI-SUPER PASSWORD
+  // ══════════════════════════════════════════
+  void _showResetMultiSuperPassword(MultiSuperAdminModel u) {
+    final passCtrl    = TextEditingController();
+    final confirmCtrl = TextEditingController();
+    bool obscureP = true, obscureC = true;
+    final formKey = GlobalKey<FormState>();
+
+    showDialog(
+      context: context,
+      barrierColor: Colors.black54,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => _styledDialog(
+          title: 'पासवर्ड रीसेट — ${u.name}',
+          icon: Icons.lock_reset_outlined,
+          ctx: ctx,
+          child: Form(
+            key: formKey,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _dlgField(passCtrl, 'नया पासवर्ड', Icons.lock_outline,
+                    obscure: obscureP,
+                    suffixIcon: _eyeIcon(obscureP,
+                        () => setDlg(() => obscureP = !obscureP)),
+                    validator: (v) => (v == null || v.length < 6)
+                        ? 'न्यूनतम 6 अक्षर' : null),
+                const SizedBox(height: 12),
+                _dlgField(confirmCtrl, 'पुष्टि करें',
+                    Icons.lock_outline,
+                    obscure: obscureC,
+                    suffixIcon: _eyeIcon(obscureC,
+                        () => setDlg(() => obscureC = !obscureC)),
+                    validator: (v) =>
+                        v != passCtrl.text ? 'पासवर्ड समान नहीं हैं' : null),
+                const SizedBox(height: 20),
+                _dlgActions(
+                  onCancel: () => Navigator.pop(ctx),
+                  onConfirm: () async {
+                    if (!formKey.currentState!.validate()) return;
+                    try {
+                      final token = await AuthService.getToken();
+                      await ApiService.patch(
+                          "/master/multi-super-admins/${u.id}/reset-password",
+                          {"password": passCtrl.text}, token: token);
+                      if (ctx.mounted) Navigator.pop(ctx);
+                      _snack('पासवर्ड रीसेट हुआ ✓', kSuccess);
+                    } catch (e) {
+                      _snack("Error: $e", kError);
+                    }
+                  },
+                  confirmLabel: 'रीसेट करें',
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  🆕 CROSS-DISTRICT ELECTION STATUS SUMMARY
+  // ══════════════════════════════════════════
+  Widget _buildElectionStatusSummary() {
+    if (_loadingDistrictStatus) {
+      return const Padding(
+        padding: EdgeInsets.symmetric(vertical: 16),
+        child: Center(child: CircularProgressIndicator(color: kDevAccent)),
+      );
+    }
+    if (_districtStatus.isEmpty) {
+      return Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kBorder.withOpacity(0.4)),
+        ),
+        child: const Center(
+          child: Text('कोई डेटा नहीं',
+              style: TextStyle(color: kSubtle, fontSize: 12)),
+        ),
+      );
+    }
+
+    // Sort: active first, then auto_final, finalized, archived, none
+    final order = {
+      'active': 0, 'auto_final': 1, 'finalized': 2,
+      'archived': 3, 'none': 4,
+    };
+    final sorted = [..._districtStatus]
+      ..sort((a, b) =>
+          (order[a.status] ?? 9).compareTo(order[b.status] ?? 9));
+
+    return Container(
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder.withOpacity(0.4)),
+      ),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxHeight: 380),
+        child: ListView.separated(
+          shrinkWrap: true,
+          padding: EdgeInsets.zero,
+          itemCount: sorted.length,
+          separatorBuilder: (_, __) => Divider(
+              height: 1, color: kBorder.withOpacity(0.2)),
+          itemBuilder: (_, i) => _districtStatusRow(sorted[i]),
+        ),
+      ),
+    );
+  }
+
+  Widget _districtStatusRow(DistrictElectionStatus s) {
+    Color    c;
+    String   label;
+    IconData icon;
+    switch (s.status) {
+      case 'active':
+        c = kSuccess; label = 'सक्रिय';        icon = Icons.how_to_vote;
+        break;
+      case 'finalized':
+        c = kWarning; label = 'समाप्त';        icon = Icons.task_alt;
+        break;
+      case 'auto_final':
+        c = kError;   label = 'स्वतः समाप्त';   icon = Icons.timelapse;
+        break;
+      case 'archived':
+        c = kSubtle;  label = 'इतिहास';        icon = Icons.archive_outlined;
+        break;
+      default:
+        c = kSubtle;  label = 'कॉन्फ़िग नहीं';  icon = Icons.hourglass_empty;
+    }
+
+    return InkWell(
+      onTap: () {
+        Navigator.push(context, MaterialPageRoute(
+          builder: (_) => ElectionHistoryListPage(
+              role: 'master', district: s.district),
+        ));
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(children: [
+          Container(
+            width: 30, height: 30,
+            decoration: BoxDecoration(
+              color: c.withOpacity(0.10),
+              borderRadius: BorderRadius.circular(8),
+            ),
+            child: Icon(icon, color: c, size: 16),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+            Text(s.district,
+                style: const TextStyle(
+                    color: kDark, fontSize: 13,
+                    fontWeight: FontWeight.w800)),
+            if (s.electionName.isNotEmpty)
+              Text(s.electionName,
+                  maxLines: 1, overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                      color: kSubtle, fontSize: 11)),
+            if (s.electionDate.isNotEmpty)
+              Text('तिथि: ${s.electionDate}',
+                  style: const TextStyle(
+                      color: kSubtle, fontSize: 10.5)),
+          ])),
+          // Status chip
+          Container(
+            padding: const EdgeInsets.symmetric(
+                horizontal: 8, vertical: 3),
+            decoration: BoxDecoration(
+              color: c.withOpacity(0.1),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: c, width: 1),
+            ),
+            child: Text(label,
+                style: TextStyle(
+                    color: c, fontSize: 10,
+                    fontWeight: FontWeight.w800,
+                    letterSpacing: 0.5)),
+          ),
+          const SizedBox(width: 8),
+          // Finalize button (only if active + has configId)
+          if (s.status == 'active' && s.configId != null)
+            IconButton(
+              tooltip: 'अभी Finalize करें',
+              icon: const Icon(Icons.task_alt,
+                  size: 18, color: kWarning),
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(
+                  minWidth: 32, minHeight: 32),
+              onPressed: () => _confirmFinalizeDistrict(s),
+            )
+          else
+            const SizedBox(width: 8),
+          const Icon(Icons.chevron_right, color: kSubtle, size: 16),
+        ]),
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════
+  //  🆕 CONFIRM FINALIZE DIALOG
+  // ══════════════════════════════════════════
+  void _confirmFinalizeDistrict(DistrictElectionStatus s) {
+    bool force = false;
+    showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) => AlertDialog(
+          backgroundColor: kBg,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14),
+            side: const BorderSide(color: kWarning, width: 1.5),
+          ),
+          title: const Row(children: [
+            Icon(Icons.task_alt, color: kWarning),
+            SizedBox(width: 8),
+            Expanded(
+              child: Text('चुनाव समाप्त करें?',
+                  style: TextStyle(
+                      color: kWarning,
+                      fontWeight: FontWeight.w800, fontSize: 15)),
+            ),
+          ]),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                '${s.district} — ${s.electionName.isEmpty ? "(अनाम)" : s.electionName}',
+                style: const TextStyle(
+                    color: kDark, fontSize: 13,
+                    fontWeight: FontWeight.w700),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'सभी सक्रिय ड्यूटी, अधिकारी और नियम स्थायी रूप से '
+                'इतिहास में स्थानांतरित हो जाएंगे। यह क्रिया वापस नहीं ली जा सकती।',
+                style: TextStyle(color: kSubtle, fontSize: 12),
+              ),
+              const SizedBox(height: 14),
+              CheckboxListTile(
+                value: force,
+                onChanged: (v) => setDlg(() => force = v ?? false),
+                activeColor: kError,
+                dense: true,
+                controlAffinity: ListTileControlAffinity.leading,
+                contentPadding: EdgeInsets.zero,
+                title: const Text(
+                  'Force (मतदान तिथि से पहले भी समाप्त करें)',
+                  style: TextStyle(fontSize: 11.5, color: kDark),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('रद्द करें',
+                    style: TextStyle(color: kSubtle))),
+            ElevatedButton(
+              onPressed: () async {
+                Navigator.pop(ctx);
+                try {
+                  final token = await AuthService.getToken();
+                  await ApiService.post(
+                    "/master/election/finalize/${s.configId}",
+                    {"force": force},
+                    token: token,
+                  );
+                  _snack('${s.district} का चुनाव समाप्त हुआ ✓',
+                      kSuccess);
+                  _fetchDistrictStatus();
+                  _fetchElectionConfigs();
+                  _fetchOverview();
+                } catch (e) {
+                  _snack('Finalize विफल: $e', kError);
+                }
+              },
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: kWarning,
+                  foregroundColor: Colors.white),
+              child: const Text('अभी Finalize करें'),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   // ══════════════════════════════════════════

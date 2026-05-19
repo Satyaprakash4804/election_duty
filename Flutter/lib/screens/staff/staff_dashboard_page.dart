@@ -1,16 +1,19 @@
+import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:printing/printing.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
+import 'package:printing/printing.dart';
 import 'package:url_launcher/url_launcher.dart';
 import '../../../services/api_service.dart';
 import '../../../services/auth_service.dart';
 import '../admin/pages/duty_card_page.dart';
 import 'duty_history_page.dart';
 
-// ── PALETTE ───────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  PALETTE
+// ══════════════════════════════════════════════════════════════════════════════
 const kBg        = Color(0xFFFDF6E3);
 const kSurface   = Color(0xFFF5E6C8);
 const kPrimary   = Color(0xFF8B6914);
@@ -24,17 +27,42 @@ const kSuccessBg = Color(0xFFE6F2DF);
 const kInfo      = Color(0xFF1A5276);
 const kArmed     = Color(0xFF1B5E20);
 const kUnarmed   = Color(0xFF37474F);
-const kDistrict  = Color(0xFF4A148C); // purple for district duty
+const kDistrict  = Color(0xFF4A148C);
+const kSector    = Color(0xFF1A5276);
+const kZone      = Color(0xFF1565C0);
+const kKshetra   = Color(0xFF4A148C);
+const kPastElec  = Color(0xFFE65100);
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  RESPONSIVE HELPER
+// ══════════════════════════════════════════════════════════════════════════════
+class _RS {
+  final double w;
+  const _RS(this.w);
+  bool get compact => w < 360;
+  bool get wide    => w >= 600;
+  double s(double sm, double lg) =>
+      sm + (lg - sm) * ((w - 320) / 160).clamp(0.0, 1.0);
+  EdgeInsets get hPad => EdgeInsets.symmetric(horizontal: compact ? 12.0 : 16.0);
+  double get cardRadius => compact ? 12.0 : 14.0;
+}
+
+_RS _rs(BuildContext c) => _RS(MediaQuery.of(c).size.width);
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HELPERS
+// ══════════════════════════════════════════════════════════════════════════════
 const _rankMap = {
-  'constable': 'आरक्षी', 'head constable': 'मुख्य आरक्षी',
-  'si': 'उप निरीक्षक', 'sub inspector': 'उप निरीक्षक',
-  'inspector': 'निरीक्षक', 'asi': 'सहायक उप निरीक्षक',
-  'assistant sub inspector': 'सहायक उप निरीक्षक',
-  'dsp': 'उपाधीक्षक', 'asp': 'सहा0 पुलिस अधीक्षक',
-  'sp': 'पुलिस अधीक्षक',
-  'circle officer': 'क्षेत्राधिकारी', 'co': 'क्षेत्राधिकारी',
+  'constable':       'आरक्षी',
+  'head constable':  'मुख्य आरक्षी',
+  'si':              'उप निरीक्षक',
+  'sub inspector':   'उप निरीक्षक',
+  'inspector':       'निरीक्षक',
+  'asi':             'सहायक उप निरीक्षक',
+  'dsp':             'उपाधीक्षक',
+  'asp':             'सहा0 पुलिस अधीक्षक',
+  'sp':              'पुलिस अधीक्षक',
+  'home guard':      'होम गार्ड',
 };
 
 String rh(dynamic val) =>
@@ -44,8 +72,10 @@ String v(dynamic x) =>
     (x == null || x.toString().trim().isEmpty) ? '—' : x.toString();
 
 const _centerTypeMap = {
-  'a++': 'अत्यति संवेदनशील', 'a': 'अति संवेदनशील',
-  'b': 'संवेदनशील', 'c': 'सामान्य',
+  'a++': 'अत्यति संवेदनशील',
+  'a':   'अति संवेदनशील',
+  'b':   'संवेदनशील',
+  'c':   'सामान्य',
 };
 String ct(dynamic x) =>
     _centerTypeMap[(x ?? '').toString().toLowerCase()] ?? x?.toString() ?? '—';
@@ -59,7 +89,6 @@ Color _typeColor(String? t) {
   }
 }
 
-// ── District duty label map ──────────────────────────────────────────────────
 const _districtDutyLabels = {
   'cluster_mobile':        'क्लस्टर मोबाईल',
   'thana_mobile':          'थाना मोबाईल',
@@ -76,9 +105,277 @@ const _districtDutyLabels = {
   'observer_security':     'पर्यवेक्षक सुरक्षा',
   'hq_reserve':            'मुख्यालय रिजर्व',
 };
+String dutyLabel(String? k) =>
+    _districtDutyLabels[k] ?? k?.replaceAll('_', ' ') ?? '—';
 
-String dutyLabel(String? key) =>
-    _districtDutyLabels[key] ?? key?.replaceAll('_', ' ') ?? '—';
+Color _rankColor(String rank) {
+  switch (rank.toUpperCase()) {
+    case 'SP':             return const Color(0xFF6A1B9A);
+    case 'ASP':            return const Color(0xFF1565C0);
+    case 'DSP':            return const Color(0xFF1A5276);
+    case 'INSPECTOR':      return const Color(0xFF2E7D32);
+    case 'SI':             return const Color(0xFF558B2F);
+    case 'ASI':            return const Color(0xFF8B6914);
+    case 'HEAD CONSTABLE': return const Color(0xFFB8860B);
+    case 'CONSTABLE':      return const Color(0xFF6D4C41);
+    default:               return kPrimary;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  ELECTION CONFIG MODEL
+//  Handles BOTH camelCase and snake_case keys from every API source
+// ══════════════════════════════════════════════════════════════════════════════
+class _ElectionConfig {
+  final String district;
+  final String state;
+  final String electionType;
+  final String electionName;
+  final String phase;
+  final String electionYear;
+  final String electionDate;
+  final String pratahSamay;
+  final String sayaSamay;
+
+  const _ElectionConfig({
+    this.district     = '',
+    this.state        = '',
+    this.electionType = '',
+    this.electionName = '',
+    this.phase        = '',
+    this.electionYear = '',
+    this.electionDate = '',
+    this.pratahSamay  = '',
+    this.sayaSamay    = '',
+  });
+
+  bool get isEmpty => electionName.isEmpty && district.isEmpty;
+
+  factory _ElectionConfig.fromMap(Map<dynamic, dynamic> m) {
+    // Date normalisation: YYYY-MM-DD → DD.MM.YYYY
+    String rawDate =
+        (m['electionDate'] ?? m['election_date'] ?? '').toString().trim();
+    if (rawDate.contains('-') && rawDate.length >= 10) {
+      final parts = rawDate.substring(0, 10).split('-');
+      if (parts.length == 3) rawDate = '${parts[2]}.${parts[1]}.${parts[0]}';
+    }
+
+    String year = (m['electionYear'] ?? m['election_year'] ?? '').toString().trim();
+    if (year.isEmpty && rawDate.length >= 4) {
+      year = rawDate.substring(rawDate.length - 4);
+    }
+
+    String pratah = (m['pratahSamay'] ?? m['pratah_samay'] ?? '').toString().trim();
+    String saya   = (m['sayaSamay']   ?? m['saya_samay']   ?? '').toString().trim();
+
+    return _ElectionConfig(
+      district:     (m['district']                             ?? '').toString().trim(),
+      state:        (m['state']                                ?? '').toString().trim(),
+      electionType: (m['electionType'] ?? m['election_type']   ?? '').toString().trim(),
+      electionName: (m['electionName'] ?? m['election_name']   ?? '').toString().trim(),
+      phase:        (m['phase']                                ?? '').toString().trim(),
+      electionYear: year,
+      electionDate: rawDate,
+      pratahSamay:  pratah,
+      sayaSamay:    saya,
+    );
+  }
+
+  Map<String, String> toConfigMap() => {
+    'district':     district,
+    'state':        state,
+    'electionType': electionType,
+    'electionName': electionName,
+    'phase':        phase,
+    'electionYear': electionYear,
+    'electionDate': electionDate,
+    'pratahSamay':  pratahSamay,
+    'sayaSamay':    sayaSamay,
+  };
+
+  // For display in Hindi date format
+  String get displayDate {
+    if (electionDate.isEmpty) return '—';
+    // If already DD.MM.YYYY
+    if (electionDate.contains('.')) {
+      final p = electionDate.split('.');
+      if (p.length == 3) {
+        const months = ['', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
+            'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'];
+        final m = int.tryParse(p[1]) ?? 0;
+        if (m >= 1 && m <= 12) return '${p[0]} ${months[m]} ${p[2]}';
+      }
+    }
+    return electionDate;
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MANAK (BOOTH RULES) MODEL
+//  Represents per-sensitivity, per-booth-count rules exactly like admin page
+// ══════════════════════════════════════════════════════════════════════════════
+class _ManakRule {
+  final String sensitivity;
+  final int    boothCount;
+  final int    siArmed;
+  final int    siUnarmed;
+  final int    hcArmed;
+  final int    hcUnarmed;
+  final int    constArmed;
+  final int    constUnarmed;
+  final int    auxArmed;
+  final int    auxUnarmed;
+  final double pac;
+
+  const _ManakRule({
+    required this.sensitivity,
+    required this.boothCount,
+    this.siArmed      = 0,
+    this.siUnarmed    = 0,
+    this.hcArmed      = 0,
+    this.hcUnarmed    = 0,
+    this.constArmed   = 0,
+    this.constUnarmed = 0,
+    this.auxArmed     = 0,
+    this.auxUnarmed   = 0,
+    this.pac          = 0,
+  });
+
+  int get totalArmed   => siArmed + hcArmed + constArmed + auxArmed;
+  int get totalUnarmed => siUnarmed + hcUnarmed + constUnarmed + auxUnarmed;
+  int get total        => totalArmed + totalUnarmed;
+
+  factory _ManakRule.fromMap(Map m) {
+    int _n(String k, [String? alt]) =>
+        ((m[k] ?? (alt != null ? m[alt] : null) ?? 0) as num).toInt();
+    double _d(String k, [String? alt]) =>
+        ((m[k] ?? (alt != null ? m[alt] : null) ?? 0) as num).toDouble();
+
+    return _ManakRule(
+      sensitivity:  (m['sensitivity'] ?? 'C').toString(),
+      boothCount:   _n('boothCount', 'booth_count'),
+      siArmed:      _n('siArmedCount',    'si_armed_count'),
+      siUnarmed:    _n('siUnarmedCount',  'si_unarmed_count'),
+      hcArmed:      _n('hcArmedCount',    'hc_armed_count'),
+      hcUnarmed:    _n('hcUnarmedCount',  'hc_unarmed_count'),
+      constArmed:   _n('constArmedCount', 'const_armed_count'),
+      constUnarmed: _n('constUnarmedCount','const_unarmed_count'),
+      auxArmed:     _n('auxArmedCount',   'aux_armed_count'),
+      auxUnarmed:   _n('auxUnarmedCount', 'aux_unarmed_count'),
+      pac:          _d('pacCount',        'pac_count'),
+    );
+  }
+
+  bool get hasAny =>
+      siArmed > 0 || siUnarmed > 0 || hcArmed > 0 || hcUnarmed > 0 ||
+      constArmed > 0 || constUnarmed > 0 || auxArmed > 0 || auxUnarmed > 0 ||
+      pac > 0;
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  MANAK RULES PARSER
+//  Converts the raw boothRules list (from backend) into grouped _ManakRule
+//  objects, matching the admin display format.
+// ══════════════════════════════════════════════════════════════════════════════
+class _ManakParser {
+  /// Parses the raw boothRules list returned by the staff API.
+  /// The backend expands per-rank rows; we need to re-aggregate them by
+  /// (sensitivity, boothCount) into _ManakRule objects.
+  ///
+  /// Two shapes are handled:
+  ///   A) Per-rank rows: {sensitivity, rank, is_armed, count}  (legacy)
+  ///   B) Full columnar rows: {sensitivity, booth_count, si_armed_count, …}  (preferred)
+  static List<_ManakRule> parse(List rules) {
+    if (rules.isEmpty) return [];
+
+    // Detect shape by checking if first item has columnar keys
+    final first = rules.first as Map;
+    final isColumnar = first.containsKey('siArmedCount') ||
+        first.containsKey('si_armed_count') ||
+        first.containsKey('boothCount') ||
+        first.containsKey('booth_count');
+
+    if (isColumnar) {
+      return rules
+          .where((r) => r is Map)
+          .map((r) => _ManakRule.fromMap(r as Map))
+          .where((r) => r.hasAny)
+          .toList();
+    }
+
+    // Per-rank shape: aggregate into columnar
+    final Map<String, Map<String, int>> agg = {};
+    for (final row in rules) {
+      if (row is! Map) continue;
+      final sens       = (row['sensitivity'] ?? 'C').toString();
+      final boothCount = ((row['boothCount'] ?? row['booth_count'] ?? 1) as num).toInt();
+      final key        = '$sens|$boothCount';
+      agg.putIfAbsent(key, () => {
+        'boothCount': boothCount,
+      });
+
+      final rank    = (row['rank'] ?? '').toString().toLowerCase();
+      final isArmed = _isArmed(row['is_armed'] ?? row['isArmed']);
+      final count   = ((row['count'] ?? 0) as num).toInt();
+
+      if (count <= 0) continue;
+
+      if (rank == 'si' || rank == 'sub inspector') {
+        if (isArmed) agg[key]!['siArmed']    = (agg[key]!['siArmed']    ?? 0) + count;
+        else          agg[key]!['siUnarmed']  = (agg[key]!['siUnarmed']  ?? 0) + count;
+      } else if (rank == 'head constable') {
+        if (isArmed) agg[key]!['hcArmed']    = (agg[key]!['hcArmed']    ?? 0) + count;
+        else          agg[key]!['hcUnarmed']  = (agg[key]!['hcUnarmed']  ?? 0) + count;
+      } else if (rank == 'constable') {
+        if (isArmed) agg[key]!['constArmed']   = (agg[key]!['constArmed']   ?? 0) + count;
+        else          agg[key]!['constUnarmed'] = (agg[key]!['constUnarmed'] ?? 0) + count;
+      } else {
+        // Home Guard / Aux
+        if (isArmed) agg[key]!['auxArmed']   = (agg[key]!['auxArmed']   ?? 0) + count;
+        else          agg[key]!['auxUnarmed'] = (agg[key]!['auxUnarmed'] ?? 0) + count;
+      }
+      agg[key]!['_sens_code'] = _sensCode(sens);
+    }
+
+    return agg.entries.map((e) {
+      final m = e.value;
+      return _ManakRule(
+        sensitivity:  e.key.split('|').first,
+        boothCount:   m['boothCount'] ?? 1,
+        siArmed:      m['siArmed']      ?? 0,
+        siUnarmed:    m['siUnarmed']    ?? 0,
+        hcArmed:      m['hcArmed']      ?? 0,
+        hcUnarmed:    m['hcUnarmed']    ?? 0,
+        constArmed:   m['constArmed']   ?? 0,
+        constUnarmed: m['constUnarmed'] ?? 0,
+        auxArmed:     m['auxArmed']     ?? 0,
+        auxUnarmed:   m['auxUnarmed']   ?? 0,
+      );
+    }).where((r) => r.hasAny).toList()
+      ..sort((a, b) {
+        final sc = _sensCode(a.sensitivity).compareTo(_sensCode(b.sensitivity));
+        if (sc != 0) return sc;
+        return a.boothCount.compareTo(b.boothCount);
+      });
+  }
+
+  static bool _isArmed(dynamic v) {
+    if (v == null) return false;
+    if (v is bool) return v;
+    if (v is int)  return v == 1;
+    final s = v.toString().toLowerCase();
+    return s == '1' || s == 'true' || s == 'yes' || s == 'armed';
+  }
+
+  static int _sensCode(String s) {
+    switch (s.toUpperCase()) {
+      case 'A++': return 0;
+      case 'A':   return 1;
+      case 'B':   return 2;
+      default:    return 3;
+    }
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  MAIN DASHBOARD
@@ -93,18 +390,18 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     with TickerProviderStateMixin {
   int _navIdx = 0;
 
-  Map<dynamic, dynamic>? _duty;
-  Map<dynamic, dynamic>? _user;
-  Map<dynamic, dynamic>? _districtDuty;
-  Map<dynamic, dynamic>? _electionConfig;
-  bool _loading = true;
-  String? _error;
-  String _roleType = 'none';
-  String? _electionDate;
-  bool _isAfterElection = false;
+  Map?            _duty;
+  Map?            _user;
+  Map?            _districtDuty;
+  _ElectionConfig _electionConfig  = const _ElectionConfig();
+  bool            _loading         = true;
+  String?         _error;
+  String          _roleType        = 'none';
+  bool            _isAfterElection = false;
+  bool            _hasPastDuties   = false;
 
   late AnimationController _fadeCtrl;
-  late Animation<double>    _fadeAnim;
+  late Animation<double>   _fadeAnim;
 
   @override
   void initState() {
@@ -116,12 +413,15 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
   }
 
   @override
-  void dispose() { _fadeCtrl.dispose(); super.dispose(); }
+  void dispose() {
+    _fadeCtrl.dispose();
+    super.dispose();
+  }
 
   Future<void> _loadData() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final token = await AuthService.getToken();
+      final token   = await AuthService.getToken();
       final results = await Future.wait([
         ApiService.get('/staff/profile',         token: token),
         ApiService.get('/staff/my-duty',         token: token),
@@ -134,44 +434,83 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
       final electionResp = results[2];
       final districtResp = results[3];
 
-      Map<dynamic, dynamic>? dutyData;
+      // ── Parse user ──────────────────────────────────────────────────────
+      final userData = userResp['data'] is Map
+          ? Map<String, dynamic>.from(userResp['data'] as Map)
+          : <String, dynamic>{};
+
+      // ── Parse duty ──────────────────────────────────────────────────────
+      Map? dutyData;
       if (resp is Map) {
         dutyData = resp.containsKey('data')
-            ? (resp['data'] is Map ? resp['data'] as Map<dynamic, dynamic> : null)
-            : resp as Map<dynamic, dynamic>;
+            ? (resp['data'] is Map ? Map<String, dynamic>.from(resp['data'] as Map) : null)
+            : Map<String, dynamic>.from(resp as Map);
       }
-
       final roleType = (dutyData?['roleType'] ?? 'none').toString();
 
-      // Full election config
-      Map<dynamic, dynamic>? electionConfig;
-      if (electionResp is Map && electionResp['data'] is Map) {
-        electionConfig = electionResp['data'] as Map<dynamic, dynamic>;
+      // ── Parse election config ───────────────────────────────────────────
+      _ElectionConfig electionConfig = const _ElectionConfig();
+      if (electionResp is Map) {
+        final ecData = electionResp['data'];
+        if (ecData is Map && ecData.isNotEmpty) {
+          electionConfig = _ElectionConfig.fromMap(
+              Map<String, dynamic>.from(ecData));
+        }
       }
-      final electionDate = electionConfig?['election_date']?.toString();
 
+      // Fallback: inject district from user profile if config has none
+      if (electionConfig.district.isEmpty && userData['district'] != null) {
+        electionConfig = _ElectionConfig(
+          district:     userData['district']?.toString() ?? '',
+          state:        electionConfig.state,
+          electionType: electionConfig.electionType,
+          electionName: electionConfig.electionName,
+          phase:        electionConfig.phase,
+          electionYear: electionConfig.electionYear,
+          electionDate: electionConfig.electionDate,
+          pratahSamay:  electionConfig.pratahSamay,
+          sayaSamay:    electionConfig.sayaSamay,
+        );
+      }
+
+      final electionDate = electionConfig.electionDate;
       bool isAfter = false;
-      if (electionDate != null) {
-        final ed = DateTime.tryParse(electionDate);
+      if (electionDate.isNotEmpty) {
+        // Parse DD.MM.YYYY
+        DateTime? ed;
+        if (electionDate.contains('.')) {
+          final p = electionDate.split('.');
+          if (p.length == 3) {
+            ed = DateTime.tryParse('${p[2]}-${p[1]}-${p[0]}');
+          }
+        } else {
+          ed = DateTime.tryParse(electionDate);
+        }
         if (ed != null) isAfter = DateTime.now().isAfter(ed);
       }
 
-      // District duty
-      Map<dynamic, dynamic>? districtDuty;
+      // ── Parse district duty ─────────────────────────────────────────────
+      Map? districtDuty;
       if (districtResp is Map && districtResp['data'] is Map) {
-        districtDuty = districtResp['data'] as Map<dynamic, dynamic>;
+        districtDuty = Map<String, dynamic>.from(districtResp['data'] as Map);
       }
 
+      // ── History check ───────────────────────────────────────────────────
+      bool hasPast = false;
+      try {
+        final histRes = await ApiService.get('/staff/history', token: token);
+        final histData = histRes['data'];
+        hasPast = histData is List && histData.isNotEmpty;
+      } catch (_) {}
+
       setState(() {
-        _user            = userResp['data'] is Map
-            ? userResp['data'] as Map<dynamic, dynamic>
-            : <dynamic, dynamic>{};
+        _user            = userData;
         _duty            = dutyData;
         _electionConfig  = electionConfig;
         _districtDuty    = districtDuty;
         _roleType        = roleType;
-        _electionDate    = electionDate;
         _isAfterElection = isAfter;
+        _hasPastDuties   = hasPast;
         _loading         = false;
       });
       _fadeCtrl.forward(from: 0);
@@ -185,119 +524,144 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     _fadeCtrl.forward(from: 0);
   }
 
-  void _openHistory() {
-    Navigator.push(context,
-        MaterialPageRoute(builder: (_) => const DutyHistoryPage()));
+  void _openHistory() => Navigator.push(
+      context, MaterialPageRoute(builder: (_) => const DutyHistoryPage()));
+
+  // ── Role helpers ──────────────────────────────────────────────────────────
+  IconData _roleIcon() {
+    if (_districtDuty != null && _roleType == 'none') return Icons.shield_outlined;
+    switch (_roleType) {
+      case 'sector':  return Icons.grid_view;
+      case 'zone':    return Icons.map;
+      case 'kshetra': return Icons.layers;
+      default:        return Icons.how_to_vote;
+    }
   }
 
-  // ── Nav items ─────────────────────────────────────────────────────────────
-  List<_NavItem> get _navItems {
-    if (_isAfterElection) {
-      return [
-        _NavItem('इतिहास', Icons.history_outlined, Icons.history),
-      ];
-    }
-
-    // If district duty assigned
-    if (_districtDuty != null && _roleType == 'none') {
-      return [
-        _NavItem('डैशबोर्ड', Icons.dashboard_outlined,       Icons.dashboard),
-        _NavItem('ड्यूटी',   Icons.location_on_outlined,      Icons.location_on),
-        _NavItem('सहयोगी',   Icons.groups_outlined,           Icons.groups),
-        _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,        Icons.badge),
-      ];
-    }
-
+  Color _roleColor() {
+    if (_districtDuty != null && _roleType == 'none') return kDistrict;
     switch (_roleType) {
-      case 'sector':
-        return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
-          _NavItem('बूथ',      Icons.how_to_vote_outlined,   Icons.how_to_vote),
-          _NavItem('मानक',     Icons.rule_folder_outlined,   Icons.rule_folder),
-        ];
-      case 'zone':
-        return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
-          _NavItem('सेक्टर',   Icons.grid_view_outlined,     Icons.grid_view),
-          _NavItem('मानक',     Icons.rule_folder_outlined,   Icons.rule_folder),
-        ];
-      case 'kshetra':
-        return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
-          _NavItem('जोन',      Icons.map_outlined,           Icons.map),
-          _NavItem('मानक',     Icons.rule_folder_outlined,   Icons.rule_folder),
-        ];
-      default: // booth
-        return [
-          _NavItem('डैशबोर्ड', Icons.dashboard_outlined,    Icons.dashboard),
-          _NavItem('ड्यूटी',   Icons.location_on_outlined,   Icons.location_on),
-          _NavItem('सहयोगी',   Icons.groups_outlined,        Icons.groups),
-          _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,     Icons.badge),
-        ];
+      case 'sector':  return kSector;
+      case 'zone':    return kZone;
+      case 'kshetra': return kKshetra;
+      default:        return kPrimary;
+    }
+  }
+
+  String _roleLabel() {
+    if (_districtDuty != null && _roleType == 'none') return 'जनपदीय ड्यूटी';
+    switch (_roleType) {
+      case 'sector':  return 'सेक्टर अधिकारी';
+      case 'zone':    return 'जोनल अधिकारी';
+      case 'kshetra': return 'क्षेत्र अधिकारी';
+      case 'booth':   return 'बूथ स्टाफ';
+      default:        return 'स्टाफ';
+    }
+  }
+
+  List<_NavItem> get _navItems {
+    if (_isAfterElection) return [
+      _NavItem('इतिहास', Icons.history_outlined, Icons.history),
+    ];
+    if (_districtDuty != null && _roleType == 'none') return [
+      _NavItem('डैशबोर्ड',   Icons.dashboard_outlined, Icons.dashboard),
+      _NavItem('ड्यूटी',     Icons.shield_outlined,     Icons.shield),
+      _NavItem('सहयोगी',     Icons.groups_outlined,     Icons.groups),
+      _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,   Icons.badge),
+    ];
+    switch (_roleType) {
+      case 'sector': return [
+        _NavItem('डैशबोर्ड', Icons.dashboard_outlined,  Icons.dashboard),
+        _NavItem('ड्यूटी',   Icons.location_on_outlined, Icons.location_on),
+        _NavItem('उपस्थिति', Icons.fact_check_outlined,  Icons.fact_check),
+        _NavItem('मानक',     Icons.rule_folder_outlined, Icons.rule_folder),
+      ];
+      case 'zone': return [
+        _NavItem('डैशबोर्ड', Icons.dashboard_outlined, Icons.dashboard),
+        _NavItem('ड्यूटी',   Icons.map_outlined,        Icons.map),
+        _NavItem('सेक्टर',   Icons.grid_view_outlined,  Icons.grid_view),
+        _NavItem('मानक',     Icons.rule_folder_outlined, Icons.rule_folder),
+      ];
+      case 'kshetra': return [
+        _NavItem('डैशबोर्ड', Icons.dashboard_outlined, Icons.dashboard),
+        _NavItem('ड्यूटी',   Icons.layers_outlined,     Icons.layers),
+        _NavItem('जोन',      Icons.map_outlined,         Icons.map),
+        _NavItem('मानक',     Icons.rule_folder_outlined, Icons.rule_folder),
+      ];
+      default: return [
+        _NavItem('डैशबोर्ड',   Icons.dashboard_outlined,  Icons.dashboard),
+        _NavItem('ड्यूटी',     Icons.location_on_outlined, Icons.location_on),
+        _NavItem('सहयोगी',     Icons.groups_outlined,      Icons.groups),
+        _NavItem('ड्यूटी कार्ड', Icons.badge_outlined,    Icons.badge),
+      ];
     }
   }
 
   Future<void> _openMap() async {
     final lat = _duty?['latitude'];
     final lng = _duty?['longitude'];
-    if (lat == null || lng == null) { _showNoLocationDialog(); return; }
+    if (lat == null || lng == null) { _showNoLocDialog(); return; }
     final uri = Uri.parse(
         'https://www.google.com/maps/dir/?api=1&destination=$lat,$lng&travelmode=driving');
     try {
-      if (await canLaunchUrl(uri)) {
-        await launchUrl(uri, mode: LaunchMode.externalApplication);
-      } else { _showNoLocationDialog(); }
-    } catch (_) { _showNoLocationDialog(); }
+      if (await canLaunchUrl(uri)) await launchUrl(uri, mode: LaunchMode.externalApplication);
+      else _showNoLocDialog();
+    } catch (_) { _showNoLocDialog(); }
   }
 
-  void _showNoLocationDialog() {
-    showDialog(context: context, builder: (ctx) => AlertDialog(
-      backgroundColor: kBg,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
-          side: BorderSide(color: kError.withOpacity(0.4))),
-      title: const Row(children: [
-        Icon(Icons.location_off_outlined, color: kError, size: 20),
-        SizedBox(width: 8),
-        Expanded(child: Text('लोकेशन उपलब्ध नहीं',
-            style: TextStyle(color: kDark, fontSize: 15, fontWeight: FontWeight.w800))),
-      ]),
-      content: const Text('इस केंद्र की GPS लोकेशन अभी तक दर्ज नहीं है।',
-          style: TextStyle(color: kDark, fontSize: 13)),
-      actions: [ElevatedButton(
-          onPressed: () => Navigator.pop(ctx),
-          style: ElevatedButton.styleFrom(backgroundColor: kPrimary, foregroundColor: Colors.white),
-          child: const Text('ठीक है'))],
-    ));
-  }
+  void _showNoLocDialog() => showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: kBg,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
+            side: BorderSide(color: kError.withOpacity(0.4))),
+        title: const Row(children: [
+          Icon(Icons.location_off_outlined, color: kError, size: 20),
+          SizedBox(width: 8),
+          Expanded(child: Text('लोकेशन उपलब्ध नहीं',
+              style: TextStyle(color: kDark, fontSize: 15, fontWeight: FontWeight.w800))),
+        ]),
+        content: const Text('इस केंद्र की GPS लोकेशन अभी तक दर्ज नहीं है।',
+            style: TextStyle(color: kDark, fontSize: 13)),
+        actions: [ElevatedButton(
+            onPressed: () => Navigator.pop(ctx),
+            style: ElevatedButton.styleFrom(
+                backgroundColor: kPrimary, foregroundColor: Colors.white),
+            child: const Text('ठीक है'))],
+      ));
 
   Future<void> _confirmLogout() async {
-    final ok = await showDialog<bool>(context: context, builder: (ctx) => AlertDialog(
-      backgroundColor: kBg,
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
-          side: const BorderSide(color: kError, width: 1.5)),
-      title: const Row(children: [
-        Icon(Icons.logout, color: kError), SizedBox(width: 8),
-        Text('लॉग आउट', style: TextStyle(color: kError)),
-      ]),
-      content: const Text('क्या आप लॉग आउट करना चाहते हैं?',
-          style: TextStyle(color: kDark)),
-      actions: [
-        TextButton(onPressed: () => Navigator.pop(ctx, false),
-            child: const Text('रद्द', style: TextStyle(color: kSubtle))),
-        ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
-            style: ElevatedButton.styleFrom(backgroundColor: kError, foregroundColor: Colors.white),
-            child: const Text('लॉग आउट')),
-      ],
-    ));
+    final ok = await showDialog<bool>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          backgroundColor: kBg,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16),
+              side: const BorderSide(color: kError, width: 1.5)),
+          title: const Row(children: [
+            Icon(Icons.logout, color: kError),
+            SizedBox(width: 8),
+            Text('लॉग आउट', style: TextStyle(color: kError)),
+          ]),
+          content: const Text('क्या आप लॉग आउट करना चाहते हैं?',
+              style: TextStyle(color: kDark)),
+          actions: [
+            TextButton(onPressed: () => Navigator.pop(ctx, false),
+                child: const Text('रद्द', style: TextStyle(color: kSubtle))),
+            ElevatedButton(onPressed: () => Navigator.pop(ctx, true),
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: kError, foregroundColor: Colors.white),
+                child: const Text('लॉग आउट')),
+          ],
+        ));
     if (ok == true) {
       await AuthService.logout();
       if (mounted) Navigator.pushReplacementNamed(context, '/login');
     }
   }
 
+  // ══════════════════════════════════════════════════════════════════════════
+  //  BUILD
+  // ══════════════════════════════════════════════════════════════════════════
   @override
   Widget build(BuildContext context) {
     final items = _navItems;
@@ -316,122 +680,108 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     );
   }
 
-  PreferredSizeWidget _buildAppBar() => AppBar(
-    backgroundColor: kDark,
-    elevation: 0,
-    automaticallyImplyLeading: false,
-    title: Row(children: [
-      Container(
-        width: 34, height: 34,
-        decoration: BoxDecoration(color: kPrimary, shape: BoxShape.circle,
-            border: Border.all(color: kBorder)),
-        child: Icon(_roleIcon(), color: Colors.white, size: 18),
-      ),
-      const SizedBox(width: 10),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        Text(_isAfterElection ? 'ड्यूटी इतिहास' : _navItems[_navIdx].label,
-            style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: Colors.white)),
-        Text(_user?['name'] ?? 'Staff Portal',
-            style: const TextStyle(fontSize: 10, color: Colors.white60),
-            overflow: TextOverflow.ellipsis),
-      ])),
-    ]),
-    actions: [
-      GestureDetector(
-        onTap: _openHistory,
-        child: Container(
-          margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 10),
+  PreferredSizeWidget _buildAppBar() {
+    final rc = _roleColor();
+    return AppBar(
+      backgroundColor: kDark,
+      elevation: 0,
+      automaticallyImplyLeading: false,
+      title: Row(children: [
+        Container(width: 36, height: 36,
           decoration: BoxDecoration(
-            color: _isAfterElection ? kSuccess : Colors.white.withOpacity(0.15),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(
-                color: _isAfterElection ? kSuccess : Colors.white30, width: 1.2),
+              color: rc, shape: BoxShape.circle,
+              border: Border.all(color: kBorder)),
+          child: Icon(_roleIcon(), color: Colors.white, size: 18)),
+        const SizedBox(width: 10),
+        Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(_isAfterElection ? 'ड्यूटी इतिहास'
+              : (_navItems.isNotEmpty
+                  ? _navItems[_navIdx.clamp(0, _navItems.length - 1)].label
+                  : 'डैशबोर्ड'),
+              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.bold,
+                  color: Colors.white)),
+          Text(_user?['name'] ?? 'Staff Portal',
+              style: const TextStyle(fontSize: 10, color: Colors.white60),
+              overflow: TextOverflow.ellipsis),
+        ])),
+      ]),
+      actions: [
+        // History button
+        GestureDetector(
+          onTap: _openHistory,
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 10, horizontal: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
+            decoration: BoxDecoration(
+              color: _hasPastDuties
+                  ? kSuccess.withOpacity(0.25)
+                  : Colors.white.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: Colors.white30),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              const Icon(Icons.history_rounded, color: Colors.white, size: 14),
+              const SizedBox(width: 4),
+              const Text('इतिहास',
+                  style: TextStyle(color: Colors.white,
+                      fontSize: 10, fontWeight: FontWeight.w700)),
+              if (_hasPastDuties) ...[
+                const SizedBox(width: 4),
+                Container(width: 6, height: 6,
+                    decoration: const BoxDecoration(
+                        color: kSuccess, shape: BoxShape.circle)),
+              ],
+            ]),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            const Icon(Icons.history_rounded, color: Colors.white, size: 14),
-            const SizedBox(width: 4),
-            const Text('इतिहास', style: TextStyle(
-                color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
-          ]),
         ),
-      ),
-      if (!_isAfterElection)
-        Container(
-          margin: const EdgeInsets.only(right: 4),
-          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-          decoration: BoxDecoration(
-            color: (_districtDuty != null ? kDistrict : kSuccessBg).withOpacity(0.2),
-            borderRadius: BorderRadius.circular(20),
-            border: Border.all(color: (_districtDuty != null ? kDistrict : kSuccess).withOpacity(0.4)),
+        if (!_isAfterElection)
+          Container(
+            margin: const EdgeInsets.only(right: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            decoration: BoxDecoration(
+              color: _roleColor().withOpacity(0.2),
+              borderRadius: BorderRadius.circular(20),
+              border: Border.all(color: _roleColor().withOpacity(0.4)),
+            ),
+            child: Row(mainAxisSize: MainAxisSize.min, children: [
+              Container(width: 6, height: 6,
+                  decoration: BoxDecoration(
+                      color: _roleColor(), shape: BoxShape.circle)),
+              const SizedBox(width: 4),
+              Text(_roleLabel(), style: TextStyle(
+                  color: _roleColor(), fontSize: 9,
+                  fontWeight: FontWeight.w700)),
+            ]),
           ),
-          child: Row(mainAxisSize: MainAxisSize.min, children: [
-            Container(width: 6, height: 6,
-                decoration: BoxDecoration(
-                  color: _districtDuty != null ? kDistrict : kSuccess,
-                  shape: BoxShape.circle)),
-            const SizedBox(width: 4),
-            Text(_roleLabel(),
-                style: TextStyle(
-                  color: _districtDuty != null ? kDistrict : kSuccess,
-                  fontSize: 9, fontWeight: FontWeight.w700)),
-          ]),
-        ),
-      IconButton(
-          icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 20),
-          onPressed: _loadData),
-      IconButton(
-          icon: const Icon(Icons.logout_rounded, color: Colors.white70),
-          onPressed: _confirmLogout),
-    ],
-  );
-
-  IconData _roleIcon() {
-    if (_districtDuty != null) return Icons.shield_outlined;
-    switch (_roleType) {
-      case 'sector':  return Icons.grid_view;
-      case 'zone':    return Icons.map;
-      case 'kshetra': return Icons.layers;
-      default:        return Icons.how_to_vote;
-    }
+        IconButton(
+            icon: const Icon(Icons.refresh_rounded, color: Colors.white70, size: 20),
+            onPressed: _loadData),
+        IconButton(
+            icon: const Icon(Icons.logout_rounded, color: Colors.white70),
+            onPressed: _confirmLogout),
+      ],
+    );
   }
 
-  String _roleLabel() {
-    if (_districtDuty != null) return 'जनपदीय ड्यूटी';
-    switch (_roleType) {
-      case 'sector':  return 'सेक्टर अधिकारी';
-      case 'zone':    return 'जोनल अधिकारी';
-      case 'kshetra': return 'क्षेत्र अधिकारी';
-      case 'booth':   return 'बूथ स्टाफ';
-      default:        return 'सक्रिय';
-    }
-  }
-
-  // ══════════════════════════════════════════════════════════════════════════
-  //  BODY
-  // ══════════════════════════════════════════════════════════════════════════
   Widget _buildBody() {
     if (_isAfterElection) {
       return _PostElectionView(
-        user: _user,
-        electionConfig: _electionConfig,
-        onOpenHistory: _openHistory,
-      );
+          user: _user,
+          electionConfig: _electionConfig,
+          onOpenHistory: _openHistory);
     }
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxWidth: 720),
-        child: Center(child: _buildSection()),
-      ),
+      child: Center(child: ConstrainedBox(
+          constraints: const BoxConstraints(maxWidth: 720),
+          child: _buildSection())),
     );
   }
 
   Widget _buildSection() {
-    // District duty takes priority if no other role
     if (_districtDuty != null && _roleType == 'none') {
-      return _buildDistrictDutySection();
+      return _buildDistrictSection();
     }
     switch (_roleType) {
       case 'sector':  return _buildSectorSection();
@@ -441,63 +791,80 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     }
   }
 
-  // ── DISTRICT DUTY sections ────────────────────────────────────────────────
-  Widget _buildDistrictDutySection() {
-    // FIX: use Map<dynamic,dynamic> cast via Map.from to satisfy non-nullable parameter
+  Widget _buildDistrictSection() {
     final dd = Map<dynamic, dynamic>.from(_districtDuty!);
     switch (_navIdx) {
       case 0: return _DistrictOverviewSection(
-          duty: dd, user: _user ?? {}, electionConfig: _electionConfig,
+          duty: dd, user: _user ?? {},
+          electionConfig: _electionConfig,
+          isAfterElection: _isAfterElection,
           onGoToDutyCard: () => _goTo(3));
-      case 1: return _DistrictDetailSection(duty: dd);
+      case 1: return _DistrictDetailSection(
+          duty: dd, electionConfig: _electionConfig);
       case 2: return _DistrictBatchStaffSection(duty: dd);
       case 3: return _DistrictDutyCardSection(
-          duty: dd, user: _user ?? {}, electionConfig: _electionConfig);
+          duty: dd, user: _user ?? {},
+          electionConfig: _electionConfig);
       default: return const SizedBox();
     }
   }
 
-  // ── BOOTH sections ────────────────────────────────────────────────────────
   Widget _buildBoothSection() {
+    final hasNoDuty = _duty == null || _roleType == 'none';
     switch (_navIdx) {
-      case 0: return _OverviewSection(duty: _duty, user: _user,
-          noDuty: _duty == null, onGoToDutyCard: () => _goTo(3), onOpenMap: _openMap);
-      case 1: return _DutyDetailSection(duty: _duty, noDuty: _duty == null, onOpenMap: _openMap);
-      case 2: return _CoStaffSection(duty: _duty, noDuty: _duty == null);
-      case 3: return _DutyCardSection(duty: _duty, user: _user, noDuty: _duty == null);
+      case 0: return _BoothOverviewSection(
+          duty: _duty, user: _user, noDuty: hasNoDuty,
+          electionConfig: _electionConfig,
+          hasPastDuties: _hasPastDuties,
+          onGoToDutyCard: () => _goTo(3),
+          onOpenMap: _openMap, onOpenHistory: _openHistory);
+      case 1: return _DutyDetailSection(
+          duty: _duty, noDuty: hasNoDuty, onOpenMap: _openMap,
+          electionConfig: _electionConfig);
+      case 2: return _CoStaffSection(duty: _duty, noDuty: hasNoDuty);
+      case 3: return _DutyCardSection(
+          duty: _duty, user: _user, noDuty: hasNoDuty,
+          electionConfig: _electionConfig);
       default: return const SizedBox();
     }
   }
 
-  // ── SECTOR sections ───────────────────────────────────────────────────────
   Widget _buildSectorSection() {
     switch (_navIdx) {
-      case 0: return _SectorOverviewSection(duty: _duty, user: _user);
+      case 0: return _SectorOverviewSection(
+          duty: _duty, user: _user, electionConfig: _electionConfig);
       case 1: return _SectorInfoSection(duty: _duty);
-      case 2: return _SectorBoothAttendanceSection(duty: _duty, onRefresh: _loadData);
-      case 3: return _RulesSection(rules: _duty?['boothRules'] ?? []);
+      case 2: return _SectorAttendanceSection(
+          duty: _duty, onRefresh: _loadData);
+      case 3: return _ManakSection(
+          rules: _duty?['boothRules'] ?? [],
+          electionConfig: _electionConfig);
       default: return const SizedBox();
     }
   }
 
-  // ── ZONE sections ─────────────────────────────────────────────────────────
   Widget _buildZoneSection() {
     switch (_navIdx) {
-      case 0: return _ZoneOverviewSection(duty: _duty, user: _user);
+      case 0: return _ZoneOverviewSection(
+          duty: _duty, user: _user, electionConfig: _electionConfig);
       case 1: return _ZoneInfoSection(duty: _duty);
       case 2: return _ZoneSectorsSection(duty: _duty);
-      case 3: return _RulesSection(rules: _duty?['boothRules'] ?? []);
+      case 3: return _ManakSection(
+          rules: _duty?['boothRules'] ?? [],
+          electionConfig: _electionConfig);
       default: return const SizedBox();
     }
   }
 
-  // ── KSHETRA sections ──────────────────────────────────────────────────────
   Widget _buildKshetraSection() {
     switch (_navIdx) {
-      case 0: return _KshetraOverviewSection(duty: _duty, user: _user);
+      case 0: return _KshetraOverviewSection(
+          duty: _duty, user: _user, electionConfig: _electionConfig);
       case 1: return _KshetraInfoSection(duty: _duty);
       case 2: return _KshetraZonesSection(duty: _duty);
-      case 3: return _RulesSection(rules: _duty?['boothRules'] ?? []);
+      case 3: return _ManakSection(
+          rules: _duty?['boothRules'] ?? [],
+          electionConfig: _electionConfig);
       default: return const SizedBox();
     }
   }
@@ -508,30 +875,32 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     child: SafeArea(
       child: SizedBox(
         height: 65,
-        child: Row(children: List.generate(items.length, (i) {
-          final sel = _navIdx == i;
-          return Expanded(child: GestureDetector(
-            onTap: () => _goTo(i),
-            child: AnimatedContainer(
-              duration: const Duration(milliseconds: 200),
-              decoration: BoxDecoration(
-                color: sel ? kBg : Colors.transparent,
-                border: Border(top: BorderSide(
-                    color: sel ? kPrimary : Colors.transparent, width: 3)),
+        child: Row(
+          children: List.generate(items.length, (i) {
+            final sel = _navIdx == i;
+            return Expanded(child: GestureDetector(
+              onTap: () => _goTo(i),
+              child: AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                decoration: BoxDecoration(
+                  color: sel ? kBg : Colors.transparent,
+                  border: Border(top: BorderSide(
+                      color: sel ? _roleColor() : Colors.transparent, width: 3)),
+                ),
+                child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
+                  Icon(sel ? items[i].filledIcon : items[i].icon,
+                      color: sel ? _roleColor() : kSubtle, size: 22),
+                  const SizedBox(height: 3),
+                  Text(items[i].label, style: TextStyle(
+                      fontSize: 9,
+                      fontWeight: sel ? FontWeight.bold : FontWeight.normal,
+                      color: sel ? _roleColor() : kSubtle),
+                      maxLines: 1, overflow: TextOverflow.ellipsis),
+                ]),
               ),
-              child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Icon(sel ? items[i].filledIcon : items[i].icon,
-                    color: sel ? kPrimary : kSubtle, size: 22),
-                const SizedBox(height: 3),
-                Text(items[i].label, style: TextStyle(
-                    fontSize: 9,
-                    fontWeight: sel ? FontWeight.bold : FontWeight.normal,
-                    color: sel ? kPrimary : kSubtle),
-                    maxLines: 1, overflow: TextOverflow.ellipsis),
-              ]),
-            ),
-          ));
-        })),
+            ));
+          }),
+        ),
       ),
     ),
   );
@@ -544,612 +913,216 @@ class _NavItem {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ELECTION CONFIG BANNER — reusable across sections
+//  ELECTION BANNER
+//  ✅ FIX: Now uses _ElectionConfig model, shows all fields properly
 // ══════════════════════════════════════════════════════════════════════════════
-class _ElectionConfigBanner extends StatelessWidget {
-  final Map? electionConfig;
-  const _ElectionConfigBanner({this.electionConfig});
-
-  String _fmt(String? d) {
-    if (d == null) return '—';
-    try {
-      final dt = DateTime.parse(d);
-      const m = ['', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
-                  'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'];
-      return '${dt.day} ${m[dt.month]} ${dt.year}';
-    } catch (_) { return d; }
-  }
+class _ElectionBanner extends StatelessWidget {
+  final _ElectionConfig electionConfig;
+  final bool isFinalized;
+  const _ElectionBanner({
+    required this.electionConfig,
+    this.isFinalized = false,
+  });
 
   @override
   Widget build(BuildContext context) {
-    if (electionConfig == null) return const SizedBox.shrink();
-    final ec = electionConfig!;
-    final name  = ec['election_name']?.toString() ?? '';
-    final type  = ec['election_type']?.toString() ?? '';
-    final phase = ec['phase']?.toString() ?? '';
-    final pratah = ec['pratah_samay']?.toString() ?? '';
-    final saya   = ec['saya_samay']?.toString() ?? '';
-    final date   = _fmt(ec['election_date']?.toString());
+    if (electionConfig.isEmpty) return const SizedBox.shrink();
+    final past = isFinalized;
 
     return Container(
       width: double.infinity,
       margin: const EdgeInsets.only(bottom: 14),
-      padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF1A237E), Color(0xFF283593)],
+        gradient: LinearGradient(
+          colors: past
+              ? [const Color(0xFF3E1500), const Color(0xFF7A3000)]
+              : [const Color(0xFF1A237E), const Color(0xFF283593)],
           begin: Alignment.topLeft, end: Alignment.bottomRight),
         borderRadius: BorderRadius.circular(14),
-        boxShadow: [BoxShadow(color: const Color(0xFF1A237E).withOpacity(0.3),
+        boxShadow: [BoxShadow(
+            color: (past ? kPastElec : const Color(0xFF1A237E)).withOpacity(0.3),
             blurRadius: 12, offset: const Offset(0, 4))],
       ),
+      padding: const EdgeInsets.all(14),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Row(children: [
           Container(width: 32, height: 32,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
+            decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.12),
                 borderRadius: BorderRadius.circular(8)),
-            child: const Icon(Icons.how_to_vote_outlined, color: Colors.white, size: 18)),
+            child: Icon(
+                past ? Icons.archive_rounded : Icons.how_to_vote_outlined,
+                color: Colors.white, size: 18)),
           const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            if (name.isNotEmpty)
-              Text(name, style: const TextStyle(color: Colors.white,
-                  fontSize: 13, fontWeight: FontWeight.w800), maxLines: 2),
-            if (type.isNotEmpty)
-              Text(type, style: const TextStyle(color: Colors.white70, fontSize: 10)),
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            if (electionConfig.electionName.isNotEmpty)
+              Text(electionConfig.electionName,
+                  style: const TextStyle(color: Colors.white,
+                      fontSize: 13, fontWeight: FontWeight.w800),
+                  maxLines: 2),
+            if (electionConfig.electionType.isNotEmpty)
+              Text(electionConfig.electionType,
+                  style: const TextStyle(color: Colors.white70, fontSize: 10)),
+            if (electionConfig.district.isNotEmpty)
+              Text('जनपद: ${electionConfig.district}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 9)),
           ])),
-          if (phase.isNotEmpty)
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.15),
-                  borderRadius: BorderRadius.circular(20),
-                  border: Border.all(color: Colors.white24)),
-              child: Text('चरण $phase',
-                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.w700)),
+          Row(mainAxisSize: MainAxisSize.min, children: [
+            if (past) Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                  color: kPastElec.withOpacity(0.3),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: kPastElec.withOpacity(0.6))),
+              child: const Text('पिछला चुनाव',
+                  style: TextStyle(color: Color(0xFFFFCC80),
+                      fontSize: 9, fontWeight: FontWeight.w800)),
             ),
+            if (!past && electionConfig.phase.isNotEmpty) ...[
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(20),
+                    border: Border.all(color: Colors.white24)),
+                child: Text('चरण ${electionConfig.phase}',
+                    style: const TextStyle(color: Colors.white,
+                        fontSize: 10, fontWeight: FontWeight.w700))),
+            ],
+          ]),
         ]),
         const SizedBox(height: 10),
         const Divider(color: Colors.white24, height: 1),
         const SizedBox(height: 10),
         Row(children: [
-          Expanded(child: _ElecInfoChip(Icons.calendar_today_outlined, 'मतदान तिथि', date)),
-          if (pratah.isNotEmpty) ...[
+          Expanded(child: _ElecChip(
+              Icons.calendar_today_outlined, 'मतदान तिथि',
+              electionConfig.displayDate.isNotEmpty
+                  ? electionConfig.displayDate
+                  : electionConfig.electionDate)),
+          if (electionConfig.pratahSamay.isNotEmpty) ...[
             const SizedBox(width: 8),
-            Expanded(child: _ElecInfoChip(Icons.wb_sunny_outlined, 'प्रातः', pratah)),
+            Expanded(child: _ElecChip(
+                Icons.wb_sunny_outlined, 'प्रातः',
+                electionConfig.pratahSamay)),
           ],
-          if (saya.isNotEmpty) ...[
+          if (electionConfig.sayaSamay.isNotEmpty) ...[
             const SizedBox(width: 8),
-            Expanded(child: _ElecInfoChip(Icons.nights_stay_outlined, 'सायं', saya)),
+            Expanded(child: _ElecChip(
+                Icons.nights_stay_outlined, 'सायं',
+                electionConfig.sayaSamay)),
           ],
         ]),
+        if (electionConfig.state.isNotEmpty || electionConfig.electionYear.isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Row(children: [
+            if (electionConfig.state.isNotEmpty)
+              Container(
+                margin: const EdgeInsets.only(right: 8),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6)),
+                child: Text('राज्य: ${electionConfig.state}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 9))),
+            if (electionConfig.electionYear.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.1),
+                    borderRadius: BorderRadius.circular(6)),
+                child: Text('वर्ष: ${electionConfig.electionYear}',
+                    style: const TextStyle(color: Colors.white70, fontSize: 9))),
+          ]),
+        ],
       ]),
     );
   }
 }
 
-class _ElecInfoChip extends StatelessWidget {
-  final IconData icon; final String label, value;
-  const _ElecInfoChip(this.icon, this.label, this.value);
+class _ElecChip extends StatelessWidget {
+  final IconData icon;
+  final String label, value;
+  const _ElecChip(this.icon, this.label, this.value);
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
-    decoration: BoxDecoration(
-      color: Colors.white.withOpacity(0.1),
-      borderRadius: BorderRadius.circular(8),
-    ),
+    decoration: BoxDecoration(color: Colors.white.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8)),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, color: Colors.white60, size: 12),
       const SizedBox(width: 5),
-      Flexible(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Flexible(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(label, style: const TextStyle(color: Colors.white54, fontSize: 9)),
-        Text(value, style: const TextStyle(color: Colors.white, fontSize: 11,
-            fontWeight: FontWeight.w700), maxLines: 1, overflow: TextOverflow.ellipsis),
+        Text(value, style: const TextStyle(color: Colors.white,
+            fontSize: 11, fontWeight: FontWeight.w700),
+            maxLines: 1, overflow: TextOverflow.ellipsis),
       ])),
     ]),
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  DISTRICT DUTY — OVERVIEW
-// ══════════════════════════════════════════════════════════════════════════════
-class _DistrictOverviewSection extends StatelessWidget {
-  final Map<dynamic, dynamic> duty;
-  final Map<dynamic, dynamic> user;
-  final Map? electionConfig;
-  final VoidCallback onGoToDutyCard;
-  const _DistrictOverviewSection({
-    required this.duty,
-    required this.user,
-    this.electionConfig,
-    required this.onGoToDutyCard,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final dutyType   = duty['dutyType']?.toString() ?? '';
-    final batchNo    = duty['batchNo'];
-    final busNo      = duty['busNo']?.toString() ?? '';
-    final note       = duty['note']?.toString() ?? '';
-    final batchStaff = (duty['batchStaff'] as List? ?? []);
-
-    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-      // Election config banner
-      _ElectionConfigBanner(electionConfig: electionConfig),
-
-      // Duty type hero card
-      Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-            colors: [kDistrict, Color(0xFF6A1B9A)],
-            begin: Alignment.topLeft, end: Alignment.bottomRight),
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [BoxShadow(color: kDistrict.withOpacity(0.35),
-              blurRadius: 16, offset: const Offset(0, 6))],
-        ),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Container(width: 48, height: 48,
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                shape: BoxShape.circle,
-                border: Border.all(color: Colors.white30, width: 2)),
-              child: const Icon(Icons.shield_outlined, color: Colors.white, size: 24)),
-            const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              const Text('जनपदीय ड्यूटी', style: TextStyle(
-                  color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w600,
-                  letterSpacing: 1)),
-              Text(dutyLabel(dutyType), style: const TextStyle(
-                  color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800),
-                  maxLines: 2),
-            ])),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-              decoration: BoxDecoration(
-                color: Colors.white.withOpacity(0.15),
-                borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: Colors.white24)),
-              child: Text('बैच ${batchNo ?? '—'}',
-                  style: const TextStyle(color: Colors.white,
-                      fontSize: 11, fontWeight: FontWeight.w800)),
-            ),
-          ]),
-          if (busNo.isNotEmpty) ...[
-            const SizedBox(height: 10),
-            Container(height: 1, color: Colors.white.withOpacity(0.15)),
-            const SizedBox(height: 8),
-            Row(children: [
-              const Icon(Icons.directions_bus_outlined, color: Colors.white54, size: 14),
-              const SizedBox(width: 6),
-              Text('बस: $busNo', style: const TextStyle(color: Colors.white70, fontSize: 12)),
-            ]),
-          ],
-          if (note.isNotEmpty) ...[
-            const SizedBox(height: 6),
-            Row(children: [
-              const Icon(Icons.notes_outlined, color: Colors.white54, size: 14),
-              const SizedBox(width: 6),
-              Expanded(child: Text(note, style: const TextStyle(color: Colors.white70, fontSize: 12))),
-            ]),
-          ],
-        ]),
-      ),
-
-      const SizedBox(height: 14),
-
-      // Stats row
-      GridView.count(
-        crossAxisCount: 2, shrinkWrap: true,
-        physics: const NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45,
-        children: [
-          _StatCard(icon: Icons.shield_outlined,   label: 'ड्यूटी प्रकार',
-              value: dutyLabel(dutyType), color: kDistrict),
-          _StatCard(icon: Icons.confirmation_number_outlined, label: 'बैच संख्या',
-              value: 'बैच ${batchNo ?? '—'}', color: kPrimary),
-          _StatCard(icon: Icons.groups_outlined,   label: 'बैच कर्मी',
-              value: '${batchStaff.length} कर्मी', color: kSuccess),
-          _StatCard(icon: Icons.directions_bus_outlined, label: 'बस संख्या',
-              value: busNo.isNotEmpty ? busNo : '—', color: kInfo),
-        ],
-      ),
-
-      const SizedBox(height: 14),
-
-      // Staff info
-      _HeroCard(user: user, duty: null, noDuty: false, subtitle: 'जनपदीय ड्यूटी कर्मी'),
-
-      const SizedBox(height: 14),
-
-      // Duty card button
-      _NavButton(icon: Icons.print_outlined, label: 'ड्यूटी कार्ड प्रिंट करें',
-          color: kDark, onTap: onGoToDutyCard),
-    ]);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  DISTRICT DUTY — DETAIL
-// ══════════════════════════════════════════════════════════════════════════════
-class _DistrictDetailSection extends StatelessWidget {
-  final Map<dynamic, dynamic> duty;
-  const _DistrictDetailSection({required this.duty});
-
-  @override
-  Widget build(BuildContext context) {
-    final dutyType   = duty['dutyType']?.toString() ?? '';
-    final batchNo    = duty['batchNo'];
-    final busNo      = duty['busNo']?.toString() ?? '';
-    final note       = duty['note']?.toString() ?? '';
-    final district   = duty['district']?.toString() ?? '';
-    final assignedAt = duty['assignedAt']?.toString() ?? '';
-
-    return Column(children: [
-      _SectionCard(icon: Icons.shield_outlined, title: 'जनपदीय ड्यूटी विवरण',
-        child: Column(children: [
-          _InfoTile(Icons.work_outline,            'ड्यूटी प्रकार',  dutyLabel(dutyType)),
-          _InfoTile(Icons.confirmation_number_outlined, 'बैच संख्या', 'बैच $batchNo'),
-          if (busNo.isNotEmpty)
-            _InfoTile(Icons.directions_bus_outlined, 'बस संख्या',    busNo),
-          if (district.isNotEmpty)
-            _InfoTile(Icons.location_city_outlined,  'जनपद',         district),
-          if (note.isNotEmpty)
-            _InfoTile(Icons.notes_outlined,          'विशेष नोट',    note),
-          if (assignedAt.isNotEmpty)
-            _InfoTile(Icons.schedule_outlined,       'नियुक्ति समय', assignedAt),
-        ]),
-      ),
-      const SizedBox(height: 14),
-
-      // District duty type info card
-      Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: kDistrict.withOpacity(0.06),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kDistrict.withOpacity(0.25))),
-        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Icon(Icons.info_outline_rounded, color: kDistrict, size: 16),
-            const SizedBox(width: 8),
-            Text('ड्यूटी जानकारी',
-                style: TextStyle(color: kDistrict, fontSize: 13, fontWeight: FontWeight.w800)),
-          ]),
-          const SizedBox(height: 8),
-          Text(
-            'आप "${ dutyLabel(dutyType) }" ड्यूटी पर बैच $batchNo में तैनात हैं। '
-            'यह जनपद स्तरीय ड्यूटी है जो व्यवस्थापक द्वारा सौंपी गई है।',
-            style: TextStyle(color: kDistrict.withOpacity(0.8), fontSize: 12),
-          ),
-        ]),
-      ),
-    ]);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  DISTRICT DUTY — BATCH STAFF
-// ══════════════════════════════════════════════════════════════════════════════
-class _DistrictBatchStaffSection extends StatelessWidget {
-  final Map<dynamic, dynamic> duty;
-  const _DistrictBatchStaffSection({required this.duty});
-
-  @override
-  Widget build(BuildContext context) {
-    final staff   = (duty['batchStaff'] as List? ?? []);
-    final batchNo = duty['batchNo'];
-
-    return _SectionCard(
-      icon: Icons.groups_outlined,
-      title: 'बैच $batchNo के सहयोगी कर्मी (${staff.length})',
-      child: staff.isEmpty
-          ? const Padding(
-              padding: EdgeInsets.symmetric(vertical: 32),
-              child: Center(child: Text('कोई सहयोगी नहीं',
-                  style: TextStyle(color: kSubtle, fontSize: 13))))
-          : Column(children: staff.asMap().entries.map((e) {
-              final i = e.key;
-              final s = e.value is Map ? e.value as Map : {};
-              final armed = s['is_armed'] == 1 || s['is_armed'] == true;
-              return _StaffRow(index: i, staff: s, total: staff.length, armed: armed);
-            }).toList()),
-    );
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  DISTRICT DUTY — DUTY CARD
-// ══════════════════════════════════════════════════════════════════════════════
-class _DistrictDutyCardSection extends StatefulWidget {
-  final Map<dynamic, dynamic> duty;
-  final Map<dynamic, dynamic> user;
-  final Map? electionConfig;
-  const _DistrictDutyCardSection({
-    required this.duty,
-    required this.user,
-    this.electionConfig,
-  });
-  @override
-  State<_DistrictDutyCardSection> createState() => _DistrictDutyCardSectionState();
-}
-
-class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
-  bool _printing = false;
-  bool _hasMarked = false;
-
-  /// Convert district duty data to the admin card shape
-  Map<String, dynamic> _toAdminShape() {
-    final d  = widget.duty;
-    final u  = widget.user;
-    final ec = widget.electionConfig ?? {};
-
-    final batchStaff = (d['batchStaff'] as List? ?? []);
-
-    return {
-      // Staff info
-      'name':       u['name'] ?? '',
-      'pno':        u['pno']  ?? '',
-      'mobile':     u['mobile'] ?? '',
-      'rank':       u['rank']  ?? u['user_rank'] ?? '',
-      'user_rank':  u['rank']  ?? u['user_rank'] ?? '',
-      'isArmed':    u['isArmed'] ?? false,
-      'staffThana': u['thana'] ?? '',
-      'thana':      u['thana'] ?? '',
-      'district':   u['district'] ?? ec['district'] ?? '',
-
-      // Duty location — district duty uses dutyType as centerName
-      'centerName':     dutyLabel(d['dutyType']?.toString()),
-      'centerType':     'district',
-      'gpName':         '',
-      'sectorName':     '',
-      'zoneName':       '',
-      'superZoneName':  '',
-      'busNo':          d['busNo'] ?? '',
-      'bus_no':         d['busNo'] ?? '',
-
-      // Officers empty for district duty
-      'zonalOfficers':  [],
-      'sectorOfficers': [],
-      'superOfficers':  [],
-
-      // Batch staff as sahyogi
-      'sahyogi':  batchStaff,
-      'allStaff': batchStaff,
-
-      // Election details
-      'electionName':  ec['election_name']  ?? '',
-      'electionType':  ec['election_type']  ?? '',
-      'electionDate':  ec['election_date']  ?? '',
-      'phase':         ec['phase']          ?? '',
-      'pratahSamay':   ec['pratah_samay']   ?? '',
-      'sayaSamay':     ec['saya_samay']     ?? '',
-      'batchNo':       d['batchNo']?.toString() ?? '',
-    };
-  }
-
-  Future<void> _printCard() async {
-    setState(() => _printing = true);
-    try {
-      final font = await PdfGoogleFonts.notoSansDevanagariRegular();
-      final bold = await PdfGoogleFonts.notoSansDevanagariBold();
-      final doc  = pw.Document();
-      doc.addPage(pw.Page(
-        pageFormat: PdfPageFormat.a6.landscape,
-        margin: const pw.EdgeInsets.all(4),
-        build: (_) => buildDutyCardPdf(_toAdminShape(), font, bold),
-      ));
-      await Printing.layoutPdf(onLayout: (_) async => doc.save());
-
-      try {
-        final token = await AuthService.getToken();
-        await ApiService.post('/staff/mark-card-downloaded', {}, token: token);
-      } catch (e) { debugPrint('mark-card-downloaded error: $e'); }
-
-      if (mounted) setState(() => _hasMarked = true);
-    } catch (e) {
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('प्रिंट त्रुटि: $e'),
-          backgroundColor: kError, behavior: SnackBarBehavior.floating));
-    } finally {
-      if (mounted) setState(() => _printing = false);
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final d  = widget.duty;
-    final u  = widget.user;
-    final ec = widget.electionConfig ?? {};
-
-    return Column(children: [
-      // Header
-      Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          gradient: const LinearGradient(
-              colors: [kDistrict, Color(0xFF6A1B9A)],
-              begin: Alignment.topLeft, end: Alignment.bottomRight),
-          borderRadius: BorderRadius.circular(16),
-        ),
-        child: Row(children: [
-          Container(width: 48, height: 48,
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(14)),
-              child: const Icon(Icons.badge_outlined, color: Colors.white, size: 24)),
-          const SizedBox(width: 14),
-          const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('जनपदीय ड्यूटी कार्ड',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-            Text('District Duty Card',
-                style: TextStyle(color: Colors.white60, fontSize: 11)),
-          ])),
-          GestureDetector(
-            onTap: _printing ? null : _printCard,
-            child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-              decoration: BoxDecoration(
-                  color: _printing ? kPrimary.withOpacity(0.6) : kPrimary,
-                  borderRadius: BorderRadius.circular(12)),
-              child: _printing
-                  ? const SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                  : const Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.print_outlined, color: Colors.white, size: 15),
-                      SizedBox(width: 6),
-                      Text('प्रिंट', style: TextStyle(
-                          color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
-                    ]),
-            ),
-          ),
-        ]),
-      ),
-
-      const SizedBox(height: 12),
-
-      if (_hasMarked)
-        Container(
-          margin: const EdgeInsets.only(bottom: 12),
-          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-          decoration: BoxDecoration(
-              color: kSuccess.withOpacity(0.08), borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: kSuccess.withOpacity(0.3))),
-          child: const Row(children: [
-            Icon(Icons.check_circle_rounded, color: kSuccess, size: 18),
-            SizedBox(width: 8),
-            Expanded(child: Text('ड्यूटी कार्ड डाउनलोड हो गया ✓',
-                style: TextStyle(color: kSuccess, fontSize: 13, fontWeight: FontWeight.w700))),
-          ]),
-        ),
-
-      // Preview card
-      _SectionCard(icon: Icons.preview_outlined, title: 'कार्ड विवरण',
-          child: Column(children: [
-            _PreviewRow('नाम',           u['name']),
-            _PreviewRow('PNO',           u['pno']),
-            _PreviewRow('पद',            rh(u['rank'] ?? u['user_rank'])),
-            _PreviewRow('ड्यूटी प्रकार', dutyLabel(d['dutyType']?.toString())),
-            _PreviewRow('बैच संख्या',    'बैच ${d['batchNo'] ?? '—'}'),
-            if ((d['busNo']?.toString() ?? '').isNotEmpty)
-              _PreviewRow('बस',          d['busNo']),
-            _PreviewRow('जनपद',          u['district'] ?? ec['district']),
-            if ((ec['election_name']?.toString() ?? '').isNotEmpty)
-              _PreviewRow('चुनाव',       ec['election_name']),
-            if ((ec['election_date']?.toString() ?? '').isNotEmpty)
-              _PreviewRow('मतदान तिथि',  ec['election_date']),
-            if ((ec['pratah_samay']?.toString() ?? '').isNotEmpty)
-              _PreviewRow('प्रातः समय',  ec['pratah_samay']),
-            if ((ec['saya_samay']?.toString() ?? '').isNotEmpty)
-              _PreviewRow('सायं समय',    ec['saya_samay']),
-            _PreviewRow('सहयोगी',       '${(d['batchStaff'] as List? ?? []).length} कर्मी'),
-          ])),
-    ]);
-  }
-}
-
-// ══════════════════════════════════════════════════════════════════════════════
-//  POST-ELECTION VIEW
+//  POST ELECTION VIEW
 // ══════════════════════════════════════════════════════════════════════════════
 class _PostElectionView extends StatelessWidget {
   final Map? user;
-  final Map? electionConfig;
+  final _ElectionConfig electionConfig;
   final VoidCallback onOpenHistory;
-  const _PostElectionView(
-      {required this.user, required this.electionConfig, required this.onOpenHistory});
-
-  String _fmt(String? d) {
-    if (d == null) return '';
-    try {
-      final dt = DateTime.parse(d);
-      const m = ['', 'जनवरी', 'फरवरी', 'मार्च', 'अप्रैल', 'मई', 'जून',
-                  'जुलाई', 'अगस्त', 'सितम्बर', 'अक्टूबर', 'नवम्बर', 'दिसम्बर'];
-      return '${dt.day} ${m[dt.month]} ${dt.year}';
-    } catch (_) { return d; }
-  }
+  const _PostElectionView({
+    required this.user,
+    required this.electionConfig,
+    required this.onOpenHistory,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final ec = electionConfig ?? {};
-    final dateStr = _fmt(ec['election_date']?.toString());
-    final eName   = ec['election_name']?.toString() ?? '';
-    final phase   = ec['phase']?.toString() ?? '';
-
     return SingleChildScrollView(
       padding: const EdgeInsets.all(16),
       child: Column(children: [
-
         Container(
           width: double.infinity,
           padding: const EdgeInsets.all(24),
           decoration: BoxDecoration(
             gradient: const LinearGradient(
                 colors: [Color(0xFF1B5E20), Color(0xFF2E7D32)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight),
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.circular(18),
             boxShadow: [BoxShadow(color: kSuccess.withOpacity(0.3),
                 blurRadius: 16, offset: const Offset(0, 6))],
           ),
           child: Column(children: [
-            Container(
-              width: 64, height: 64,
+            Container(width: 64, height: 64,
               decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.15),
-                  shape: BoxShape.circle,
+                  color: Colors.white.withOpacity(0.15), shape: BoxShape.circle,
                   border: Border.all(color: Colors.white30, width: 2)),
-              child: const Icon(Icons.how_to_vote_rounded, color: Colors.white, size: 32),
-            ),
+              child: const Icon(Icons.how_to_vote_rounded,
+                  color: Colors.white, size: 32)),
             const SizedBox(height: 16),
             const Text('चुनाव सम्पन्न हो गया', style: TextStyle(
                 color: Colors.white, fontSize: 20, fontWeight: FontWeight.w900)),
             const SizedBox(height: 6),
-            if (eName.isNotEmpty)
-              Text(eName, style: const TextStyle(color: Colors.white70, fontSize: 13)),
-            if (dateStr.isNotEmpty)
-              Text('तिथि: $dateStr', style: const TextStyle(color: Colors.white60, fontSize: 12)),
-            if (phase.isNotEmpty)
-              Text('चरण: $phase', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+            if (electionConfig.electionName.isNotEmpty)
+              Text(electionConfig.electionName,
+                  style: const TextStyle(color: Colors.white70, fontSize: 13)),
+            if (electionConfig.electionDate.isNotEmpty)
+              Text('तिथि: ${electionConfig.displayDate}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12)),
+            if (electionConfig.phase.isNotEmpty)
+              Text('चरण: ${electionConfig.phase}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 12)),
             const SizedBox(height: 8),
             Text('${user?['name'] ?? ''} जी, आपकी ड्यूटी का रिकॉर्ड इतिहास में सुरक्षित है।',
                 style: const TextStyle(color: Colors.white60, fontSize: 12),
                 textAlign: TextAlign.center),
           ]),
         ),
-
         const SizedBox(height: 20),
-
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(18),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: kBorder.withOpacity(0.5)),
-            boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.05),
-                blurRadius: 10, offset: const Offset(0, 3))],
-          ),
-          child: Row(children: [
-            Container(
-              width: 50, height: 50,
-              decoration: BoxDecoration(color: kSurface, shape: BoxShape.circle,
-                  border: Border.all(color: kBorder)),
-              child: const Icon(Icons.person_outline_rounded, color: kPrimary, size: 24),
-            ),
-            const SizedBox(width: 14),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-              Text(user?['name'] ?? '—', style: const TextStyle(
-                  color: kDark, fontSize: 16, fontWeight: FontWeight.w800)),
-              const SizedBox(height: 2),
-              Text('PNO: ${user?['pno'] ?? '—'}  •  ${rh(user?['rank'] ?? user?['user_rank'])}',
-                  style: const TextStyle(color: kSubtle, fontSize: 11)),
-              Text('${user?['thana'] ?? ''}  ${user?['district'] != null ? '• ${user!['district']}' : ''}',
-                  style: const TextStyle(color: kSubtle, fontSize: 11)),
-            ])),
-          ]),
-        ),
-
+        _ProfileCard(user: user),
         const SizedBox(height: 16),
-
         GestureDetector(
           onTap: onOpenHistory,
           child: Container(
@@ -1165,17 +1138,18 @@ class _PostElectionView extends StatelessWidget {
             ),
             child: Column(children: [
               Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                Container(
-                  width: 40, height: 40,
-                  decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.12),
-                      borderRadius: BorderRadius.circular(12)),
-                  child: const Icon(Icons.history_rounded, color: Colors.white, size: 22),
-                ),
+                Container(width: 40, height: 40,
+                    decoration: BoxDecoration(
+                        color: Colors.white.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(12)),
+                    child: const Icon(Icons.history_rounded,
+                        color: Colors.white, size: 22)),
                 const SizedBox(width: 12),
-                const Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                const Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('ड्यूटी इतिहास देखें', style: TextStyle(
-                      color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+                      color: Colors.white, fontSize: 16,
+                      fontWeight: FontWeight.w800)),
                   Text('Duty History', style: TextStyle(
                       color: Colors.white54, fontSize: 11)),
                 ]),
@@ -1188,32 +1162,26 @@ class _PostElectionView extends StatelessWidget {
                     borderRadius: BorderRadius.circular(20),
                     border: Border.all(color: Colors.white24)),
                 child: const Text('सभी ड्यूटी रिकॉर्ड देखने के लिए टैप करें',
-                    style: TextStyle(color: Colors.white70, fontSize: 11)),
-              ),
+                    style: TextStyle(color: Colors.white70, fontSize: 11))),
             ]),
           ),
         ),
-
         const SizedBox(height: 16),
-
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: kInfo.withOpacity(0.06),
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: kInfo.withOpacity(0.2)),
-          ),
-          child: const Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              color: kInfo.withOpacity(0.06),
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: kInfo.withOpacity(0.2))),
+          child: const Row(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
             Icon(Icons.info_outline_rounded, color: kInfo, size: 16),
             SizedBox(width: 8),
             Expanded(child: Text(
               'चुनाव समाप्त हो जाने के बाद यहाँ कोई सक्रिय ड्यूटी नहीं दिखाई जाती। '
               'आपकी सभी पुरानी ड्यूटियाँ "इतिहास" में उपलब्ध हैं।',
-              style: TextStyle(color: kInfo, fontSize: 12),
-            )),
-          ]),
-        ),
-
+              style: TextStyle(color: kInfo, fontSize: 12))),
+          ])),
         const SizedBox(height: 24),
       ]),
     );
@@ -1223,23 +1191,33 @@ class _PostElectionView extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 //  BOOTH — OVERVIEW
 // ══════════════════════════════════════════════════════════════════════════════
-class _OverviewSection extends StatelessWidget {
+class _BoothOverviewSection extends StatelessWidget {
   final Map? duty, user;
-  final bool noDuty;
-  final VoidCallback onGoToDutyCard, onOpenMap;
-  const _OverviewSection({required this.duty, required this.user,
-      required this.noDuty, required this.onGoToDutyCard, required this.onOpenMap});
+  final _ElectionConfig electionConfig;
+  final bool noDuty, hasPastDuties;
+  final VoidCallback onGoToDutyCard, onOpenMap, onOpenHistory;
+
+  const _BoothOverviewSection({
+    required this.duty, required this.user,
+    required this.noDuty, required this.electionConfig,
+    required this.hasPastDuties,
+    required this.onGoToDutyCard, required this.onOpenMap,
+    required this.onOpenHistory,
+  });
 
   @override
   Widget build(BuildContext context) {
+    final r = _rs(context);
     return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _ElectionBanner(electionConfig: electionConfig),
       _HeroCard(user: user, duty: duty, noDuty: noDuty),
       const SizedBox(height: 18),
       if (!noDuty && duty != null) ...[
         GridView.count(
           crossAxisCount: 2, shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
-          crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45,
+          crossAxisSpacing: 12, mainAxisSpacing: 12,
+          childAspectRatio: r.compact ? 1.3 : 1.45,
           children: [
             _StatCard(icon: Icons.location_on_outlined, label: 'मतदान केंद्र',
                 value: v(duty?['centerName']), color: kPrimary),
@@ -1256,21 +1234,98 @@ class _OverviewSection extends StatelessWidget {
         const SizedBox(height: 16),
         _SectionCard(icon: Icons.info_outline_rounded, title: 'संक्षिप्त विवरण',
           child: Column(children: [
-            _InfoTile(Icons.local_police_outlined,    'थाना',        duty?['thana']),
+            _InfoTile(Icons.local_police_outlined,    'थाना',         duty?['thana']),
             _InfoTile(Icons.account_balance_outlined, 'ग्राम पंचायत', duty?['gpName']),
-            _InfoTile(Icons.layers_outlined,          'जोन',         duty?['zoneName']),
-            _InfoTile(Icons.public_outlined,          'सुपर जोन',    duty?['superZoneName']),
+            _InfoTile(Icons.layers_outlined,          'जोन',          duty?['zoneName']),
+            _InfoTile(Icons.public_outlined,          'सुपर जोन',     duty?['superZoneName']),
             _InfoTile(Icons.category_outlined,        'केंद्र प्रकार', ct(duty?['centerType'])),
           ]),
         ),
         const SizedBox(height: 12),
-        _NavButton(icon: Icons.navigation_rounded, label: 'Google Maps पर नेविगेट करें',
+        _NavButton(icon: Icons.navigation_rounded,
+            label: 'Google Maps पर नेविगेट करें',
             color: kPrimary, onTap: onOpenMap),
         const SizedBox(height: 12),
-        _NavButton(icon: Icons.print_outlined, label: 'ड्यूटी कार्ड प्रिंट करें',
+        _NavButton(icon: Icons.print_outlined,
+            label: 'ड्यूटी कार्ड प्रिंट करें',
             color: kDark, onTap: onGoToDutyCard),
-      ] else
-        const _NoDutyState(),
+      ] else ...[
+        _NoDutyCard(hasPastDuties: hasPastDuties, onOpenHistory: onOpenHistory),
+      ],
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  NO DUTY CARD
+// ══════════════════════════════════════════════════════════════════════════════
+class _NoDutyCard extends StatelessWidget {
+  final bool hasPastDuties;
+  final VoidCallback onOpenHistory;
+  const _NoDutyCard({required this.hasPastDuties, required this.onOpenHistory});
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(children: [
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(32),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: kBorder.withOpacity(0.5)),
+          boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.05),
+              blurRadius: 16, offset: const Offset(0, 4))],
+        ),
+        child: Column(mainAxisSize: MainAxisSize.min, children: [
+          Container(width: 64, height: 64,
+              decoration: BoxDecoration(color: kSurface, shape: BoxShape.circle,
+                  border: Border.all(color: kBorder)),
+              child: const Icon(Icons.location_off_outlined,
+                  color: kPrimary, size: 30)),
+          const SizedBox(height: 16),
+          const Text('अभी तक ड्यूटी नहीं सौंपी गई',
+              style: TextStyle(color: kDark, fontSize: 16,
+                  fontWeight: FontWeight.w800)),
+          const SizedBox(height: 8),
+          const Text('व्यवस्थापक द्वारा ड्यूटी सौंपे जाने पर यहाँ दिखेगी।',
+              style: TextStyle(color: kSubtle, fontSize: 12),
+              textAlign: TextAlign.center),
+        ]),
+      ),
+      if (hasPastDuties) ...[
+        const SizedBox(height: 16),
+        GestureDetector(
+          onTap: onOpenHistory,
+          child: Container(
+            width: double.infinity,
+            padding: const EdgeInsets.all(16),
+            decoration: BoxDecoration(
+              color: kPastElec.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(color: kPastElec.withOpacity(0.35)),
+            ),
+            child: Row(children: [
+              Container(width: 42, height: 42,
+                decoration: BoxDecoration(
+                    color: kPastElec.withOpacity(0.15),
+                    borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.history_edu_outlined,
+                    color: kPastElec, size: 22)),
+              const SizedBox(width: 12),
+              const Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text('पिछली ड्यूटियां देखें', style: TextStyle(
+                    color: kPastElec, fontSize: 14,
+                    fontWeight: FontWeight.w800)),
+                Text('आपकी पिछले चुनाव की ड्यूटियां',
+                    style: TextStyle(color: kSubtle, fontSize: 11)),
+              ])),
+              const Icon(Icons.chevron_right, color: kPastElec, size: 22),
+            ]),
+          ),
+        ),
+      ],
     ]);
   }
 }
@@ -1279,47 +1334,58 @@ class _OverviewSection extends StatelessWidget {
 //  BOOTH — DUTY DETAILS
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutyDetailSection extends StatelessWidget {
-  final Map? duty; final bool noDuty; final VoidCallback onOpenMap;
-  const _DutyDetailSection({required this.duty, required this.noDuty, required this.onOpenMap});
+  final Map? duty;
+  final _ElectionConfig electionConfig;
+  final bool noDuty;
+  final VoidCallback onOpenMap;
+  const _DutyDetailSection({
+    required this.duty, required this.noDuty,
+    required this.onOpenMap, required this.electionConfig,
+  });
 
   @override
   Widget build(BuildContext context) {
     if (noDuty) return const _NoDutyState();
     return Column(children: [
+      _ElectionBanner(electionConfig: electionConfig),
       _SectionCard(icon: Icons.location_on_outlined, title: 'ड्यूटी स्थान',
         child: Column(children: [
           _InfoTile(Icons.how_to_vote_outlined,     'मतदान केंद्र', duty?['centerName']),
-          _InfoTile(Icons.home_outlined,            'पता',           duty?['centerAddress']),
+          _InfoTile(Icons.home_outlined,            'पता',          duty?['centerAddress']),
           _InfoTile(Icons.category_outlined,        'केंद्र प्रकार', ct(duty?['centerType'])),
-          _InfoTile(Icons.local_police_outlined,    'थाना',          duty?['thana']),
-          _InfoTile(Icons.account_balance_outlined, 'ग्राम पंचायत',  duty?['gpName']),
+          _InfoTile(Icons.local_police_outlined,    'थाना',         duty?['thana']),
+          _InfoTile(Icons.account_balance_outlined, 'ग्राम पंचायत', duty?['gpName']),
         ]),
       ),
       const SizedBox(height: 14),
       _SectionCard(icon: Icons.map_outlined, title: 'प्रशासनिक विवरण',
         child: Column(children: [
           _InfoTile(Icons.map_outlined,            'सेक्टर',    duty?['sectorName']),
-          _InfoTile(Icons.layers_outlined,         'जोन',        duty?['zoneName']),
+          _InfoTile(Icons.layers_outlined,         'जोन',       duty?['zoneName']),
           _InfoTile(Icons.home_work_outlined,      'जोन मुख्यालय', duty?['zoneHq']),
           _InfoTile(Icons.public_outlined,         'सुपर जोन',  duty?['superZoneName']),
           _InfoTile(Icons.directions_bus_outlined, 'बस संख्या',
-              (duty?['busNo']?.toString().isNotEmpty == true) ? 'बस–${duty!['busNo']}' : null),
-          _InfoTile(Icons.person_outlined,         'नियुक्त किया', duty?['assignedBy']),
+              (duty?['busNo']?.toString().isNotEmpty == true)
+                  ? 'बस–${duty!['busNo']}' : null),
         ]),
       ),
       const SizedBox(height: 14),
       if ((duty?['sectorOfficers'] as List?)?.isNotEmpty == true)
-        _OfficerCard(label: 'सेक्टर अधिकारी', officers: duty!['sectorOfficers'] as List),
+        _OfficerCard(label: 'सेक्टर अधिकारी',
+            officers: duty!['sectorOfficers'] as List),
       if ((duty?['zonalOfficers'] as List?)?.isNotEmpty == true) ...[
         const SizedBox(height: 12),
-        _OfficerCard(label: 'जोनल अधिकारी', officers: duty!['zonalOfficers'] as List),
+        _OfficerCard(label: 'जोनल अधिकारी',
+            officers: duty!['zonalOfficers'] as List),
       ],
       if ((duty?['superOfficers'] as List?)?.isNotEmpty == true) ...[
         const SizedBox(height: 12),
-        _OfficerCard(label: 'क्षेत्र अधिकारी', officers: duty!['superOfficers'] as List),
+        _OfficerCard(label: 'क्षेत्र अधिकारी',
+            officers: duty!['superOfficers'] as List),
       ],
       const SizedBox(height: 14),
-      _NavButton(icon: Icons.navigation_rounded, label: 'Google Maps पर नेविगेट करें',
+      _NavButton(icon: Icons.navigation_rounded,
+          label: 'Google Maps पर नेविगेट करें',
           color: kPrimary, onTap: onOpenMap),
     ]);
   }
@@ -1329,7 +1395,8 @@ class _DutyDetailSection extends StatelessWidget {
 //  BOOTH — CO-STAFF
 // ══════════════════════════════════════════════════════════════════════════════
 class _CoStaffSection extends StatelessWidget {
-  final Map? duty; final bool noDuty;
+  final Map? duty;
+  final bool noDuty;
   const _CoStaffSection({required this.duty, required this.noDuty});
 
   @override
@@ -1344,76 +1411,105 @@ class _CoStaffSection extends StatelessWidget {
               child: Center(child: Text('कोई सहयोगी नहीं',
                   style: TextStyle(color: kSubtle, fontSize: 13))))
           : Column(children: staff.asMap().entries.map((e) {
-              final i = e.key;
               final s = e.value is Map ? e.value as Map : {};
-              final armed = s['is_armed'] == 1 || s['is_armed'] == true;
-              return _StaffRow(index: i, staff: s, total: staff.length, armed: armed);
+              return _StaffRow(index: e.key, staff: s,
+                  total: staff.length,
+                  armed: s['is_armed'] == 1 || s['is_armed'] == true);
             }).toList()),
     );
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  BOOTH — DUTY CARD
+//  BOOTH — DUTY CARD SECTION
+//  ✅ FIX: Election config is now properly passed to PDF builder
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutyCardSection extends StatefulWidget {
   final Map? duty, user;
+  final _ElectionConfig electionConfig;
   final bool noDuty;
-  const _DutyCardSection({required this.duty, required this.user, required this.noDuty});
+  const _DutyCardSection({
+    required this.duty, required this.user,
+    required this.noDuty, required this.electionConfig,
+  });
   @override
   State<_DutyCardSection> createState() => _DutyCardSectionState();
 }
 
 class _DutyCardSectionState extends State<_DutyCardSection> {
-  bool _printing = false;
-  bool _hasMarked = false;
+  bool _printing = false, _hasMarked = false;
 
   Map<String, dynamic> _toAdminShape() {
-    final d = widget.duty ?? {};
-    final u = widget.user ?? {};
+    final d  = widget.duty ?? {};
+    final u  = widget.user ?? {};
+    final ec = widget.electionConfig;
     final sahyogi = (d['allStaff'] ?? []) as List;
     return {
-      'name': u['name'] ?? '', 'pno': u['pno'] ?? '',
-      'mobile': u['mobile'] ?? '',
-      'rank': u['rank'] ?? u['user_rank'] ?? '',
-      'user_rank': u['rank'] ?? u['user_rank'] ?? '',
-      'isArmed': u['isArmed'] ?? false,
-      'staffThana': u['thana'] ?? '', 'thana': u['thana'] ?? '',
-      'district': u['district'] ?? '',
-      'centerName': d['centerName'] ?? '', 'centerType': d['centerType'] ?? '',
-      'gpName': d['gpName'] ?? '', 'sectorName': d['sectorName'] ?? '',
-      'zoneName': d['zoneName'] ?? '', 'superZoneName': d['superZoneName'] ?? '',
-      'busNo': d['busNo'] ?? '', 'bus_no': d['busNo'] ?? '',
-      'zonalOfficers': d['zonalOfficers'] ?? [],
+      'name':         u['name']        ?? '',
+      'pno':          u['pno']         ?? '',
+      'mobile':       u['mobile']      ?? '',
+      'rank':         u['rank']        ?? u['user_rank'] ?? '',
+      'user_rank':    u['rank']        ?? u['user_rank'] ?? '',
+      'isArmed':      u['isArmed']     ?? false,
+      'is_armed':     u['isArmed']     ?? false,
+      'staffThana':   u['thana']       ?? '',
+      'thana':        u['thana']       ?? '',
+      'district':     u['district']    ?? '',
+      'adminDistrict': ec.district.isNotEmpty
+          ? ec.district : (u['district'] ?? ''),
+      'centerName':   d['centerName']  ?? '',
+      'centerType':   d['centerType']  ?? '',
+      'gpName':       d['gpName']      ?? '',
+      'sectorName':   d['sectorName']  ?? '',
+      'zoneName':     d['zoneName']    ?? '',
+      'superZoneName': d['superZoneName'] ?? '',
+      'busNo':        d['busNo']       ?? '',
+      'bus_no':       d['busNo']       ?? '',
+      'zonalOfficers':  d['zonalOfficers']  ?? [],
       'sectorOfficers': d['sectorOfficers'] ?? [],
-      'superOfficers': d['superOfficers'] ?? [],
-      'sahyogi': sahyogi, 'allStaff': sahyogi,
+      'superOfficers':  d['superOfficers']  ?? [],
+      'sahyogi':      sahyogi,
+      'allStaff':     sahyogi,
+      // ✅ FIX: All election fields properly mapped from _ElectionConfig
+      'electionName': ec.electionName,
+      'electionType': ec.electionType,
+      'electionDate': ec.electionDate,
+      'phase':        ec.phase,
+      'pratahSamay':  ec.pratahSamay,
+      'sayaSamay':    ec.sayaSamay,
+      'electionYear': ec.electionYear,
+      'state':        ec.state,
+      'district':     ec.district.isNotEmpty ? ec.district : (u['district'] ?? ''),
     };
   }
 
   Future<void> _printCard() async {
     setState(() => _printing = true);
     try {
-      final font = await PdfGoogleFonts.notoSansDevanagariRegular();
-      final bold = await PdfGoogleFonts.notoSansDevanagariBold();
-      final doc  = pw.Document();
+      final font   = await PdfGoogleFonts.notoSansDevanagariRegular();
+      final bold   = await PdfGoogleFonts.notoSansDevanagariBold();
+      final doc    = pw.Document();
+      final shape  = _toAdminShape();
+      final cfg    = widget.electionConfig.toConfigMap();
+      // Ensure district in config
+      if (cfg['district']?.isEmpty == true && shape['adminDistrict'] != null) {
+        cfg['district'] = shape['adminDistrict'] as String;
+      }
       doc.addPage(pw.Page(
         pageFormat: PdfPageFormat.a6.landscape,
         margin: const pw.EdgeInsets.all(4),
-        build: (_) => buildDutyCardPdf(_toAdminShape(), font, bold),
+        build: (_) => buildDutyCardPdf(shape, font, bold, config: cfg),
       ));
       await Printing.layoutPdf(onLayout: (_) async => doc.save());
-
       try {
         final token = await AuthService.getToken();
         await ApiService.post('/staff/mark-card-downloaded', {}, token: token);
-      } catch (e) { debugPrint('mark-card-downloaded error: $e'); }
-
+      } catch (_) {}
       if (mounted) setState(() => _hasMarked = true);
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('प्रिंट त्रुटि: $e'),
-          backgroundColor: kError, behavior: SnackBarBehavior.floating));
+          content: Text('प्रिंट त्रुटि: $e'), backgroundColor: kError,
+          behavior: SnackBarBehavior.floating));
     } finally {
       if (mounted) setState(() => _printing = false);
     }
@@ -1422,9 +1518,11 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
   @override
   Widget build(BuildContext context) {
     if (widget.noDuty) return const _NoDutyState();
-    final d = widget.duty ?? {};
-    final u = widget.user ?? {};
+    final d  = widget.duty ?? {};
+    final u  = widget.user ?? {};
+    final ec = widget.electionConfig;
     return Column(children: [
+      // ── Header ──────────────────────────────────────────────────────────
       Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -1435,13 +1533,17 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
         ),
         child: Row(children: [
           Container(width: 48, height: 48,
-              decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
+              decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(14)),
-              child: const Icon(Icons.badge_outlined, color: Colors.white, size: 24)),
+              child: const Icon(Icons.badge_outlined,
+                  color: Colors.white, size: 24)),
           const SizedBox(width: 14),
-          const Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text('ड्यूटी कार्ड', style: TextStyle(
-                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+                color: Colors.white, fontSize: 16,
+                fontWeight: FontWeight.w800)),
             Text('आधिकारिक चुनाव ड्यूटी कार्ड',
                 style: TextStyle(color: Colors.white60, fontSize: 11)),
           ])),
@@ -1454,12 +1556,438 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
                   borderRadius: BorderRadius.circular(12)),
               child: _printing
                   ? const SizedBox(width: 16, height: 16,
-                      child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
                   : const Row(mainAxisSize: MainAxisSize.min, children: [
                       Icon(Icons.print_outlined, color: Colors.white, size: 15),
                       SizedBox(width: 6),
                       Text('प्रिंट', style: TextStyle(
-                          color: Colors.white, fontSize: 12, fontWeight: FontWeight.w700)),
+                          color: Colors.white, fontSize: 12,
+                          fontWeight: FontWeight.w700)),
+                    ]),
+            ),
+          ),
+        ]),
+      ),
+
+      const SizedBox(height: 12),
+
+      if (_hasMarked)
+        Container(
+          margin: const EdgeInsets.only(bottom: 12),
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+          decoration: BoxDecoration(
+              color: kSuccess.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(color: kSuccess.withOpacity(0.3))),
+          child: const Row(children: [
+            Icon(Icons.check_circle_rounded, color: kSuccess, size: 18),
+            SizedBox(width: 8),
+            Expanded(child: Text('ड्यूटी कार्ड डाउनलोड हो गया ✓',
+                style: TextStyle(color: kSuccess, fontSize: 13,
+                    fontWeight: FontWeight.w700))),
+          ]),
+        ),
+
+      // ✅ FIX: Election config banner on duty card (full details)
+      if (!ec.isEmpty) ...[
+        _ElectionBanner(electionConfig: ec),
+        const SizedBox(height: 4),
+      ],
+
+      _SectionCard(icon: Icons.preview_outlined, title: 'कार्ड विवरण',
+        child: Column(children: [
+          _PreviewRow('नाम',          u['name']),
+          _PreviewRow('PNO',          u['pno']),
+          _PreviewRow('पद',           rh(u['rank'] ?? u['user_rank'])),
+          _PreviewRow('केंद्र',        d['centerName']),
+          _PreviewRow('केंद्र प्रकार', ct(d['centerType'])),
+          _PreviewRow('बस', (d['busNo'] ?? '').toString().isNotEmpty
+              ? 'बस–${d['busNo']}' : null),
+          _PreviewRow('सेक्टर',        d['sectorName']),
+          _PreviewRow('जोन',           d['zoneName']),
+          if (ec.electionName.isNotEmpty)
+            _PreviewRow('चुनाव',       ec.electionName),
+          if (ec.electionType.isNotEmpty)
+            _PreviewRow('प्रकार',      ec.electionType),
+          if (ec.phase.isNotEmpty)
+            _PreviewRow('चरण',         ec.phase),
+          if (ec.electionDate.isNotEmpty)
+            _PreviewRow('मतदान तिथि',  ec.displayDate),
+          if (ec.pratahSamay.isNotEmpty)
+            _PreviewRow('प्रातः समय',  ec.pratahSamay),
+          if (ec.sayaSamay.isNotEmpty)
+            _PreviewRow('सायं समय',    ec.sayaSamay),
+          if (ec.district.isNotEmpty)
+            _PreviewRow('जनपद',        ec.district),
+          _PreviewRow('सहयोगी',
+              '${(d['allStaff'] as List?)?.length ?? 0} कर्मी'),
+        ])),
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — OVERVIEW
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictOverviewSection extends StatelessWidget {
+  final Map duty, user;
+  final _ElectionConfig electionConfig;
+  final bool isAfterElection;
+  final VoidCallback onGoToDutyCard;
+
+  const _DistrictOverviewSection({
+    required this.duty, required this.user,
+    required this.electionConfig, required this.isAfterElection,
+    required this.onGoToDutyCard,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final r          = _rs(context);
+    final dutyType   = duty['dutyType']?.toString() ?? '';
+    final batchNo    = duty['batchNo'];
+    final busNo      = duty['busNo']?.toString() ?? '';
+    final note       = duty['note']?.toString()  ?? '';
+    final batchStaff = (duty['batchStaff'] as List? ?? []);
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      _ElectionBanner(electionConfig: electionConfig, isFinalized: isAfterElection),
+      Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+              colors: [kDistrict, Color(0xFF6A1B9A)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [BoxShadow(color: kDistrict.withOpacity(0.35),
+              blurRadius: 16, offset: const Offset(0, 6))],
+        ),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Container(width: 48, height: 48,
+              decoration: BoxDecoration(color: Colors.white.withOpacity(0.15),
+                  shape: BoxShape.circle,
+                  border: Border.all(color: Colors.white30, width: 2)),
+              child: const Icon(Icons.shield_outlined,
+                  color: Colors.white, size: 24)),
+            const SizedBox(width: 14),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('जनपदीय ड्यूटी', style: TextStyle(
+                  color: Colors.white60, fontSize: 10,
+                  fontWeight: FontWeight.w600, letterSpacing: 1)),
+              Text(dutyLabel(dutyType), style: TextStyle(
+                  color: Colors.white, fontSize: r.s(15, 18),
+                  fontWeight: FontWeight.w800), maxLines: 2),
+            ])),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+              decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.15),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white24)),
+              child: Text('बैच ${batchNo ?? '—'}', style: const TextStyle(
+                  color: Colors.white, fontSize: 11,
+                  fontWeight: FontWeight.w800))),
+          ]),
+          if (busNo.isNotEmpty || note.isNotEmpty) ...[
+            const SizedBox(height: 10),
+            Container(height: 1, color: Colors.white.withOpacity(0.15)),
+            const SizedBox(height: 8),
+            if (busNo.isNotEmpty) Row(children: [
+              const Icon(Icons.directions_bus_outlined,
+                  color: Colors.white54, size: 14),
+              const SizedBox(width: 6),
+              Text('बस: $busNo',
+                  style: const TextStyle(color: Colors.white70, fontSize: 12)),
+            ]),
+            if (note.isNotEmpty) ...[
+              const SizedBox(height: 4),
+              Row(children: [
+                const Icon(Icons.notes_outlined,
+                    color: Colors.white54, size: 14),
+                const SizedBox(width: 6),
+                Expanded(child: Text(note,
+                    style: const TextStyle(
+                        color: Colors.white70, fontSize: 12))),
+              ]),
+            ],
+          ],
+        ]),
+      ),
+      const SizedBox(height: 14),
+      GridView.count(
+        crossAxisCount: 2, shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        crossAxisSpacing: 12, mainAxisSpacing: 12,
+        childAspectRatio: r.compact ? 1.2 : 1.45,
+        children: [
+          _StatCard(icon: Icons.shield_outlined, label: 'ड्यूटी प्रकार',
+              value: dutyLabel(dutyType), color: kDistrict),
+          _StatCard(icon: Icons.confirmation_number_outlined, label: 'बैच संख्या',
+              value: 'बैच ${batchNo ?? '—'}', color: kPrimary),
+          _StatCard(icon: Icons.groups_outlined, label: 'बैच कर्मी',
+              value: '${batchStaff.length} कर्मी', color: kSuccess),
+          _StatCard(icon: Icons.directions_bus_outlined, label: 'बस संख्या',
+              value: busNo.isNotEmpty ? busNo : '—', color: kInfo),
+        ],
+      ),
+      const SizedBox(height: 14),
+      _HeroCard(user: user, duty: null, noDuty: false,
+          subtitle: 'जनपदीय ड्यूटी कर्मी'),
+      const SizedBox(height: 14),
+      _NavButton(icon: Icons.print_outlined,
+          label: 'ड्यूटी कार्ड प्रिंट करें',
+          color: kDark, onTap: onGoToDutyCard),
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — DETAIL
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictDetailSection extends StatelessWidget {
+  final Map duty;
+  final _ElectionConfig electionConfig;
+  const _DistrictDetailSection({required this.duty, required this.electionConfig});
+
+  @override
+  Widget build(BuildContext context) {
+    final dutyType   = duty['dutyType']?.toString() ?? '';
+    final batchNo    = duty['batchNo'];
+    final busNo      = duty['busNo']?.toString()    ?? '';
+    final note       = duty['note']?.toString()     ?? '';
+    final district   = duty['district']?.toString() ?? '';
+    final assignedAt = duty['assignedAt']?.toString() ?? '';
+
+    return Column(children: [
+      _SectionCard(icon: Icons.shield_outlined, title: 'जनपदीय ड्यूटी विवरण',
+        child: Column(children: [
+          _InfoTile(Icons.work_outline, 'ड्यूटी प्रकार', dutyLabel(dutyType)),
+          _InfoTile(Icons.confirmation_number_outlined, 'बैच संख्या', 'बैच $batchNo'),
+          if (busNo.isNotEmpty)
+            _InfoTile(Icons.directions_bus_outlined, 'बस संख्या', busNo),
+          if (district.isNotEmpty)
+            _InfoTile(Icons.location_city_outlined, 'जनपद', district),
+          if (note.isNotEmpty)
+            _InfoTile(Icons.notes_outlined, 'विशेष नोट', note),
+          if (assignedAt.isNotEmpty)
+            _InfoTile(Icons.schedule_outlined, 'नियुक्ति समय', assignedAt),
+        ]),
+      ),
+      const SizedBox(height: 14),
+      // ✅ FIX: Full election config details shown
+      if (!electionConfig.isEmpty)
+        _SectionCard(icon: Icons.how_to_vote_outlined, title: 'चुनाव विवरण',
+          child: Column(children: [
+            if (electionConfig.electionName.isNotEmpty)
+              _InfoTile(Icons.how_to_vote_outlined, 'चुनाव', electionConfig.electionName),
+            if (electionConfig.electionType.isNotEmpty)
+              _InfoTile(Icons.category_outlined,    'प्रकार', electionConfig.electionType),
+            if (electionConfig.phase.isNotEmpty)
+              _InfoTile(Icons.numbers_outlined,     'चरण',    electionConfig.phase),
+            if (electionConfig.electionDate.isNotEmpty)
+              _InfoTile(Icons.calendar_today_outlined, 'तिथि', electionConfig.displayDate),
+            if (electionConfig.pratahSamay.isNotEmpty)
+              _InfoTile(Icons.wb_sunny_outlined, 'प्रातः समय', electionConfig.pratahSamay),
+            if (electionConfig.sayaSamay.isNotEmpty)
+              _InfoTile(Icons.nights_stay_outlined, 'सायं समय', electionConfig.sayaSamay),
+            if (electionConfig.district.isNotEmpty)
+              _InfoTile(Icons.location_city_outlined, 'जनपद', electionConfig.district),
+            if (electionConfig.state.isNotEmpty)
+              _InfoTile(Icons.map_outlined, 'राज्य', electionConfig.state),
+          ]),
+        ),
+      const SizedBox(height: 14),
+      Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+            color: kDistrict.withOpacity(0.06),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kDistrict.withOpacity(0.25))),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Row(children: [
+            Icon(Icons.info_outline_rounded, color: kDistrict, size: 16),
+            const SizedBox(width: 8),
+            Text('ड्यूटी जानकारी', style: TextStyle(
+                color: kDistrict, fontSize: 13, fontWeight: FontWeight.w800)),
+          ]),
+          const SizedBox(height: 8),
+          Text(
+            'आप "${dutyLabel(dutyType)}" ड्यूटी पर बैच $batchNo में तैनात हैं। '
+            'यह जनपद स्तरीय ड्यूटी है।',
+            style: TextStyle(color: kDistrict.withOpacity(0.8), fontSize: 12)),
+        ]),
+      ),
+    ]);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY — BATCH STAFF
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictBatchStaffSection extends StatelessWidget {
+  final Map duty;
+  const _DistrictBatchStaffSection({required this.duty});
+
+  @override
+  Widget build(BuildContext context) {
+    final staff   = (duty['batchStaff'] as List? ?? []);
+    final batchNo = duty['batchNo'];
+    return _SectionCard(
+      icon: Icons.groups_outlined,
+      title: 'बैच $batchNo के सहयोगी कर्मी (${staff.length})',
+      child: staff.isEmpty
+          ? const Padding(padding: EdgeInsets.symmetric(vertical: 32),
+              child: Center(child: Text('कोई सहयोगी नहीं',
+                  style: TextStyle(color: kSubtle, fontSize: 13))))
+          : Column(children: staff.asMap().entries.map((e) {
+              final s = e.value is Map ? e.value as Map : {};
+              return _StaffRow(index: e.key, staff: s, total: staff.length,
+                  armed: s['is_armed'] == 1 || s['is_armed'] == true);
+            }).toList()),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  DISTRICT DUTY CARD
+//  ✅ FIX: Election config properly passed to PDF
+// ══════════════════════════════════════════════════════════════════════════════
+class _DistrictDutyCardSection extends StatefulWidget {
+  final Map duty, user;
+  final _ElectionConfig electionConfig;
+  const _DistrictDutyCardSection({
+    required this.duty, required this.user,
+    required this.electionConfig,
+  });
+  @override
+  State<_DistrictDutyCardSection> createState() =>
+      _DistrictDutyCardSectionState();
+}
+
+class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
+  bool _printing = false, _hasMarked = false;
+
+  Map<String, dynamic> _toAdminShape() {
+    final d  = widget.duty;
+    final u  = widget.user;
+    final ec = widget.electionConfig;
+    final batchStaff = (d['batchStaff'] as List? ?? []);
+    return {
+      'name':       u['name']     ?? '',
+      'pno':        u['pno']      ?? '',
+      'mobile':     u['mobile']   ?? '',
+      'rank':       u['rank']     ?? u['user_rank'] ?? '',
+      'user_rank':  u['rank']     ?? u['user_rank'] ?? '',
+      'isArmed':    u['isArmed']  ?? false,
+      'is_armed':   u['isArmed']  ?? false,
+      'staffThana': u['thana']    ?? '',
+      'thana':      u['thana']    ?? '',
+      'district':   ec.district.isNotEmpty ? ec.district : (u['district'] ?? ''),
+      'adminDistrict': ec.district.isNotEmpty ? ec.district : (u['district'] ?? ''),
+      'centerName': dutyLabel(d['dutyType']?.toString()),
+      'centerType': 'district',
+      'gpName': '', 'sectorName': '', 'zoneName': '', 'superZoneName': '',
+      'busNo':        d['busNo']     ?? '',
+      'bus_no':       d['busNo']     ?? '',
+      'zonalOfficers': [], 'sectorOfficers': [], 'superOfficers': [],
+      'sahyogi':    batchStaff,
+      'allStaff':   batchStaff,
+      'staff':      batchStaff,
+      // ✅ FIX: All election fields from _ElectionConfig
+      'electionName': ec.electionName,
+      'electionType': ec.electionType,
+      'electionDate': ec.electionDate,
+      'phase':        ec.phase,
+      'pratahSamay':  ec.pratahSamay,
+      'sayaSamay':    ec.sayaSamay,
+      'electionYear': ec.electionYear,
+      'state':        ec.state,
+      'batchNo':      d['batchNo']?.toString() ?? '',
+      'dutyLabelHi':  dutyLabel(d['dutyType']?.toString()),
+    };
+  }
+
+  Future<void> _printCard() async {
+    setState(() => _printing = true);
+    try {
+      final font = await PdfGoogleFonts.notoSansDevanagariRegular();
+      final bold = await PdfGoogleFonts.notoSansDevanagariBold();
+      final doc  = pw.Document();
+      final shape = _toAdminShape();
+      final cfg  = widget.electionConfig.toConfigMap();
+      if (cfg['district']?.isEmpty == true) {
+        cfg['district'] = shape['adminDistrict'] as String? ?? '';
+      }
+      doc.addPage(pw.Page(
+        pageFormat: PdfPageFormat.a6.landscape,
+        margin: const pw.EdgeInsets.all(4),
+        build: (_) => buildDutyCardPdf(shape, font, bold, config: cfg),
+      ));
+      await Printing.layoutPdf(onLayout: (_) async => doc.save());
+      try {
+        final token = await AuthService.getToken();
+        await ApiService.post('/staff/mark-card-downloaded', {}, token: token);
+      } catch (_) {}
+      if (mounted) setState(() => _hasMarked = true);
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text('प्रिंट त्रुटि: $e'), backgroundColor: kError,
+          behavior: SnackBarBehavior.floating));
+    } finally {
+      if (mounted) setState(() => _printing = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final d  = widget.duty;
+    final u  = widget.user;
+    final ec = widget.electionConfig;
+    return Column(children: [
+      Container(
+        padding: const EdgeInsets.all(20),
+        decoration: BoxDecoration(
+          gradient: const LinearGradient(
+              colors: [kDistrict, Color(0xFF6A1B9A)],
+              begin: Alignment.topLeft, end: Alignment.bottomRight),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(children: [
+          Container(width: 48, height: 48,
+              decoration: BoxDecoration(
+                  color: Colors.white.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(14)),
+              child: const Icon(Icons.badge_outlined,
+                  color: Colors.white, size: 24)),
+          const SizedBox(width: 14),
+          const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('जनपदीय ड्यूटी कार्ड', style: TextStyle(
+                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
+            Text('District Duty Card',
+                style: TextStyle(color: Colors.white60, fontSize: 11)),
+          ])),
+          GestureDetector(
+            onTap: _printing ? null : _printCard,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              decoration: BoxDecoration(
+                  color: _printing ? kPrimary.withOpacity(0.6) : kPrimary,
+                  borderRadius: BorderRadius.circular(12)),
+              child: _printing
+                  ? const SizedBox(width: 16, height: 16,
+                      child: CircularProgressIndicator(
+                          strokeWidth: 2, color: Colors.white))
+                  : const Row(mainAxisSize: MainAxisSize.min, children: [
+                      Icon(Icons.print_outlined, color: Colors.white, size: 15),
+                      SizedBox(width: 6),
+                      Text('प्रिंट', style: TextStyle(
+                          color: Colors.white, fontSize: 12,
+                          fontWeight: FontWeight.w700)),
                     ]),
             ),
           ),
@@ -1471,54 +1999,111 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
           margin: const EdgeInsets.only(bottom: 12),
           padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
           decoration: BoxDecoration(
-              color: kSuccess.withOpacity(0.08), borderRadius: BorderRadius.circular(10),
+              color: kSuccess.withOpacity(0.08),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(color: kSuccess.withOpacity(0.3))),
           child: const Row(children: [
             Icon(Icons.check_circle_rounded, color: kSuccess, size: 18),
             SizedBox(width: 8),
             Expanded(child: Text('ड्यूटी कार्ड डाउनलोड हो गया ✓',
-                style: TextStyle(color: kSuccess, fontSize: 13, fontWeight: FontWeight.w700))),
+                style: TextStyle(color: kSuccess, fontSize: 13,
+                    fontWeight: FontWeight.w700))),
           ]),
         ),
+
+      // ✅ FIX: Full election banner on district duty card
+      if (!ec.isEmpty) ...[
+        _ElectionBanner(electionConfig: ec),
+        const SizedBox(height: 4),
+      ],
+
       _SectionCard(icon: Icons.preview_outlined, title: 'कार्ड विवरण',
-          child: Column(children: [
-            _PreviewRow('नाम',           u['name']),
-            _PreviewRow('PNO',           u['pno']),
-            _PreviewRow('पद',            rh(u['rank'] ?? u['user_rank'])),
-            _PreviewRow('केंद्र',         d['centerName']),
-            _PreviewRow('केंद्र प्रकार',  ct(d['centerType'])),
-            _PreviewRow('बस', (d['busNo'] ?? '').toString().isNotEmpty ? 'बस–${d['busNo']}' : null),
-            _PreviewRow('सेक्टर',         d['sectorName']),
-            _PreviewRow('जोन',           d['zoneName']),
-            _PreviewRow('सहयोगी', '${(d['allStaff'] as List?)?.length ?? 0} कर्मी'),
-          ])),
+        child: Column(children: [
+          _PreviewRow('नाम',           u['name']),
+          _PreviewRow('PNO',           u['pno']),
+          _PreviewRow('पद',            rh(u['rank'] ?? u['user_rank'])),
+          _PreviewRow('ड्यूटी प्रकार', dutyLabel(d['dutyType']?.toString())),
+          _PreviewRow('बैच संख्या',    'बैच ${d['batchNo'] ?? '—'}'),
+          if ((d['busNo']?.toString() ?? '').isNotEmpty)
+            _PreviewRow('बस', d['busNo']),
+          _PreviewRow('जनपद',          ec.district.isNotEmpty
+              ? ec.district : (u['district'] ?? '')),
+          if (ec.electionName.isNotEmpty)
+            _PreviewRow('चुनाव',       ec.electionName),
+          if (ec.electionType.isNotEmpty)
+            _PreviewRow('प्रकार',      ec.electionType),
+          if (ec.phase.isNotEmpty)
+            _PreviewRow('चरण',         ec.phase),
+          if (ec.electionDate.isNotEmpty)
+            _PreviewRow('मतदान तिथि',  ec.displayDate),
+          if (ec.pratahSamay.isNotEmpty)
+            _PreviewRow('प्रातः समय',  ec.pratahSamay),
+          if (ec.sayaSamay.isNotEmpty)
+            _PreviewRow('सायं समय',    ec.sayaSamay),
+          _PreviewRow('सहयोगी',
+              '${(d['batchStaff'] as List? ?? []).length} कर्मी'),
+        ])),
     ]);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  SECTOR OFFICER — OVERVIEW / INFO / BOOTH ATTENDANCE
+//  SECTOR — OVERVIEW
 // ══════════════════════════════════════════════════════════════════════════════
 class _SectorOverviewSection extends StatelessWidget {
   final Map? duty, user;
-  const _SectorOverviewSection({required this.duty, required this.user});
+  final _ElectionConfig electionConfig;
+  const _SectorOverviewSection({
+    required this.duty, required this.user,
+    required this.electionConfig,
+  });
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
+    final r = _rs(context);
     return Column(children: [
-      _HeroCard(user: user, duty: duty, noDuty: false, subtitle: 'सेक्टर अधिकारी'),
+      _ElectionBanner(electionConfig: electionConfig),
+      Container(
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(
+          color: kSector.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kSector.withOpacity(0.3)),
+        ),
+        child: Row(children: [
+          Container(width: 40, height: 40,
+              decoration: BoxDecoration(
+                  color: kSector, borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.grid_view_outlined,
+                  color: Colors.white, size: 20)),
+          const SizedBox(width: 12),
+          const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('सेक्टर अधिकारी', style: TextStyle(
+                color: kSector, fontSize: 14, fontWeight: FontWeight.w800)),
+            Text('बूथ उपस्थिति अंकित करना आपकी जिम्मेदारी है',
+                style: TextStyle(color: kSubtle, fontSize: 11)),
+          ])),
+        ]),
+      ),
+      _HeroCard(user: user, duty: duty, noDuty: false,
+          subtitle: 'सेक्टर अधिकारी'),
       const SizedBox(height: 16),
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45,
+        crossAxisSpacing: 12, mainAxisSpacing: 12,
+        childAspectRatio: r.compact ? 1.3 : 1.45,
         children: [
           _StatCard(icon: Icons.how_to_vote_outlined, label: 'कुल बूथ',
               value: '${duty!['totalBooths'] ?? 0}', color: kPrimary),
           _StatCard(icon: Icons.groups_outlined, label: 'असाइन स्टाफ',
               value: '${duty!['totalAssigned'] ?? 0}', color: kSuccess),
           _StatCard(icon: Icons.account_balance_outlined, label: 'ग्राम पंचायत',
-              value: '${(duty!['gramPanchayats'] as List?)?.length ?? 0}', color: kInfo),
+              value: '${(duty!['gramPanchayats'] as List?)?.length ?? 0}',
+              color: kInfo),
           _StatCard(icon: Icons.map_outlined, label: 'जोन',
               value: v(duty!['zoneName']), color: kAccent),
         ],
@@ -1526,92 +2111,118 @@ class _SectorOverviewSection extends StatelessWidget {
       const SizedBox(height: 14),
       _SectionCard(icon: Icons.info_outline_rounded, title: 'सेक्टर विवरण',
         child: Column(children: [
-          _InfoTile(Icons.grid_view_outlined, 'सेक्टर',    duty!['sectorName']),
-          _InfoTile(Icons.home_work_outlined, 'मुख्यालय',  duty!['hqAddress']),
-          _InfoTile(Icons.layers_outlined,    'जोन',       duty!['zoneName']),
+          _InfoTile(Icons.grid_view_outlined, 'सेक्टर',   duty!['sectorName']),
+          _InfoTile(Icons.home_work_outlined, 'मुख्यालय', duty!['hqAddress']),
+          _InfoTile(Icons.layers_outlined,    'जोन',      duty!['zoneName']),
           _InfoTile(Icons.public_outlined,    'सुपर जोन', duty!['superZoneName']),
+        ]),
+      ),
+      const SizedBox(height: 12),
+      Container(
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: kInfo.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kInfo.withOpacity(0.25)),
+        ),
+        child: const Row(children: [
+          Icon(Icons.info_outline, color: kInfo, size: 14),
+          SizedBox(width: 8),
+          Expanded(child: Text(
+            '"उपस्थिति" टैब पर जाकर अपने सेक्टर के बूथ स्टाफ की उपस्थिति अंकित करें।',
+            style: TextStyle(color: kInfo, fontSize: 11, height: 1.4))),
         ]),
       ),
     ]);
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════════
+//  SECTOR — INFO
+// ══════════════════════════════════════════════════════════════════════════════
 class _SectorInfoSection extends StatelessWidget {
   final Map? duty;
   const _SectorInfoSection({required this.duty});
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
-    final co    = (duty!['coOfficers']   as List? ?? []);
+    final co    = (duty!['coOfficers']    as List? ?? []);
     final zonal = (duty!['zonalOfficers'] as List? ?? []);
     return Column(children: [
       _SectionCard(icon: Icons.grid_view_outlined, title: 'सेक्टर जानकारी',
         child: Column(children: [
-          _InfoTile(Icons.grid_view_outlined, 'सेक्टर',   duty!['sectorName']),
-          _InfoTile(Icons.home_work_outlined, 'HQ पता',   duty!['hqAddress']),
-          _InfoTile(Icons.map_outlined,       'जोन',      duty!['zoneName']),
+          _InfoTile(Icons.grid_view_outlined, 'सेक्टर',    duty!['sectorName']),
+          _InfoTile(Icons.home_work_outlined, 'HQ पता',    duty!['hqAddress']),
+          _InfoTile(Icons.map_outlined,       'जोन',       duty!['zoneName']),
           _InfoTile(Icons.public_outlined,    'सुपर जोन', duty!['superZoneName']),
         ]),
       ),
       if (co.isNotEmpty) ...[const SizedBox(height: 14),
-          _OfficerCard(label: 'सह-सेक्टर अधिकारी', officers: co)],
+        _OfficerCard(label: 'सह-सेक्टर अधिकारी', officers: co)],
       if (zonal.isNotEmpty) ...[const SizedBox(height: 12),
-          _OfficerCard(label: 'जोनल अधिकारी (वरिष्ठ)', officers: zonal)],
+        _OfficerCard(label: 'जोनल अधिकारी (वरिष्ठ)', officers: zonal)],
     ]);
   }
 }
 
-class _SectorBoothAttendanceSection extends StatefulWidget {
+// ══════════════════════════════════════════════════════════════════════════════
+//  SECTOR — ATTENDANCE
+// ══════════════════════════════════════════════════════════════════════════════
+class _SectorAttendanceSection extends StatefulWidget {
   final Map? duty;
   final VoidCallback onRefresh;
-  const _SectorBoothAttendanceSection({required this.duty, required this.onRefresh});
+  const _SectorAttendanceSection({required this.duty, required this.onRefresh});
   @override
-  State<_SectorBoothAttendanceSection> createState() => _SectorBoothAttendanceSectionState();
+  State<_SectorAttendanceSection> createState() =>
+      _SectorAttendanceSectionState();
 }
 
-class _SectorBoothAttendanceSectionState extends State<_SectorBoothAttendanceSection> {
-  final Map<int, bool> _pendingUpdates = {};
-  bool _saving = false;
+class _SectorAttendanceSectionState extends State<_SectorAttendanceSection> {
+  final Map<int, bool> _pending = {};
+  bool   _saving  = false;
   String _searchQ = '';
 
-  List<Map> get _centers => List<Map>.from(widget.duty?['centers'] ?? []);
-  List<Map> get _filteredCenters {
+  List<Map> get _centers =>
+      List<Map>.from(widget.duty?['centers'] ?? []);
+
+  List<Map> get _filtered {
     if (_searchQ.isEmpty) return _centers;
     final q = _searchQ.toLowerCase();
     return _centers.where((c) =>
-      (c['name'] ?? '').toString().toLowerCase().contains(q) ||
-      (c['gp_name'] ?? '').toString().toLowerCase().contains(q) ||
-      (c['thana'] ?? '').toString().toLowerCase().contains(q)
-    ).toList();
+        (c['name']    ?? '').toString().toLowerCase().contains(q) ||
+        (c['gp_name'] ?? '').toString().toLowerCase().contains(q) ||
+        (c['thana']   ?? '').toString().toLowerCase().contains(q)).toList();
   }
 
-  void _toggleAttendance(int dutyId, bool current) =>
-      setState(() => _pendingUpdates[dutyId] = !current);
+  void _toggle(int dutyId, bool current) =>
+      setState(() => _pending[dutyId] = !current);
 
-  bool _getAttended(Map staffRow) {
-    final dutyId = staffRow['duty_id'] as int?;
-    if (dutyId != null && _pendingUpdates.containsKey(dutyId))
-      return _pendingUpdates[dutyId]!;
-    return staffRow['attended'] == 1 || staffRow['attended'] == true;
+  bool _getAttended(Map s) {
+    final id = s['duty_id'] as int?;
+    if (id != null && _pending.containsKey(id)) return _pending[id]!;
+    return s['attended'] == 1 || s['attended'] == true;
   }
 
   Future<void> _saveAll() async {
-    if (_pendingUpdates.isEmpty) return;
+    if (_pending.isEmpty) return;
     setState(() => _saving = true);
     try {
-      final token = await AuthService.getToken();
-      final updates = _pendingUpdates.entries
+      final token   = await AuthService.getToken();
+      final updates = _pending.entries
           .map((e) => {'dutyId': e.key, 'attended': e.value}).toList();
-      await ApiService.post('/staff/attendance/bulk', {'updates': updates}, token: token);
-      _pendingUpdates.clear();
+      await ApiService.post('/staff/attendance/bulk',
+          {'updates': updates}, token: token);
+      _pending.clear();
       widget.onRefresh();
-      if (mounted) ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-          content: Text('उपस्थिति सेव हो गई ✓'),
-          backgroundColor: kSuccess, behavior: SnackBarBehavior.floating));
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('उपस्थिति सेव हो गई ✓'),
+              backgroundColor: kSuccess,
+              behavior: SnackBarBehavior.floating));
     } catch (e) {
       if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-          content: Text('त्रुटि: $e'),
-          backgroundColor: kError, behavior: SnackBarBehavior.floating));
+          content: Text('त्रुटि: $e'), backgroundColor: kError,
+          behavior: SnackBarBehavior.floating));
     } finally {
       if (mounted) setState(() => _saving = false);
     }
@@ -1620,17 +2231,36 @@ class _SectorBoothAttendanceSectionState extends State<_SectorBoothAttendanceSec
   @override
   Widget build(BuildContext context) {
     if (widget.duty == null) return const _NoDutyState();
-    final centers = _filteredCenters;
-    int totalStaff = 0, presentStaff = 0;
+    final centers = _filtered;
+    int totalS = 0, presentS = 0;
     for (final c in _centers) {
       for (final s in (c['staff'] as List? ?? [])) {
-        totalStaff++;
-        if (_getAttended(s as Map)) presentStaff++;
+        totalS++;
+        if (_getAttended(s as Map)) presentS++;
       }
     }
+    final r = _rs(context);
+
     return Column(children: [
       Container(
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 12),
+        decoration: BoxDecoration(
+          color: kSector.withOpacity(0.07),
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kSector.withOpacity(0.3)),
+        ),
+        child: const Row(children: [
+          Icon(Icons.fact_check_outlined, color: kSector, size: 16),
+          SizedBox(width: 8),
+          Expanded(child: Text(
+            'नीचे केवल आपके सेक्टर के बूथों का स्टाफ दिखाई दे रहा है। '
+            'उपस्थिति अंकित करें और "सेव करें" दबाएं।',
+            style: TextStyle(color: kSector, fontSize: 11, height: 1.4))),
+        ]),
+      ),
+      Container(
+        padding: const EdgeInsets.all(14),
         decoration: BoxDecoration(
           gradient: const LinearGradient(colors: [kDark, Color(0xFF5A3E08)]),
           borderRadius: BorderRadius.circular(14),
@@ -1639,115 +2269,140 @@ class _SectorBoothAttendanceSectionState extends State<_SectorBoothAttendanceSec
           Row(children: [
             const Icon(Icons.how_to_vote_outlined, color: Colors.white, size: 20),
             const SizedBox(width: 10),
-            const Expanded(child: Text('बूथ उपस्थिति',
-                style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
-            if (_pendingUpdates.isNotEmpty)
+            const Expanded(child: Text('बूथ उपस्थिति', style: TextStyle(
+                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800))),
+            if (_pending.isNotEmpty)
               GestureDetector(
                 onTap: _saving ? null : _saveAll,
                 child: Container(
                   padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-                  decoration: BoxDecoration(color: kSuccess, borderRadius: BorderRadius.circular(10)),
+                  decoration: BoxDecoration(
+                      color: kSuccess, borderRadius: BorderRadius.circular(10)),
                   child: _saving
                       ? const SizedBox(width: 16, height: 16,
-                          child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                      : Text('${_pendingUpdates.length} सेव करें',
-                          style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 12)),
+                          child: CircularProgressIndicator(
+                              strokeWidth: 2, color: Colors.white))
+                      : Text('${_pending.length} सेव करें',
+                          style: const TextStyle(color: Colors.white,
+                              fontWeight: FontWeight.w700, fontSize: 12)),
                 ),
               ),
           ]),
           const SizedBox(height: 12),
           Row(children: [
-            Expanded(child: _AttendanceStat('कुल स्टाफ',  '$totalStaff',           kPrimary)),
+            Expanded(child: _AttStat('कुल स्टाफ', '$totalS', kPrimary)),
             const SizedBox(width: 8),
-            Expanded(child: _AttendanceStat('उपस्थित',    '$presentStaff',         kSuccess)),
+            Expanded(child: _AttStat('उपस्थित', '$presentS', kSuccess)),
             const SizedBox(width: 8),
-            Expanded(child: _AttendanceStat('अनुपस्थित',  '${totalStaff - presentStaff}', kError)),
+            Expanded(child: _AttStat('अनुपस्थित',
+                '${totalS - presentS}', kError)),
           ]),
         ]),
       ),
       const SizedBox(height: 12),
       TextField(
-        onChanged: (v) => setState(() => _searchQ = v.trim()),
+        onChanged: (q) => setState(() => _searchQ = q.trim()),
         style: const TextStyle(color: kDark, fontSize: 13),
         decoration: InputDecoration(
           hintText: 'बूथ/थाना/GP खोजें...',
           hintStyle: const TextStyle(color: kSubtle, fontSize: 12),
           prefixIcon: const Icon(Icons.search, color: kSubtle, size: 18),
           filled: true, fillColor: Colors.white, isDense: true,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-          border:        OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kBorder)),
-          enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kBorder)),
-          focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10), borderSide: const BorderSide(color: kPrimary, width: 2)),
+          contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12, vertical: 10),
+          border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: kBorder)),
+          enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: kBorder)),
+          focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: kSector, width: 2)),
         ),
       ),
       const SizedBox(height: 12),
-      ...centers.map((center) => _BoothAttendanceCard(
-          center: center, getAttended: _getAttended, onToggle: _toggleAttendance)),
       if (centers.isEmpty)
-        const Padding(padding: EdgeInsets.symmetric(vertical: 40),
-          child: Center(child: Text('कोई बूथ नहीं मिला',
-              style: TextStyle(color: kSubtle, fontSize: 13)))),
+        Center(child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 40),
+          child: Text(
+            _searchQ.isNotEmpty
+                ? '"$_searchQ" नहीं मिला'
+                : 'इस सेक्टर में कोई बूथ नहीं है',
+            style: const TextStyle(color: kSubtle, fontSize: 13)),
+        ))
+      else
+        ...centers.map((center) => _BoothAttCard(
+            center: center,
+            getAttended: _getAttended,
+            onToggle: _toggle)),
     ]);
   }
 }
 
-class _AttendanceStat extends StatelessWidget {
-  final String label, value; final Color color;
-  const _AttendanceStat(this.label, this.value, this.color);
+class _AttStat extends StatelessWidget {
+  final String label, value;
+  final Color color;
+  const _AttStat(this.label, this.value, this.color);
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(vertical: 10),
     decoration: BoxDecoration(color: Colors.white.withOpacity(0.1),
         borderRadius: BorderRadius.circular(10)),
     child: Column(children: [
-      Text(value, style: TextStyle(color: color, fontSize: 20, fontWeight: FontWeight.w900)),
+      Text(value, style: TextStyle(
+          color: color, fontSize: 20, fontWeight: FontWeight.w900)),
       Text(label, style: const TextStyle(color: Colors.white70, fontSize: 10)),
-    ]),
-  );
+    ]));
 }
 
-class _BoothAttendanceCard extends StatelessWidget {
+class _BoothAttCard extends StatelessWidget {
   final Map center;
   final bool Function(Map) getAttended;
   final void Function(int, bool) onToggle;
-  const _BoothAttendanceCard(
-      {required this.center, required this.getAttended, required this.onToggle});
+  const _BoothAttCard({
+    required this.center, required this.getAttended,
+    required this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
     final staff  = (center['staff'] as List? ?? []);
     final type   = '${center['center_type'] ?? 'C'}';
     final tc     = _typeColor(type);
-    int present  = staff.where((s) => getAttended(s as Map)).length;
+    final present = staff.where((s) => getAttended(s as Map)).length;
+    final r      = _rs(context);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
-      decoration: BoxDecoration(
-        color: Colors.white, borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: kBorder.withOpacity(0.4)),
-        boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.04), blurRadius: 8, offset: const Offset(0, 3))],
-      ),
+      decoration: BoxDecoration(color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: kBorder.withOpacity(0.4)),
+          boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.04),
+              blurRadius: 8, offset: const Offset(0, 3))]),
       child: Column(children: [
         Container(
-          padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
-          decoration: BoxDecoration(
-            color: tc.withOpacity(0.06),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-            border: Border(bottom: BorderSide(color: tc.withOpacity(0.2))),
-          ),
+          padding: EdgeInsets.fromLTRB(r.s(12, 14), 12, r.s(12, 14), 12),
+          decoration: BoxDecoration(color: tc.withOpacity(0.06),
+              borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(14)),
+              border: Border(bottom: BorderSide(
+                  color: tc.withOpacity(0.2)))),
           child: Row(children: [
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              decoration: BoxDecoration(color: tc, borderRadius: BorderRadius.circular(6)),
-              child: Text(type, style: const TextStyle(
-                  color: Colors.white, fontSize: 11, fontWeight: FontWeight.w900)),
-            ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                    color: tc, borderRadius: BorderRadius.circular(6)),
+                child: Text(type, style: const TextStyle(
+                    color: Colors.white, fontSize: 11,
+                    fontWeight: FontWeight.w900))),
             const SizedBox(width: 10),
-            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('${center['name'] ?? '—'}', style: const TextStyle(
                   color: kDark, fontSize: 13, fontWeight: FontWeight.w700),
                   maxLines: 1, overflow: TextOverflow.ellipsis),
-              Text('${center['gp_name'] ?? ''} • ${center['thana'] ?? ''}',
+              Text('${center['gp_name'] ?? ''}  •  ${center['thana'] ?? ''}',
                   style: const TextStyle(color: kSubtle, fontSize: 10)),
             ])),
             Container(
@@ -1756,14 +2411,16 @@ class _BoothAttendanceCard extends StatelessWidget {
                 color: present == staff.length && staff.isNotEmpty
                     ? kSuccess.withOpacity(0.1) : kSubtle.withOpacity(0.08),
                 borderRadius: BorderRadius.circular(20),
-                border: Border.all(color: present == staff.length && staff.isNotEmpty
-                    ? kSuccess.withOpacity(0.3) : kBorder.withOpacity(0.3)),
+                border: Border.all(
+                    color: present == staff.length && staff.isNotEmpty
+                        ? kSuccess.withOpacity(0.3)
+                        : kBorder.withOpacity(0.3)),
               ),
               child: Text('$present/${staff.length}',
                   style: TextStyle(
-                      color: present == staff.length && staff.isNotEmpty ? kSuccess : kSubtle,
-                      fontSize: 11, fontWeight: FontWeight.w800)),
-            ),
+                      color: present == staff.length && staff.isNotEmpty
+                          ? kSuccess : kSubtle,
+                      fontSize: 11, fontWeight: FontWeight.w800))),
           ]),
         ),
         if (staff.isEmpty)
@@ -1772,66 +2429,81 @@ class _BoothAttendanceCard extends StatelessWidget {
                   style: TextStyle(color: kSubtle, fontSize: 12)))
         else
           ...staff.asMap().entries.map((e) {
-            final i      = e.key;
-            final s      = e.value as Map;
-            final dutyId  = s['duty_id'] as int?;
-            final attended = getAttended(s);
-            final armed    = s['is_armed'] == 1 || s['is_armed'] == true;
+            final i   = e.key;
+            final s   = e.value as Map;
+            final id  = s['duty_id'] as int?;
+            final att = getAttended(s);
+            final armed = s['is_armed'] == 1 || s['is_armed'] == true;
             return Container(
-              padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+              padding: EdgeInsets.fromLTRB(r.s(12, 14), 10, r.s(12, 14), 10),
               decoration: BoxDecoration(border: i < staff.length - 1
-                  ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.3))) : null),
+                  ? Border(bottom: BorderSide(
+                      color: kBorder.withOpacity(0.3)))
+                  : null),
               child: Row(children: [
                 Container(width: 36, height: 36,
                     decoration: BoxDecoration(
                         color: (armed ? kArmed : kUnarmed).withOpacity(0.1),
                         shape: BoxShape.circle,
-                        border: Border.all(color: (armed ? kArmed : kUnarmed).withOpacity(0.3))),
+                        border: Border.all(
+                            color: (armed ? kArmed : kUnarmed).withOpacity(0.3))),
                     child: Icon(armed ? Icons.security : Icons.person_outline,
-                        size: 16, color: armed ? kArmed : kUnarmed)),
+                        size: 16,
+                        color: armed ? kArmed : kUnarmed)),
                 const SizedBox(width: 10),
-                Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Expanded(child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('${s['name'] ?? '—'}', style: const TextStyle(
-                      color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
+                      color: kDark, fontSize: 13,
+                      fontWeight: FontWeight.w700)),
                   Row(children: [
                     Text(rh(s['user_rank']),
-                        style: const TextStyle(color: kSubtle, fontSize: 10)),
-                    const Text(' • ', style: TextStyle(color: kSubtle, fontSize: 10)),
+                        style: const TextStyle(
+                            color: kSubtle, fontSize: 10)),
+                    const Text('  •  ',
+                        style: TextStyle(color: kSubtle, fontSize: 10)),
                     Text('${s['pno'] ?? ''}',
-                        style: const TextStyle(color: kSubtle, fontSize: 10)),
+                        style: const TextStyle(
+                            color: kSubtle, fontSize: 10)),
                     const SizedBox(width: 6),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 1),
                       decoration: BoxDecoration(
-                          color: (armed ? kArmed : kUnarmed).withOpacity(0.1),
+                          color: (armed ? kArmed : kUnarmed)
+                              .withOpacity(0.1),
                           borderRadius: BorderRadius.circular(4)),
                       child: Text(armed ? 'सशस्त्र' : 'निःशस्त्र',
-                          style: TextStyle(color: armed ? kArmed : kUnarmed,
-                              fontSize: 8, fontWeight: FontWeight.w700)),
-                    ),
+                          style: TextStyle(
+                              color: armed ? kArmed : kUnarmed,
+                              fontSize: 8,
+                              fontWeight: FontWeight.w700))),
                   ]),
                 ])),
                 GestureDetector(
-                  onTap: dutyId != null ? () => onToggle(dutyId, attended) : null,
+                  onTap: id != null ? () => onToggle(id, att) : null,
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     width: 56, height: 30,
                     decoration: BoxDecoration(
-                      color: attended ? kSuccess : kError.withOpacity(0.1),
+                      color: att ? kSuccess : kError.withOpacity(0.1),
                       borderRadius: BorderRadius.circular(15),
                       border: Border.all(
-                          color: attended ? kSuccess : kError.withOpacity(0.4), width: 1.5),
+                          color: att ? kSuccess : kError.withOpacity(0.4),
+                          width: 1.5),
                     ),
-                    child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
-                      Icon(attended ? Icons.check : Icons.close,
-                          size: 14, color: attended ? Colors.white : kError),
+                    child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                      Icon(att ? Icons.check : Icons.close,
+                          size: 14,
+                          color: att ? Colors.white : kError),
                       const SizedBox(width: 2),
-                      Text(attended ? 'हाँ' : 'नहीं',
-                          style: TextStyle(color: attended ? Colors.white : kError,
-                              fontSize: 10, fontWeight: FontWeight.w700)),
+                      Text(att ? 'हाँ' : 'नहीं', style: TextStyle(
+                          color: att ? Colors.white : kError,
+                          fontSize: 10, fontWeight: FontWeight.w700)),
                     ]),
-                  ),
-                ),
+                  )),
               ]),
             );
           }),
@@ -1841,33 +2513,68 @@ class _BoothAttendanceCard extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ZONE OFFICER — OVERVIEW / INFO / SECTORS
+//  ZONE — OVERVIEW / INFO / SECTORS
 // ══════════════════════════════════════════════════════════════════════════════
 class _ZoneOverviewSection extends StatelessWidget {
   final Map? duty, user;
-  const _ZoneOverviewSection({required this.duty, required this.user});
+  final _ElectionConfig electionConfig;
+  const _ZoneOverviewSection({
+    required this.duty, required this.user,
+    required this.electionConfig,
+  });
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
+    final r = _rs(context);
     return Column(children: [
-      _HeroCard(user: user, duty: duty, noDuty: false, subtitle: 'जोनल अधिकारी'),
+      _ElectionBanner(electionConfig: electionConfig),
+      Container(
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(color: kZone.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kZone.withOpacity(0.3))),
+        child: Row(children: [
+          Container(width: 40, height: 40,
+              decoration: BoxDecoration(
+                  color: kZone, borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.map_outlined,
+                  color: Colors.white, size: 20)),
+          const SizedBox(width: 12),
+          const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('जोनल अधिकारी', style: TextStyle(
+                color: kZone, fontSize: 14, fontWeight: FontWeight.w800)),
+            Text('जोन के सेक्टरों का निरीक्षण करें',
+                style: TextStyle(color: kSubtle, fontSize: 11)),
+          ])),
+        ]),
+      ),
+      _HeroCard(user: user, duty: duty, noDuty: false,
+          subtitle: 'जोनल अधिकारी'),
       const SizedBox(height: 16),
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45,
+        crossAxisSpacing: 12, mainAxisSpacing: 12,
+        childAspectRatio: r.compact ? 1.3 : 1.45,
         children: [
-          _StatCard(icon: Icons.grid_view_outlined,   label: 'कुल सेक्टर',  value: '${duty!['totalSectors'] ?? 0}',  color: kPrimary),
-          _StatCard(icon: Icons.how_to_vote_outlined, label: 'कुल बूथ',     value: '${duty!['totalBooths']  ?? 0}',  color: kInfo),
-          _StatCard(icon: Icons.groups_outlined,      label: 'असाइन स्टाफ', value: '${duty!['totalAssigned'] ?? 0}', color: kSuccess),
-          _StatCard(icon: Icons.public_outlined,      label: 'सुपर जोन',    value: v(duty!['superZoneName']),        color: kAccent),
+          _StatCard(icon: Icons.grid_view_outlined, label: 'कुल सेक्टर',
+              value: '${duty!['totalSectors'] ?? 0}', color: kPrimary),
+          _StatCard(icon: Icons.how_to_vote_outlined, label: 'कुल बूथ',
+              value: '${duty!['totalBooths'] ?? 0}', color: kInfo),
+          _StatCard(icon: Icons.groups_outlined, label: 'असाइन स्टाफ',
+              value: '${duty!['totalAssigned'] ?? 0}', color: kSuccess),
+          _StatCard(icon: Icons.public_outlined, label: 'सुपर जोन',
+              value: v(duty!['superZoneName']), color: kAccent),
         ],
       ),
       const SizedBox(height: 14),
       _SectionCard(icon: Icons.map_outlined, title: 'जोन विवरण',
         child: Column(children: [
           _InfoTile(Icons.map_outlined,       'जोन',       duty!['zoneName']),
-          _InfoTile(Icons.home_work_outlined, 'मुख्यालय',  duty!['hqAddress']),
+          _InfoTile(Icons.home_work_outlined, 'मुख्यालय', duty!['hqAddress']),
           _InfoTile(Icons.public_outlined,    'सुपर जोन', duty!['superZoneName']),
         ]),
       ),
@@ -1878,6 +2585,7 @@ class _ZoneOverviewSection extends StatelessWidget {
 class _ZoneInfoSection extends StatelessWidget {
   final Map? duty;
   const _ZoneInfoSection({required this.duty});
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
@@ -1888,14 +2596,16 @@ class _ZoneInfoSection extends StatelessWidget {
         child: Column(children: [
           _InfoTile(Icons.map_outlined,        'जोन',          duty!['zoneName']),
           _InfoTile(Icons.home_work_outlined,  'HQ',           duty!['hqAddress']),
-          _InfoTile(Icons.public_outlined,     'सुपर जोन',     duty!['superZoneName']),
-          _InfoTile(Icons.grid_view_outlined,  'कुल सेक्टर',   '${duty!['totalSectors']  ?? 0}'),
-          _InfoTile(Icons.how_to_vote_outlined,'कुल बूथ',      '${duty!['totalBooths']   ?? 0}'),
-          _InfoTile(Icons.groups_outlined,     'असाइन स्टाफ', '${duty!['totalAssigned'] ?? 0}'),
+          _InfoTile(Icons.public_outlined,     'सुपर जोन',    duty!['superZoneName']),
+          _InfoTile(Icons.grid_view_outlined,  'कुल सेक्टर',  '${duty!['totalSectors'] ?? 0}'),
+          _InfoTile(Icons.how_to_vote_outlined,'कुल बूथ',     '${duty!['totalBooths'] ?? 0}'),
+          _InfoTile(Icons.groups_outlined,     'असाइन स्टाफ','${duty!['totalAssigned'] ?? 0}'),
         ]),
       ),
-      if (co.isNotEmpty)     ...[const SizedBox(height: 14), _OfficerCard(label: 'जोनल अधिकारी', officers: co)],
-      if (super_.isNotEmpty) ...[const SizedBox(height: 12), _OfficerCard(label: 'क्षेत्र अधिकारी (वरिष्ठ)', officers: super_)],
+      if (co.isNotEmpty) ...[const SizedBox(height: 14),
+          _OfficerCard(label: 'जोनल अधिकारी', officers: co)],
+      if (super_.isNotEmpty) ...[const SizedBox(height: 12),
+          _OfficerCard(label: 'क्षेत्र अधिकारी (वरिष्ठ)', officers: super_)],
     ]);
   }
 }
@@ -1903,39 +2613,55 @@ class _ZoneInfoSection extends StatelessWidget {
 class _ZoneSectorsSection extends StatelessWidget {
   final Map? duty;
   const _ZoneSectorsSection({required this.duty});
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
     final sectors = (duty!['sectors'] as List? ?? []);
-    return _SectionCard(icon: Icons.grid_view_outlined, title: 'सेक्टर (${sectors.length})',
+    return _SectionCard(
+      icon: Icons.grid_view_outlined,
+      title: 'सेक्टर (${sectors.length})',
       child: sectors.isEmpty
           ? const Padding(padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(child: Text('कोई सेक्टर नहीं', style: TextStyle(color: kSubtle))))
+              child: Center(child: Text('कोई सेक्टर नहीं',
+                  style: TextStyle(color: kSubtle))))
           : Column(children: sectors.asMap().entries.map((e) {
-              final i = e.key; final s = e.value as Map;
-              final officers = (s['officers'] as List? ?? []);
+              final i    = e.key;
+              final s    = e.value as Map;
+              final offs = (s['officers'] as List? ?? []);
               return Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(border: i < sectors.length - 1
-                    ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4))) : null),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    ? Border(bottom: BorderSide(
+                        color: kBorder.withOpacity(0.4)))
+                    : null),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Container(padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: kPrimary.withOpacity(0.1),
+                        decoration: BoxDecoration(
+                            color: kPrimary.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(8)),
-                        child: const Icon(Icons.grid_view_outlined, color: kPrimary, size: 16)),
+                        child: const Icon(Icons.grid_view_outlined,
+                            color: kPrimary, size: 16)),
                     const SizedBox(width: 10),
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Expanded(child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${s['name'] ?? '—'}', style: const TextStyle(
-                          color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
-                      Text('${s['gp_count'] ?? 0} GP  •  ${s['center_count'] ?? 0} बूथ  •  ${s['staff_assigned'] ?? 0} स्टाफ',
-                          style: const TextStyle(color: kSubtle, fontSize: 11)),
+                          color: kDark, fontSize: 13,
+                          fontWeight: FontWeight.w700)),
+                      Text('${s['gp_count'] ?? 0} GP  •  '
+                          '${s['center_count'] ?? 0} बूथ  •  '
+                          '${s['staff_assigned'] ?? 0} स्टाफ',
+                          style: const TextStyle(
+                              color: kSubtle, fontSize: 11)),
                     ])),
                   ]),
-                  if (officers.isNotEmpty) ...[
+                  if (offs.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(spacing: 8, runSpacing: 4,
-                        children: officers.map((o) => _OfficerChip(o as Map)).toList()),
+                        children: offs.map((o) =>
+                            _OfficerChip(o as Map)).toList()),
                   ],
                 ]),
               );
@@ -1949,30 +2675,65 @@ class _ZoneSectorsSection extends StatelessWidget {
 // ══════════════════════════════════════════════════════════════════════════════
 class _KshetraOverviewSection extends StatelessWidget {
   final Map? duty, user;
-  const _KshetraOverviewSection({required this.duty, required this.user});
+  final _ElectionConfig electionConfig;
+  const _KshetraOverviewSection({
+    required this.duty, required this.user,
+    required this.electionConfig,
+  });
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
+    final r = _rs(context);
     return Column(children: [
-      _HeroCard(user: user, duty: duty, noDuty: false, subtitle: 'क्षेत्र अधिकारी'),
+      _ElectionBanner(electionConfig: electionConfig),
+      Container(
+        padding: const EdgeInsets.all(12),
+        margin: const EdgeInsets.only(bottom: 14),
+        decoration: BoxDecoration(color: kKshetra.withOpacity(0.07),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: kKshetra.withOpacity(0.3))),
+        child: Row(children: [
+          Container(width: 40, height: 40,
+              decoration: BoxDecoration(
+                  color: kKshetra, borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.layers_outlined,
+                  color: Colors.white, size: 20)),
+          const SizedBox(width: 12),
+          const Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('क्षेत्र अधिकारी', style: TextStyle(
+                color: kKshetra, fontSize: 14, fontWeight: FontWeight.w800)),
+            Text('सुपर जोन का निरीक्षण करें',
+                style: TextStyle(color: kSubtle, fontSize: 11)),
+          ])),
+        ]),
+      ),
+      _HeroCard(user: user, duty: duty, noDuty: false,
+          subtitle: 'क्षेत्र अधिकारी'),
       const SizedBox(height: 16),
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true,
         physics: const NeverScrollableScrollPhysics(),
-        crossAxisSpacing: 12, mainAxisSpacing: 12, childAspectRatio: 1.45,
+        crossAxisSpacing: 12, mainAxisSpacing: 12,
+        childAspectRatio: r.compact ? 1.3 : 1.45,
         children: [
-          _StatCard(icon: Icons.map_outlined,         label: 'कुल जोन',      value: '${duty!['totalZones']    ?? 0}', color: kPrimary),
-          _StatCard(icon: Icons.grid_view_outlined,   label: 'कुल सेक्टर',   value: '${duty!['totalSectors']  ?? 0}', color: kInfo),
-          _StatCard(icon: Icons.how_to_vote_outlined, label: 'कुल बूथ',      value: '${duty!['totalBooths']   ?? 0}', color: kSuccess),
-          _StatCard(icon: Icons.groups_outlined,      label: 'असाइन स्टाफ', value: '${duty!['totalAssigned'] ?? 0}', color: kAccent),
+          _StatCard(icon: Icons.map_outlined,         label: 'कुल जोन',
+              value: '${duty!['totalZones']    ?? 0}', color: kPrimary),
+          _StatCard(icon: Icons.grid_view_outlined,   label: 'कुल सेक्टर',
+              value: '${duty!['totalSectors']  ?? 0}', color: kInfo),
+          _StatCard(icon: Icons.how_to_vote_outlined, label: 'कुल बूथ',
+              value: '${duty!['totalBooths']   ?? 0}', color: kSuccess),
+          _StatCard(icon: Icons.groups_outlined,      label: 'असाइन स्टाफ',
+              value: '${duty!['totalAssigned'] ?? 0}', color: kAccent),
         ],
       ),
       const SizedBox(height: 14),
       _SectionCard(icon: Icons.layers_outlined, title: 'क्षेत्र विवरण',
         child: Column(children: [
-          _InfoTile(Icons.layers_outlined,       'सुपर जोन', duty!['superZoneName']),
-          _InfoTile(Icons.location_city_outlined,'जिला',      duty!['district']),
-          _InfoTile(Icons.business_outlined,     'ब्लॉक',     duty!['block']),
+          _InfoTile(Icons.layers_outlined,        'सुपर जोन', duty!['superZoneName']),
+          _InfoTile(Icons.location_city_outlined, 'जिला',     duty!['district']),
+          _InfoTile(Icons.business_outlined,      'ब्लॉक',    duty!['block']),
         ]),
       ),
     ]);
@@ -1982,6 +2743,7 @@ class _KshetraOverviewSection extends StatelessWidget {
 class _KshetraInfoSection extends StatelessWidget {
   final Map? duty;
   const _KshetraInfoSection({required this.duty});
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
@@ -1989,16 +2751,17 @@ class _KshetraInfoSection extends StatelessWidget {
     return Column(children: [
       _SectionCard(icon: Icons.layers_outlined, title: 'क्षेत्र जानकारी',
         child: Column(children: [
-          _InfoTile(Icons.layers_outlined,       'सुपर जोन',    duty!['superZoneName']),
-          _InfoTile(Icons.location_city_outlined,'जिला',        duty!['district']),
-          _InfoTile(Icons.business_outlined,     'ब्लॉक',       duty!['block']),
-          _InfoTile(Icons.map_outlined,          'कुल जोन',     '${duty!['totalZones']    ?? 0}'),
-          _InfoTile(Icons.grid_view_outlined,    'कुल सेक्टर',  '${duty!['totalSectors']  ?? 0}'),
-          _InfoTile(Icons.how_to_vote_outlined,  'कुल बूथ',     '${duty!['totalBooths']   ?? 0}'),
-          _InfoTile(Icons.groups_outlined,       'असाइन स्टाफ','${duty!['totalAssigned'] ?? 0}'),
+          _InfoTile(Icons.layers_outlined,        'सुपर जोन',   duty!['superZoneName']),
+          _InfoTile(Icons.location_city_outlined, 'जिला',       duty!['district']),
+          _InfoTile(Icons.business_outlined,      'ब्लॉक',      duty!['block']),
+          _InfoTile(Icons.map_outlined,           'कुल जोन',    '${duty!['totalZones'] ?? 0}'),
+          _InfoTile(Icons.grid_view_outlined,     'कुल सेक्टर', '${duty!['totalSectors'] ?? 0}'),
+          _InfoTile(Icons.how_to_vote_outlined,   'कुल बूथ',    '${duty!['totalBooths'] ?? 0}'),
+          _InfoTile(Icons.groups_outlined,        'असाइन स्टाफ','${duty!['totalAssigned'] ?? 0}'),
         ]),
       ),
-      if (co.isNotEmpty) ...[const SizedBox(height: 14), _OfficerCard(label: 'सह-क्षेत्र अधिकारी', officers: co)],
+      if (co.isNotEmpty) ...[const SizedBox(height: 14),
+          _OfficerCard(label: 'सह-क्षेत्र अधिकारी', officers: co)],
     ]);
   }
 }
@@ -2006,42 +2769,59 @@ class _KshetraInfoSection extends StatelessWidget {
 class _KshetraZonesSection extends StatelessWidget {
   final Map? duty;
   const _KshetraZonesSection({required this.duty});
+
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
     final zones = (duty!['zones'] as List? ?? []);
-    return _SectionCard(icon: Icons.map_outlined, title: 'जोन (${zones.length})',
+    return _SectionCard(
+      icon: Icons.map_outlined,
+      title: 'जोन (${zones.length})',
       child: zones.isEmpty
           ? const Padding(padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(child: Text('कोई जोन नहीं', style: TextStyle(color: kSubtle))))
+              child: Center(child: Text('कोई जोन नहीं',
+                  style: TextStyle(color: kSubtle))))
           : Column(children: zones.asMap().entries.map((e) {
-              final i = e.key; final z = e.value as Map;
-              final officers = (z['officers'] as List? ?? []);
+              final i    = e.key;
+              final z    = e.value as Map;
+              final offs = (z['officers'] as List? ?? []);
               return Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(border: i < zones.length - 1
-                    ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4))) : null),
-                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    ? Border(bottom: BorderSide(
+                        color: kBorder.withOpacity(0.4)))
+                    : null),
+                child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Container(padding: const EdgeInsets.all(8),
-                        decoration: BoxDecoration(color: kInfo.withOpacity(0.1),
+                        decoration: BoxDecoration(
+                            color: kInfo.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(8)),
-                        child: const Icon(Icons.map_outlined, color: kInfo, size: 16)),
+                        child: const Icon(Icons.map_outlined,
+                            color: kInfo, size: 16)),
                     const SizedBox(width: 10),
-                    Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    Expanded(child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${z['name'] ?? '—'}', style: const TextStyle(
-                          color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
-                      Text('${z['sector_count'] ?? 0} सेक्टर  •  ${z['center_count'] ?? 0} बूथ  •  ${z['staff_assigned'] ?? 0} स्टाफ',
-                          style: const TextStyle(color: kSubtle, fontSize: 11)),
+                          color: kDark, fontSize: 13,
+                          fontWeight: FontWeight.w700)),
+                      Text('${z['sector_count'] ?? 0} सेक्टर  •  '
+                          '${z['center_count'] ?? 0} बूथ  •  '
+                          '${z['staff_assigned'] ?? 0} स्टाफ',
+                          style: const TextStyle(
+                              color: kSubtle, fontSize: 11)),
                       if ((z['hq_address'] ?? '').toString().isNotEmpty)
                         Text('HQ: ${z['hq_address']}',
-                            style: const TextStyle(color: kSubtle, fontSize: 10)),
+                            style: const TextStyle(
+                                color: kSubtle, fontSize: 10)),
                     ])),
                   ]),
-                  if (officers.isNotEmpty) ...[
+                  if (offs.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(spacing: 8, runSpacing: 4,
-                        children: officers.map((o) => _OfficerChip(o as Map)).toList()),
+                        children: offs.map((o) =>
+                            _OfficerChip(o as Map)).toList()),
                   ],
                 ]),
               );
@@ -2051,145 +2831,472 @@ class _KshetraZonesSection extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  RULES SECTION
+//  MANAK SECTION
+//  ✅ FIX: Complete rewrite — shows booth-count × sensitivity grid like admin
+//         Uses _ManakParser to handle both columnar and per-rank API shapes
 // ══════════════════════════════════════════════════════════════════════════════
-class _RulesSection extends StatelessWidget {
+class _ManakSection extends StatelessWidget {
   final List rules;
-  const _RulesSection({required this.rules});
+  final _ElectionConfig electionConfig;
+  const _ManakSection({required this.rules, required this.electionConfig});
+
+  static const _sensOrder = ['A++', 'A', 'B', 'C'];
+  static const _sensLabels = {
+    'A++': 'अत्यति संवेदनशील',
+    'A':   'अति संवेदनशील',
+    'B':   'संवेदनशील',
+    'C':   'सामान्य',
+  };
+  static const _sensColors = {
+    'A++': Color(0xFF6C3483),
+    'A':   kError,
+    'B':   kAccent,
+    'C':   kInfo,
+  };
+
   @override
   Widget build(BuildContext context) {
-    final grouped = <String, List<Map>>{};
-    for (final r in rules) {
-      grouped.putIfAbsent((r['sensitivity'] ?? '?').toString(), () => []).add(r as Map);
-    }
-    const order   = ['A++', 'A', 'B', 'C'];
-    const colors  = {'A++': Color(0xFF6C3483), 'A': kError, 'B': kAccent, 'C': kInfo};
-    const labels  = {'A++': 'अत्यति संवेदनशील', 'A': 'अति संवेदनशील', 'B': 'संवेदनशील', 'C': 'सामान्य'};
+    final parsed = _ManakParser.parse(rules);
 
     return Column(children: [
+      // Header
       Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
-          gradient: const LinearGradient(colors: [kDark, Color(0xFF5A3E08)]),
+          gradient: const LinearGradient(
+              colors: [kDark, Color(0xFF5A3E08)]),
           borderRadius: BorderRadius.circular(14),
         ),
-        child: const Row(children: [
-          Icon(Icons.rule_folder_outlined, color: Colors.white, size: 20),
-          SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('बूथ स्टाफ मानक', style: TextStyle(
-                color: Colors.white, fontSize: 16, fontWeight: FontWeight.w800)),
-            Text('संवेदनशीलता के अनुसार आवश्यक स्टाफ',
-                style: TextStyle(color: Colors.white60, fontSize: 11)),
-          ])),
+        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          const Row(children: [
+            Icon(Icons.rule_folder_outlined, color: Colors.white, size: 20),
+            SizedBox(width: 12),
+            Expanded(child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start, children: [
+              Text('बूथ स्टाफ मानक', style: TextStyle(
+                  color: Colors.white, fontSize: 16,
+                  fontWeight: FontWeight.w800)),
+              Text('संवेदनशीलता एवं बूथ संख्या के अनुसार पुलिस बल',
+                  style: TextStyle(color: Colors.white60, fontSize: 11)),
+            ])),
+          ]),
+          if (!electionConfig.isEmpty) ...[
+            const SizedBox(height: 10),
+            Container(height: 1, color: Colors.white.withOpacity(0.15)),
+            const SizedBox(height: 8),
+            Text('${electionConfig.electionName}'
+                '${electionConfig.phase.isNotEmpty ? " — चरण ${electionConfig.phase}" : ""}',
+                style: const TextStyle(color: Colors.white70, fontSize: 11)),
+          ],
         ]),
       ),
       const SizedBox(height: 14),
-      if (rules.isEmpty)
-        _SectionCard(icon: Icons.info_outline, title: 'मानक',
-            child: const Padding(padding: EdgeInsets.symmetric(vertical: 20),
-              child: Center(child: Text('कोई मानक सेट नहीं है',
-                  style: TextStyle(color: kSubtle, fontSize: 13)))))
+
+      if (rules.isEmpty || parsed.isEmpty)
+        _ManakEmptyState()
       else
-        ...order.where((s) => grouped.containsKey(s)).map((s) {
-          final color = colors[s] ?? kPrimary;
-          final label = labels[s] ?? s;
-          final list  = grouped[s]!;
-          final total = list.fold(0, (a, r) => a + ((r['count'] as num?)?.toInt() ?? 0));
-          return Container(
-            margin: const EdgeInsets.only(bottom: 12),
-            decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: color.withOpacity(0.3))),
-            child: Column(children: [
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                decoration: BoxDecoration(color: color.withOpacity(0.07),
-                    borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-                    border: Border(bottom: BorderSide(color: color.withOpacity(0.2)))),
-                child: Row(children: [
-                  Container(padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(6)),
-                      child: Text(s, style: const TextStyle(
-                          color: Colors.white, fontSize: 12, fontWeight: FontWeight.w900))),
-                  const SizedBox(width: 10),
-                  Expanded(child: Text(label,
-                      style: TextStyle(color: color, fontWeight: FontWeight.w700, fontSize: 13))),
-                  Text('$total कर्मी',
-                      style: TextStyle(color: color, fontWeight: FontWeight.w800, fontSize: 12)),
-                ]),
-              ),
-              Padding(padding: const EdgeInsets.all(12),
-                child: Column(children: list.map((r) {
-                  final isArmed = r['isArmed'] == true || r['is_armed'] == 1;
-                  final count   = (r['count'] as num?)?.toInt() ?? 0;
-                  return Container(
-                    margin: const EdgeInsets.only(bottom: 8),
-                    padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-                    decoration: BoxDecoration(color: kBg, borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: kBorder.withOpacity(0.4))),
-                    child: Row(children: [
-                      Icon(isArmed ? Icons.security : Icons.person_outline,
-                          size: 16, color: isArmed ? kArmed : kUnarmed),
-                      const SizedBox(width: 10),
-                      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                        Text(rh(r['rank']), style: const TextStyle(
-                            color: kDark, fontWeight: FontWeight.w700, fontSize: 13)),
-                        Text(isArmed ? 'सशस्त्र' : 'निःशस्त्र',
-                            style: TextStyle(color: isArmed ? kArmed : kUnarmed, fontSize: 10)),
-                      ])),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-                        decoration: BoxDecoration(color: color.withOpacity(0.1),
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: color.withOpacity(0.3))),
-                        child: Text('$count', style: TextStyle(
-                            color: color, fontSize: 14, fontWeight: FontWeight.w900)),
-                      ),
-                    ]),
-                  );
-                }).toList()),
-              ),
-            ]),
-          );
-        }),
+        _buildGroupedManak(parsed),
     ]);
   }
+
+  Widget _buildGroupedManak(List<_ManakRule> allRules) {
+    // Group by sensitivity
+    final grouped = <String, List<_ManakRule>>{};
+    for (final r in allRules) {
+      grouped.putIfAbsent(r.sensitivity, () => []).add(r);
+    }
+
+    return Column(
+      children: _sensOrder.where((s) => grouped.containsKey(s)).map((sens) {
+        final color = _sensColors[sens] ?? kPrimary;
+        final label = _sensLabels[sens] ?? sens;
+        final list  = grouped[sens]!..sort((a, b) =>
+            a.boothCount.compareTo(b.boothCount));
+        return _ManakSensBlock(
+            sensKey: sens, label: label, color: color,
+            rules: list);
+      }).toList(),
+    );
+  }
+}
+
+class _ManakEmptyState extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: BoxDecoration(color: Colors.white,
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: kBorder.withOpacity(0.4))),
+      child: const Column(mainAxisSize: MainAxisSize.min, children: [
+        Icon(Icons.rule_outlined, size: 40, color: kSubtle),
+        SizedBox(height: 10),
+        Text('कोई मानक सेट नहीं है',
+            style: TextStyle(color: kSubtle, fontSize: 13,
+                fontWeight: FontWeight.w600)),
+        SizedBox(height: 4),
+        Text('व्यवस्थापक से मानक सेट करवाएं',
+            style: TextStyle(color: kSubtle, fontSize: 11)),
+      ]),
+    );
+  }
+}
+
+// ── Sensitivity block with expandable booth-count rows ──────────────────────
+class _ManakSensBlock extends StatefulWidget {
+  final String sensKey, label;
+  final Color  color;
+  final List<_ManakRule> rules;
+  const _ManakSensBlock({
+    required this.sensKey, required this.label,
+    required this.color,   required this.rules,
+  });
+  @override
+  State<_ManakSensBlock> createState() => _ManakSensBlockState();
+}
+
+class _ManakSensBlockState extends State<_ManakSensBlock> {
+  bool _expanded = false;
+
+  int get _totalStaff => widget.rules
+      .fold(0, (acc, r) => acc + r.total);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: widget.color.withOpacity(0.3))),
+      child: Column(children: [
+        // Header row — tap to expand
+        GestureDetector(
+          onTap: () => setState(() => _expanded = !_expanded),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            decoration: BoxDecoration(
+                color: widget.color.withOpacity(0.07),
+                borderRadius: BorderRadius.vertical(
+                    top: const Radius.circular(13),
+                    bottom: _expanded ? Radius.zero : const Radius.circular(13)),
+                border: Border(bottom: _expanded
+                    ? BorderSide(color: widget.color.withOpacity(0.2))
+                    : BorderSide.none)),
+            child: Row(children: [
+              Container(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 4),
+                  decoration: BoxDecoration(
+                      color: widget.color,
+                      borderRadius: BorderRadius.circular(6)),
+                  child: Text(widget.sensKey, style: const TextStyle(
+                      color: Colors.white, fontSize: 12,
+                      fontWeight: FontWeight.w900))),
+              const SizedBox(width: 10),
+              Expanded(child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start, children: [
+                Text(widget.label, style: TextStyle(
+                    color: widget.color,
+                    fontWeight: FontWeight.w700, fontSize: 13)),
+                Text('${widget.rules.length} बूथ-श्रेणी  •  '
+                    'कुल $_totalStaff कर्मी/बूथ',
+                    style: const TextStyle(color: kSubtle, fontSize: 10)),
+              ])),
+              Icon(_expanded
+                  ? Icons.keyboard_arrow_up
+                  : Icons.keyboard_arrow_down,
+                  color: widget.color, size: 20),
+            ]),
+          ),
+        ),
+
+        // Expandable rows — one per booth-count
+        if (_expanded)
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Column(
+              children: widget.rules.map((rule) =>
+                  _ManakBoothRow(rule: rule, color: widget.color)).toList(),
+            ),
+          ),
+      ]),
+    );
+  }
+}
+
+// ── Single booth-count manak row with rank breakdown ──────────────────────────
+class _ManakBoothRow extends StatelessWidget {
+  final _ManakRule rule;
+  final Color      color;
+  const _ManakBoothRow({required this.rule, required this.color});
+
+  String get _boothLabel {
+    if (rule.boothCount >= 15) return '15+ बूथ';
+    if (rule.boothCount == 1)  return '1 बूथ';
+    return '${rule.boothCount} बूथ';
+  }
+
+  String _fp(double v) => v == 0 ? '0'
+      : (v % 1 == 0 ? '${v.toInt()}' : v.toStringAsFixed(1));
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+          color: kBg,
+          borderRadius: BorderRadius.circular(10),
+          border: Border.all(color: kBorder.withOpacity(0.4))),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Sub-header: booth count + total
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+              color: color.withOpacity(0.05),
+              borderRadius: const BorderRadius.vertical(
+                  top: Radius.circular(9)),
+              border: Border(bottom: BorderSide(
+                  color: color.withOpacity(0.15)))),
+          child: Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+              decoration: BoxDecoration(
+                  color: color.withOpacity(0.12),
+                  borderRadius: BorderRadius.circular(6)),
+              child: Text(_boothLabel, style: TextStyle(
+                  color: color, fontSize: 11,
+                  fontWeight: FontWeight.w800)),
+            ),
+            const Spacer(),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(
+                  color: color, borderRadius: BorderRadius.circular(20)),
+              child: Text('कुल: ${rule.total} कर्मी', style: const TextStyle(
+                  color: Colors.white, fontSize: 10,
+                  fontWeight: FontWeight.w800)),
+            ),
+          ]),
+        ),
+
+        // Rank breakdown chips
+        Padding(
+          padding: const EdgeInsets.all(10),
+          child: Wrap(spacing: 8, runSpacing: 6, children: [
+            if (rule.siArmed > 0)
+              _RankChip('SI', true, rule.siArmed,
+                  const Color(0xFF117A65)),
+            if (rule.siUnarmed > 0)
+              _RankChip('SI', false, rule.siUnarmed,
+                  const Color(0xFF117A65)),
+            if (rule.hcArmed > 0)
+              _RankChip('HC', true, rule.hcArmed,
+                  const Color(0xFFB8860B)),
+            if (rule.hcUnarmed > 0)
+              _RankChip('HC', false, rule.hcUnarmed,
+                  const Color(0xFFB8860B)),
+            if (rule.constArmed > 0)
+              _RankChip('Const', true, rule.constArmed,
+                  const Color(0xFF6D4C41)),
+            if (rule.constUnarmed > 0)
+              _RankChip('Const', false, rule.constUnarmed,
+                  const Color(0xFF6D4C41)),
+            if (rule.auxArmed > 0)
+              _RankChip('Aux', true, rule.auxArmed,
+                  const Color(0xFFE65100)),
+            if (rule.auxUnarmed > 0)
+              _RankChip('Aux', false, rule.auxUnarmed,
+                  const Color(0xFFE65100)),
+            if (rule.pac > 0)
+              _PacChip(_fp(rule.pac)),
+          ]),
+        ),
+
+        // Summary row: armed / unarmed counts
+        if (rule.totalArmed > 0 || rule.totalUnarmed > 0)
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+            decoration: BoxDecoration(
+                color: kSurface.withOpacity(0.5),
+                borderRadius: const BorderRadius.vertical(
+                    bottom: Radius.circular(9))),
+            child: Row(children: [
+              if (rule.totalArmed > 0) Row(
+                  mainAxisSize: MainAxisSize.min, children: [
+                Container(width: 8, height: 8,
+                    decoration: BoxDecoration(
+                        color: kArmed, shape: BoxShape.circle)),
+                const SizedBox(width: 4),
+                Text('सशस्त्र: ${rule.totalArmed}',
+                    style: const TextStyle(color: kArmed, fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+              ]),
+              if (rule.totalArmed > 0 && rule.totalUnarmed > 0)
+                const Text('  •  ',
+                    style: TextStyle(color: kSubtle, fontSize: 11)),
+              if (rule.totalUnarmed > 0) Row(
+                  mainAxisSize: MainAxisSize.min, children: [
+                Container(width: 8, height: 8,
+                    decoration: BoxDecoration(
+                        color: kUnarmed, shape: BoxShape.circle)),
+                const SizedBox(width: 4),
+                Text('निःशस्त्र: ${rule.totalUnarmed}',
+                    style: const TextStyle(color: kUnarmed, fontSize: 11,
+                        fontWeight: FontWeight.w700)),
+              ]),
+            ]),
+          ),
+      ]),
+    );
+  }
+}
+
+class _RankChip extends StatelessWidget {
+  final String label;
+  final bool   armed;
+  final int    count;
+  final Color  color;
+  const _RankChip(this.label, this.armed, this.count, this.color);
+
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+        color: color.withOpacity(0.09),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3))),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Icon(armed ? Icons.security : Icons.person_outline,
+          size: 11, color: color),
+      const SizedBox(width: 4),
+      Text('$label ', style: TextStyle(
+          color: color.withOpacity(0.8), fontSize: 11,
+          fontWeight: FontWeight.w600)),
+      Text(armed ? 'सश°' : 'नि°',
+          style: TextStyle(color: color.withOpacity(0.6), fontSize: 9)),
+      const SizedBox(width: 4),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+            color: color, borderRadius: BorderRadius.circular(4)),
+        child: Text('$count', style: const TextStyle(
+            color: Colors.white, fontSize: 10,
+            fontWeight: FontWeight.w900))),
+    ]),
+  );
+}
+
+class _PacChip extends StatelessWidget {
+  final String value;
+  const _PacChip(this.value);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    decoration: BoxDecoration(
+        color: const Color(0xFF00695C).withOpacity(0.1),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: const Color(0xFF00695C).withOpacity(0.3))),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      const Icon(Icons.military_tech_outlined,
+          size: 11, color: Color(0xFF00695C)),
+      const SizedBox(width: 4),
+      const Text('PAC ', style: TextStyle(
+          color: Color(0xFF00695C), fontSize: 11,
+          fontWeight: FontWeight.w600)),
+      Container(
+        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+        decoration: BoxDecoration(
+            color: const Color(0xFF00695C),
+            borderRadius: BorderRadius.circular(4)),
+        child: Text(value, style: const TextStyle(
+            color: Colors.white, fontSize: 10,
+            fontWeight: FontWeight.w900))),
+    ]),
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  SHARED WIDGETS
 // ══════════════════════════════════════════════════════════════════════════════
 
+class _ProfileCard extends StatelessWidget {
+  final Map? user;
+  const _ProfileCard({required this.user});
+
+  @override
+  Widget build(BuildContext context) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.all(18),
+    decoration: BoxDecoration(
+      color: Colors.white, borderRadius: BorderRadius.circular(16),
+      border: Border.all(color: kBorder.withOpacity(0.5)),
+      boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.05),
+          blurRadius: 10, offset: const Offset(0, 3))],
+    ),
+    child: Row(children: [
+      Container(width: 50, height: 50,
+        decoration: BoxDecoration(color: kSurface, shape: BoxShape.circle,
+            border: Border.all(color: kBorder)),
+        child: const Icon(Icons.person_outline_rounded,
+            color: kPrimary, size: 24)),
+      const SizedBox(width: 14),
+      Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(user?['name'] ?? '—', style: const TextStyle(
+            color: kDark, fontSize: 16, fontWeight: FontWeight.w800)),
+        const SizedBox(height: 2),
+        Text('PNO: ${user?['pno'] ?? '—'}  •  '
+            '${rh(user?['rank'] ?? user?['user_rank'])}',
+            style: const TextStyle(color: kSubtle, fontSize: 11)),
+        Text('${user?['thana'] ?? ''}'
+            '${user?['district'] != null ? '  •  ${user!['district']}' : ''}',
+            style: const TextStyle(color: kSubtle, fontSize: 11)),
+      ])),
+    ]),
+  );
+}
+
 class _HeroCard extends StatelessWidget {
   final Map? user, duty;
   final bool noDuty;
   final String? subtitle;
-  const _HeroCard({required this.user, required this.duty,
-      required this.noDuty, this.subtitle});
+  const _HeroCard({
+    required this.user, required this.duty,
+    required this.noDuty, this.subtitle,
+  });
 
   @override
   Widget build(BuildContext context) => Container(
     width: double.infinity,
     padding: const EdgeInsets.all(22),
     decoration: BoxDecoration(
-      gradient: const LinearGradient(colors: [kDark, Color(0xFF6B4E0A)],
+      gradient: const LinearGradient(
+          colors: [kDark, Color(0xFF6B4E0A)],
           begin: Alignment.topLeft, end: Alignment.bottomRight),
       borderRadius: BorderRadius.circular(16),
-      boxShadow: [BoxShadow(color: kDark.withOpacity(0.35), blurRadius: 16, offset: const Offset(0, 6))],
+      boxShadow: [BoxShadow(color: kDark.withOpacity(0.35),
+          blurRadius: 16, offset: const Offset(0, 6))],
     ),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Row(children: [
         Container(width: 48, height: 48,
-            decoration: BoxDecoration(color: Colors.white.withOpacity(0.12),
-                shape: BoxShape.circle, border: Border.all(color: kBorder.withOpacity(0.4))),
-            child: const Icon(Icons.person_outline_rounded, color: Colors.white, size: 24)),
+            decoration: BoxDecoration(
+                color: Colors.white.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: kBorder.withOpacity(0.4))),
+            child: const Icon(Icons.person_outline_rounded,
+                color: Colors.white, size: 24)),
         const SizedBox(width: 14),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
           if (subtitle != null)
             Text(subtitle!, style: const TextStyle(
-                color: Colors.white60, fontSize: 10, letterSpacing: 1.0, fontWeight: FontWeight.w600)),
+                color: Colors.white60, fontSize: 10,
+                letterSpacing: 1.0, fontWeight: FontWeight.w600)),
           Text(user?['name'] ?? '—', style: const TextStyle(
-              color: Colors.white, fontSize: 18, fontWeight: FontWeight.w800)),
+              color: Colors.white, fontSize: 18,
+              fontWeight: FontWeight.w800)),
           Text('PNO: ${user?['pno'] ?? '—'}',
               style: const TextStyle(color: Colors.white60, fontSize: 11)),
         ])),
@@ -2199,17 +3306,23 @@ class _HeroCard extends StatelessWidget {
       const SizedBox(height: 12),
       Wrap(spacing: 10, runSpacing: 8, children: [
         if ((user?['thana'] ?? '').toString().isNotEmpty)
-          _HeroBadge(Icons.local_police_outlined, user!['thana']),
+          _HeroBadge(Icons.local_police_outlined,
+              user!['thana'].toString()),
         if ((user?['district'] ?? '').toString().isNotEmpty)
-          _HeroBadge(Icons.location_city_outlined, user!['district']),
-        _HeroBadge(Icons.military_tech_outlined, rh(user?['rank'] ?? user?['user_rank'])),
+          _HeroBadge(Icons.location_city_outlined,
+              user!['district'].toString()),
+        _HeroBadge(Icons.military_tech_outlined,
+            rh(user?['rank'] ?? user?['user_rank'])),
       ]),
-      if (!noDuty && duty != null && duty!['centerName'] != null) ...[
+      if (!noDuty && duty != null &&
+          (duty!['centerName'] ?? duty!['sectorName'] ??
+              duty!['zoneName'] ?? duty!['superZoneName']) != null) ...[
         const SizedBox(height: 12),
         Container(height: 1, color: Colors.white.withOpacity(0.15)),
         const SizedBox(height: 10),
         Row(children: [
-          const Icon(Icons.how_to_vote_outlined, size: 14, color: Colors.white54),
+          const Icon(Icons.how_to_vote_outlined,
+              size: 14, color: Colors.white54),
           const SizedBox(width: 6),
           Expanded(child: Text(
             'ड्यूटी: ${duty!['centerName'] ?? duty!['sectorName'] ?? duty!['zoneName'] ?? duty!['superZoneName'] ?? '—'}',
@@ -2222,38 +3335,51 @@ class _HeroCard extends StatelessWidget {
 }
 
 class _HeroBadge extends StatelessWidget {
-  final IconData icon; final String label;
+  final IconData icon;
+  final String label;
   const _HeroBadge(this.icon, this.label);
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-    decoration: BoxDecoration(color: Colors.white.withOpacity(0.1),
-        borderRadius: BorderRadius.circular(20), border: Border.all(color: Colors.white24)),
+    decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.1),
+        borderRadius: BorderRadius.circular(20),
+        border: Border.all(color: Colors.white24)),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, size: 12, color: Colors.white60),
       const SizedBox(width: 5),
-      Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
+      Text(label, style: const TextStyle(
+          color: Colors.white70, fontSize: 11)),
     ]),
   );
 }
 
 class _SectionCard extends StatelessWidget {
-  final IconData icon; final String title; final Widget child;
+  final IconData icon;
+  final String title;
+  final Widget child;
   const _SectionCard({required this.icon, required this.title, required this.child});
+
   @override
   Widget build(BuildContext context) => Container(
-    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14),
+    decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(14),
         border: Border.all(color: kBorder.withOpacity(0.5)),
-        boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.04), blurRadius: 10, offset: const Offset(0, 3))]),
+        boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.04),
+            blurRadius: 10, offset: const Offset(0, 3))]),
     child: Column(children: [
       Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
-        decoration: BoxDecoration(color: kSurface.withOpacity(0.6),
-            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
-            border: Border(bottom: BorderSide(color: kBorder.withOpacity(0.4)))),
+        decoration: BoxDecoration(
+            color: kSurface.withOpacity(0.6),
+            borderRadius: const BorderRadius.vertical(
+                top: Radius.circular(14)),
+            border: Border(bottom: BorderSide(
+                color: kBorder.withOpacity(0.4)))),
         child: Row(children: [
           Container(width: 28, height: 28,
-              decoration: BoxDecoration(color: kPrimary.withOpacity(0.12),
+              decoration: BoxDecoration(
+                  color: kPrimary.withOpacity(0.12),
                   borderRadius: BorderRadius.circular(8)),
               child: Icon(icon, color: kPrimary, size: 14)),
           const SizedBox(width: 10),
@@ -2267,45 +3393,64 @@ class _SectionCard extends StatelessWidget {
 }
 
 class _StatCard extends StatelessWidget {
-  final IconData icon; final String label, value; final Color color;
-  const _StatCard({required this.icon, required this.label, required this.value, required this.color});
+  final IconData icon;
+  final String label, value;
+  final Color color;
+  const _StatCard({
+    required this.icon, required this.label,
+    required this.value, required this.color,
+  });
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.all(14),
-    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(14),
+    decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(14),
         border: Border.all(color: kBorder.withOpacity(0.5)),
-        boxShadow: [BoxShadow(color: color.withOpacity(0.07), blurRadius: 8, offset: const Offset(0, 3))]),
+        boxShadow: [BoxShadow(color: color.withOpacity(0.07),
+            blurRadius: 8, offset: const Offset(0, 3))]),
     child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
       Container(width: 32, height: 32,
-          decoration: BoxDecoration(color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(10)),
+          decoration: BoxDecoration(
+              color: color.withOpacity(0.12),
+              borderRadius: BorderRadius.circular(10)),
           child: Icon(icon, size: 16, color: color)),
       const SizedBox(height: 8),
-      Text(label, style: const TextStyle(color: kSubtle, fontSize: 10, fontWeight: FontWeight.w600)),
+      Text(label, style: const TextStyle(color: kSubtle, fontSize: 10,
+          fontWeight: FontWeight.w600)),
       const SizedBox(height: 2),
-      Text(value, style: const TextStyle(color: kDark, fontSize: 13, fontWeight: FontWeight.w800),
-          overflow: TextOverflow.ellipsis),
+      Text(value, style: const TextStyle(color: kDark, fontSize: 13,
+          fontWeight: FontWeight.w800), overflow: TextOverflow.ellipsis),
     ]),
   );
 }
 
 class _InfoTile extends StatelessWidget {
-  final IconData icon; final String label; final dynamic value;
+  final IconData icon;
+  final String label;
+  final dynamic value;
   const _InfoTile(this.icon, this.label, this.value);
+
   @override
   Widget build(BuildContext context) {
-    final val = (value == null || value.toString().trim().isEmpty) ? null : value.toString();
+    final val = (value == null || value.toString().trim().isEmpty)
+        ? null : value.toString();
     if (val == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
         Container(width: 30, height: 30,
-            decoration: BoxDecoration(color: kSurface, borderRadius: BorderRadius.circular(8)),
+            decoration: BoxDecoration(
+                color: kSurface, borderRadius: BorderRadius.circular(8)),
             child: Icon(icon, size: 13, color: kPrimary)),
         const SizedBox(width: 12),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Text(label, style: const TextStyle(color: kSubtle, fontSize: 10, fontWeight: FontWeight.w600)),
+        Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Text(label, style: const TextStyle(color: kSubtle, fontSize: 10,
+              fontWeight: FontWeight.w600)),
           const SizedBox(height: 2),
-          Text(val, style: const TextStyle(color: kDark, fontSize: 13, fontWeight: FontWeight.w600)),
+          Text(val, style: const TextStyle(color: kDark, fontSize: 13,
+              fontWeight: FontWeight.w600)),
         ])),
       ]),
     );
@@ -2313,8 +3458,10 @@ class _InfoTile extends StatelessWidget {
 }
 
 class _OfficerCard extends StatelessWidget {
-  final String label; final List officers;
+  final String label;
+  final List officers;
   const _OfficerCard({required this.label, required this.officers});
+
   @override
   Widget build(BuildContext context) => _SectionCard(
     icon: Icons.verified_user_outlined, title: label,
@@ -2324,14 +3471,19 @@ class _OfficerCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(border: i < officers.length - 1
-            ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4))) : null),
+            ? Border(bottom: BorderSide(
+                color: kBorder.withOpacity(0.4)))
+            : null),
         child: Row(children: [
           Container(width: 36, height: 36,
-              decoration: BoxDecoration(color: kSurface, shape: BoxShape.circle,
+              decoration: BoxDecoration(
+                  color: kSurface, shape: BoxShape.circle,
                   border: Border.all(color: kBorder)),
-              child: const Icon(Icons.person_outline_rounded, color: kPrimary, size: 18)),
+              child: const Icon(Icons.person_outline_rounded,
+                  color: kPrimary, size: 18)),
           const SizedBox(width: 12),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
             Text(v(o['name']), style: const TextStyle(
                 color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
             Text('${rh(o['user_rank'] ?? o['rank'])}  ·  PNO: ${v(o['pno'])}',
@@ -2344,9 +3496,11 @@ class _OfficerCard extends StatelessWidget {
                 if (await canLaunchUrl(uri)) launchUrl(uri);
               },
               child: Container(width: 34, height: 34,
-                  decoration: BoxDecoration(color: kSuccessBg, borderRadius: BorderRadius.circular(10)),
-                  child: const Icon(Icons.phone_outlined, size: 15, color: kSuccess)),
-            ),
+                  decoration: BoxDecoration(
+                      color: kSuccessBg,
+                      borderRadius: BorderRadius.circular(10)),
+                  child: const Icon(Icons.phone_outlined,
+                      size: 15, color: kSuccess))),
         ]),
       );
     }).toList()),
@@ -2354,31 +3508,41 @@ class _OfficerCard extends StatelessWidget {
 }
 
 class _StaffRow extends StatelessWidget {
-  final int index, total; final Map staff; final bool armed;
-  const _StaffRow({required this.index, required this.total,
-      required this.staff, required this.armed});
+  final int index, total;
+  final Map staff;
+  final bool armed;
+  const _StaffRow({
+    required this.index, required this.total,
+    required this.staff, required this.armed,
+  });
+
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(vertical: 12),
     decoration: BoxDecoration(border: index < total - 1
-        ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4))) : null),
+        ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4)))
+        : null),
     child: Row(children: [
       Container(width: 38, height: 38,
           decoration: BoxDecoration(
-              color: (armed ? kArmed : kUnarmed).withOpacity(0.1), shape: BoxShape.circle,
-              border: Border.all(color: (armed ? kArmed : kUnarmed).withOpacity(0.3))),
-          child: Center(child: Text('${index + 1}',
-              style: TextStyle(color: armed ? kArmed : kUnarmed,
-                  fontSize: 12, fontWeight: FontWeight.w800)))),
+              color: (armed ? kArmed : kUnarmed).withOpacity(0.1),
+              shape: BoxShape.circle,
+              border: Border.all(
+                  color: (armed ? kArmed : kUnarmed).withOpacity(0.3))),
+          child: Center(child: Text('${index + 1}', style: TextStyle(
+              color: armed ? kArmed : kUnarmed,
+              fontSize: 12, fontWeight: FontWeight.w800)))),
       const SizedBox(width: 12),
-      Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      Expanded(child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start, children: [
         Text(v(staff['name']), style: const TextStyle(
             color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
         Text('${v(staff['pno'])} · ${v(staff['thana'])}',
             style: const TextStyle(color: kSubtle, fontSize: 11)),
         Row(children: [
           Text(rh(staff['user_rank'] ?? staff['rank']),
-              style: const TextStyle(color: kAccent, fontSize: 10, fontWeight: FontWeight.w600)),
+              style: const TextStyle(color: kAccent, fontSize: 10,
+                  fontWeight: FontWeight.w600)),
           const SizedBox(width: 8),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
@@ -2386,9 +3550,9 @@ class _StaffRow extends StatelessWidget {
                 color: (armed ? kArmed : kUnarmed).withOpacity(0.1),
                 borderRadius: BorderRadius.circular(4)),
             child: Text(armed ? 'सशस्त्र' : 'निःशस्त्र',
-                style: TextStyle(color: armed ? kArmed : kUnarmed,
-                    fontSize: 9, fontWeight: FontWeight.w700)),
-          ),
+                style: TextStyle(
+                    color: armed ? kArmed : kUnarmed,
+                    fontSize: 9, fontWeight: FontWeight.w700))),
         ]),
       ])),
       if ((staff['mobile'] ?? '').toString().isNotEmpty)
@@ -2398,9 +3562,10 @@ class _StaffRow extends StatelessWidget {
             if (await canLaunchUrl(uri)) launchUrl(uri);
           },
           child: Container(width: 36, height: 36,
-              decoration: BoxDecoration(color: kSuccessBg, borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.phone_outlined, size: 15, color: kSuccess)),
-        ),
+              decoration: BoxDecoration(
+                  color: kSuccessBg, borderRadius: BorderRadius.circular(10)),
+              child: const Icon(Icons.phone_outlined,
+                  size: 15, color: kSuccess))),
     ]),
   );
 }
@@ -2411,25 +3576,37 @@ class _OfficerChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-    decoration: BoxDecoration(color: kPrimary.withOpacity(0.08),
+    decoration: BoxDecoration(
+        color: kPrimary.withOpacity(0.08),
         borderRadius: BorderRadius.circular(20),
         border: Border.all(color: kPrimary.withOpacity(0.2))),
-    child: Text('${officer['name']} (${rh(officer['user_rank'] ?? officer['rank'])})',
-        style: const TextStyle(color: kPrimary, fontSize: 10, fontWeight: FontWeight.w600)),
+    child: Text(
+        '${officer['name']} (${rh(officer['user_rank'] ?? officer['rank'])})',
+        style: const TextStyle(color: kPrimary, fontSize: 10,
+            fontWeight: FontWeight.w600)),
   );
 }
 
 class _NavButton extends StatelessWidget {
-  final IconData icon; final String label; final Color color; final VoidCallback onTap;
-  const _NavButton({required this.icon, required this.label, required this.color, required this.onTap});
+  final IconData icon;
+  final String label;
+  final Color color;
+  final VoidCallback onTap;
+  const _NavButton({
+    required this.icon, required this.label,
+    required this.color, required this.onTap,
+  });
+
   @override
   Widget build(BuildContext context) => GestureDetector(
     onTap: onTap,
     child: Container(
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 14),
-      decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(14),
-          boxShadow: [BoxShadow(color: color.withOpacity(0.4), blurRadius: 12, offset: const Offset(0, 4))]),
+      decoration: BoxDecoration(
+          color: color, borderRadius: BorderRadius.circular(14),
+          boxShadow: [BoxShadow(color: color.withOpacity(0.4),
+              blurRadius: 12, offset: const Offset(0, 4))]),
       child: Row(mainAxisAlignment: MainAxisAlignment.center, children: [
         Icon(icon, color: Colors.white, size: 16),
         const SizedBox(width: 8),
@@ -2441,17 +3618,22 @@ class _NavButton extends StatelessWidget {
 }
 
 class _PreviewRow extends StatelessWidget {
-  final String label; final dynamic value;
+  final String label;
+  final dynamic value;
   const _PreviewRow(this.label, this.value);
+
   @override
   Widget build(BuildContext context) {
-    final display = (value == null || value.toString().trim().isEmpty) ? '—' : value.toString();
+    final display = (value == null || value.toString().trim().isEmpty)
+        ? '—' : value.toString();
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(children: [
-        Expanded(flex: 2, child: Text(label, style: const TextStyle(color: kSubtle, fontSize: 12))),
+        Expanded(flex: 2, child: Text(label,
+            style: const TextStyle(color: kSubtle, fontSize: 12))),
         Expanded(flex: 3, child: Text(display,
-            style: const TextStyle(color: kDark, fontSize: 12, fontWeight: FontWeight.w700),
+            style: const TextStyle(color: kDark, fontSize: 12,
+                fontWeight: FontWeight.w700),
             textAlign: TextAlign.right)),
       ]),
     );
@@ -2464,27 +3646,35 @@ class _NoDutyState extends StatelessWidget {
   Widget build(BuildContext context) => Center(child: Container(
     margin: const EdgeInsets.only(top: 60),
     padding: const EdgeInsets.all(40),
-    decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(20),
+    decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(20),
         border: Border.all(color: kBorder.withOpacity(0.5)),
-        boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.05), blurRadius: 16, offset: const Offset(0, 4))]),
+        boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.05),
+            blurRadius: 16, offset: const Offset(0, 4))]),
     child: Column(mainAxisSize: MainAxisSize.min, children: [
       Container(width: 64, height: 64,
-          decoration: BoxDecoration(color: kSurface, shape: BoxShape.circle,
+          decoration: BoxDecoration(
+              color: kSurface, shape: BoxShape.circle,
               border: Border.all(color: kBorder)),
-          child: const Icon(Icons.location_off_outlined, color: kPrimary, size: 30)),
+          child: const Icon(Icons.location_off_outlined,
+              color: kPrimary, size: 30)),
       const SizedBox(height: 16),
       const Text('अभी तक ड्यूटी नहीं सौंपी गई',
-          style: TextStyle(color: kDark, fontSize: 16, fontWeight: FontWeight.w800)),
+          style: TextStyle(color: kDark, fontSize: 16,
+              fontWeight: FontWeight.w800)),
       const SizedBox(height: 8),
       const Text('व्यवस्थापक द्वारा ड्यूटी सौंपे जाने पर यहाँ दिखेगी।',
-          style: TextStyle(color: kSubtle, fontSize: 12), textAlign: TextAlign.center),
+          style: TextStyle(color: kSubtle, fontSize: 12),
+          textAlign: TextAlign.center),
     ]),
   ));
 }
 
 class _ErrorState extends StatelessWidget {
-  final String error; final VoidCallback onRetry;
+  final String error;
+  final VoidCallback onRetry;
   const _ErrorState({required this.error, required this.onRetry});
+
   @override
   Widget build(BuildContext context) => Center(child: Padding(
     padding: const EdgeInsets.all(32),
@@ -2492,18 +3682,22 @@ class _ErrorState extends StatelessWidget {
       const Icon(Icons.error_outline_rounded, size: 52, color: kError),
       const SizedBox(height: 14),
       const Text('डेटा लोड करने में त्रुटि',
-          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800, color: kDark)),
+          style: TextStyle(fontSize: 16, fontWeight: FontWeight.w800,
+              color: kDark)),
       const SizedBox(height: 8),
-      Text(error, style: const TextStyle(color: kSubtle, fontSize: 12), textAlign: TextAlign.center),
+      Text(error, style: const TextStyle(color: kSubtle, fontSize: 12),
+          textAlign: TextAlign.center),
       const SizedBox(height: 18),
       GestureDetector(onTap: onRetry, child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 12),
-          decoration: BoxDecoration(color: kPrimary, borderRadius: BorderRadius.circular(12)),
+          decoration: BoxDecoration(
+              color: kPrimary, borderRadius: BorderRadius.circular(12)),
           child: const Row(mainAxisSize: MainAxisSize.min, children: [
             Icon(Icons.refresh_rounded, color: Colors.white, size: 16),
             SizedBox(width: 8),
-            Text('पुनः प्रयास करें',
-                style: TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.w700)),
+            Text('पुनः प्रयास करें', style: TextStyle(
+                color: Colors.white, fontSize: 13,
+                fontWeight: FontWeight.w700)),
           ]))),
     ]),
   ));

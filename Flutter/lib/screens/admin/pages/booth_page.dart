@@ -30,7 +30,13 @@ const _pageLimit   = 50;
 const _staffLimit  = 30;
 const _dutiesLimit = 30;
 
+// ── Election filter ────────────────────────────────────────────────────────────
+enum _ElectionFilter { current, all }
+
 enum _ArmedFilter { all, armed, unarmed }
+
+// ── Election status ────────────────────────────────────────────────────────────
+enum _ElectionStatus { loading, active, blocked, none }
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  Armed detection — single source of truth, handles bool / int / String
@@ -56,6 +62,7 @@ class BoothPage extends StatefulWidget {
 }
 
 class _BoothPageState extends State<BoothPage> {
+  // ── Centers list ─────────────────────────────────────────────────────────
   final List<Map> _centers = [];
   int    _page    = 1;
   int    _total   = 0;
@@ -66,11 +73,19 @@ class _BoothPageState extends State<BoothPage> {
   final _searchCtrl = TextEditingController();
   final _scroll     = ScrollController();
 
+  // ── Election state ────────────────────────────────────────────────────────
+  _ElectionStatus _electionStatus   = _ElectionStatus.loading;
+  int?   _activeElectionId;
+  String _activeElectionName        = '';
+  String _activeElectionDate        = '';
+  String _electionBlockReason       = '';
+
   @override
   void initState() {
     super.initState();
     _scroll.addListener(_onScroll);
     _searchCtrl.addListener(_onSearchChanged);
+    _loadElectionStatus();
     _loadCenters(reset: true);
   }
 
@@ -83,6 +98,58 @@ class _BoothPageState extends State<BoothPage> {
     super.dispose();
   }
 
+  // ── Load active election ──────────────────────────────────────────────────
+  Future<void> _loadElectionStatus() async {
+    if (mounted) setState(() => _electionStatus = _ElectionStatus.loading);
+    try {
+      final token = await AuthService.getToken();
+      final res   = await ApiService.get('/admin/election-config/active', token: token);
+      final data  = res['data'] as Map<String, dynamic>? ?? {};
+      final hasActive = data['hasActiveConfig'] as bool? ?? false;
+      final cfg       = data['config'] as Map<String, dynamic>? ?? {};
+      final isFinalized = cfg['isFinalized'] as bool? ?? false;
+
+      if (!mounted) return;
+      if (!hasActive) {
+        setState(() {
+          _electionStatus     = _ElectionStatus.none;
+          _activeElectionId   = null;
+          _activeElectionName = '';
+          _electionBlockReason = 'कोई सक्रिय चुनाव नहीं है। Master से चुनाव कॉन्फ़िगर करवाएं।';
+        });
+      } else if (isFinalized) {
+        setState(() {
+          _electionStatus      = _ElectionStatus.blocked;
+          _activeElectionId    = cfg['id'] as int?;
+          _activeElectionName  = (cfg['electionName'] as String? ?? '').trim();
+          _activeElectionDate  = (cfg['electionDate'] as String? ?? '').trim();
+          _electionBlockReason = 'यह चुनाव समाप्त हो चुका है। नई ड्यूटी असाइन नहीं की जा सकती।';
+        });
+      } else {
+        setState(() {
+          _electionStatus      = _ElectionStatus.active;
+          _activeElectionId    = cfg['id'] as int?;
+          _activeElectionName  = (cfg['electionName'] as String? ?? '').trim();
+          _activeElectionDate  = (cfg['electionDate'] as String? ?? '').trim();
+          _electionBlockReason = '';
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _electionStatus      = _ElectionStatus.none;
+          _activeElectionId    = null;
+          _activeElectionName  = '';
+          _electionBlockReason = 'चुनाव स्थिति लोड नहीं हो सकी।';
+        });
+      }
+    }
+  }
+
+  bool get _canAssign =>
+      _electionStatus == _ElectionStatus.active && _activeElectionId != null;
+
+  // ── Infinite scroll ───────────────────────────────────────────────────────
   void _onScroll() {
     if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 300) {
       _loadCenters();
@@ -144,9 +211,16 @@ class _BoothPageState extends State<BoothPage> {
       context: context,
       barrierDismissible: true,
       builder: (_) => _DutiesDialog(
-        center: center,
+        center:             center,
+        activeElectionId:   _activeElectionId,
+        activeElectionName: _activeElectionName,
+        canAssign:          _canAssign,
         onAssign: (ctx) {
           Navigator.pop(ctx);
+          if (!_canAssign) {
+            _snack(_electionBlockReason, error: true);
+            return;
+          }
           _showAssignDialog(center);
         },
         onDutyRemoved: () => _loadCenters(reset: true),
@@ -155,6 +229,10 @@ class _BoothPageState extends State<BoothPage> {
   }
 
   void _showAssignDialog(Map center) {
+    if (!_canAssign) {
+      _snack(_electionBlockReason, error: true);
+      return;
+    }
     final isLocked = _parseArmed(center['isLocked']) ||
         (center['is_locked'] as num? ?? 0) == 1;
     if (isLocked) {
@@ -165,8 +243,10 @@ class _BoothPageState extends State<BoothPage> {
       context: context,
       barrierDismissible: true,
       builder: (_) => _AssignDialog(
-        center: center,
-        onAssigned: () => _loadCenters(reset: true),
+        center:             center,
+        activeElectionId:   _activeElectionId,
+        activeElectionName: _activeElectionName,
+        onAssigned:         () => _loadCenters(reset: true),
       ),
     );
   }
@@ -174,6 +254,15 @@ class _BoothPageState extends State<BoothPage> {
   @override
   Widget build(BuildContext context) {
     return Column(children: [
+      // ── Election status banner ────────────────────────────────────────────
+      _ElectionStatusBanner(
+        status:       _electionStatus,
+        electionName: _activeElectionName,
+        electionDate: _activeElectionDate,
+        blockReason:  _electionBlockReason,
+      ),
+
+      // ── Search bar ────────────────────────────────────────────────────────
       Container(
         color: kSurface,
         padding: const EdgeInsets.all(12),
@@ -188,6 +277,8 @@ class _BoothPageState extends State<BoothPage> {
           ),
         ),
       ),
+
+      // ── Count bar ─────────────────────────────────────────────────────────
       Container(
         color: kBg,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
@@ -200,19 +291,31 @@ class _BoothPageState extends State<BoothPage> {
           const SizedBox(width: 8),
           IconButton(
             icon: const Icon(Icons.refresh_rounded, size: 18, color: kSubtle),
-            onPressed: () => _loadCenters(reset: true),
-            padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+            onPressed: () {
+              _loadElectionStatus();
+              _loadCenters(reset: true);
+            },
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints(),
+          ),
         ]),
       ),
+
+      // ── Center list ───────────────────────────────────────────────────────
       Expanded(
         child: _centers.isEmpty && _loading
             ? const Center(child: CircularProgressIndicator(color: kPrimary))
             : _centers.isEmpty
                 ? _emptyState(
-                    _q.isNotEmpty ? '"$_q" के लिए कोई बूथ नहीं' : 'कोई बूथ नहीं मिला',
+                    _q.isNotEmpty
+                        ? '"$_q" के लिए कोई बूथ नहीं'
+                        : 'कोई बूथ नहीं मिला',
                     Icons.location_off_outlined)
                 : RefreshIndicator(
-                    onRefresh: () => _loadCenters(reset: true),
+                    onRefresh: () async {
+                      await _loadElectionStatus();
+                      await _loadCenters(reset: true);
+                    },
                     color: kPrimary,
                     child: ListView.builder(
                       controller: _scroll,
@@ -223,12 +326,14 @@ class _BoothPageState extends State<BoothPage> {
                           return const Padding(
                             padding: EdgeInsets.symmetric(vertical: 16),
                             child: Center(child: SizedBox(width: 22, height: 22,
-                                child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))));
+                                child: CircularProgressIndicator(
+                                    strokeWidth: 2, color: kPrimary))));
                         }
                         return RepaintBoundary(
                           child: _CenterCard(
-                            center: _centers[i],
-                            onTap: () => _showDutiesDialog(_centers[i]),
+                            center:    _centers[i],
+                            canAssign: _canAssign,
+                            onTap:     () => _showDutiesDialog(_centers[i]),
                           ),
                         );
                       },
@@ -242,18 +347,143 @@ class _BoothPageState extends State<BoothPage> {
     child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
       Icon(icon, size: 48, color: kSubtle.withOpacity(0.4)),
       const SizedBox(height: 12),
-      Text(msg, style: const TextStyle(color: kSubtle, fontSize: 14), textAlign: TextAlign.center),
+      Text(msg,
+          style: const TextStyle(color: kSubtle, fontSize: 14),
+          textAlign: TextAlign.center),
     ]),
   );
 }
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Election status banner
+// ══════════════════════════════════════════════════════════════════════════════
+class _ElectionStatusBanner extends StatelessWidget {
+  final _ElectionStatus status;
+  final String          electionName;
+  final String          electionDate;
+  final String          blockReason;
+
+  const _ElectionStatusBanner({
+    required this.status,
+    required this.electionName,
+    required this.electionDate,
+    required this.blockReason,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    switch (status) {
+      case _ElectionStatus.loading:
+        return _shimmerBanner();
+      case _ElectionStatus.active:
+        return _banner(
+          gradient:    const [Color(0xFF1B5E20), Color(0xFF2E7D32)],
+          icon:        Icons.how_to_vote_rounded,
+          label:       'सक्रिय चुनाव',
+          labelColor:  const Color(0xFFA5D6A7),
+          title:       electionName.isNotEmpty ? electionName : 'चुनाव सक्रिय',
+          subtitle:    electionDate.isNotEmpty ? 'तारीख: $electionDate' : 'ड्यूटी असाइन की जा सकती है',
+          trailing:    const Icon(Icons.check_circle_outline, color: Colors.white54, size: 18),
+        );
+      case _ElectionStatus.blocked:
+        return _banner(
+          gradient:    const [Color(0xFF7F0000), Color(0xFFC62828)],
+          icon:        Icons.lock_outline_rounded,
+          label:       'चुनाव समाप्त',
+          labelColor:  const Color(0xFFEF9A9A),
+          title:       electionName.isNotEmpty ? electionName : 'चुनाव बंद',
+          subtitle:    blockReason,
+          trailing:    const Icon(Icons.block_rounded, color: Colors.white54, size: 18),
+        );
+      case _ElectionStatus.none:
+        return _banner(
+          gradient:    const [Color(0xFF4A2800), Color(0xFF7A4500)],
+          icon:        Icons.warning_amber_rounded,
+          label:       'ध्यान दें',
+          labelColor:  const Color(0xFFFFCC02),
+          title:       'कोई सक्रिय चुनाव नहीं',
+          subtitle:    blockReason.isNotEmpty ? blockReason : 'Master से कॉन्फ़िगर करवाएं',
+          trailing:    null,
+        );
+    }
+  }
+
+  Widget _banner({
+    required List<Color> gradient,
+    required IconData    icon,
+    required String      label,
+    required Color       labelColor,
+    required String      title,
+    required String      subtitle,
+    required Widget?     trailing,
+  }) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+      decoration: BoxDecoration(
+        gradient: LinearGradient(
+            colors: gradient,
+            begin: Alignment.topLeft,
+            end: Alignment.bottomRight),
+      ),
+      child: Row(children: [
+        Container(
+          padding: const EdgeInsets.all(7),
+          decoration: BoxDecoration(
+              color: Colors.white.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(8)),
+          child: Icon(icon, color: Colors.white, size: 17),
+        ),
+        const SizedBox(width: 10),
+        Expanded(child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisSize: MainAxisSize.min, children: [
+          Row(children: [
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+              decoration: BoxDecoration(
+                  color: labelColor.withOpacity(0.2),
+                  borderRadius: BorderRadius.circular(4),
+                  border: Border.all(color: labelColor.withOpacity(0.5))),
+              child: Text(label, style: TextStyle(
+                  color: labelColor, fontSize: 9, fontWeight: FontWeight.w800)),
+            ),
+            const SizedBox(width: 6),
+            Expanded(child: Text(title,
+                style: const TextStyle(color: Colors.white, fontSize: 12,
+                    fontWeight: FontWeight.w800),
+                maxLines: 1, overflow: TextOverflow.ellipsis)),
+          ]),
+          const SizedBox(height: 2),
+          Text(subtitle,
+              style: const TextStyle(color: Colors.white60, fontSize: 10),
+              maxLines: 1, overflow: TextOverflow.ellipsis),
+        ])),
+        if (trailing != null) ...[
+          const SizedBox(width: 8),
+          trailing,
+        ],
+      ]),
+    );
+  }
+
+  Widget _shimmerBanner() => _ShimmerBox(width: double.infinity, height: 52, radius: 0);
+}
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  Center card
 // ══════════════════════════════════════════════════════════════════════════════
 class _CenterCard extends StatelessWidget {
-  final Map center;
+  final Map          center;
+  final bool         canAssign;
   final VoidCallback onTap;
-  const _CenterCard({required this.center, required this.onTap});
+
+  const _CenterCard({
+    required this.center,
+    required this.canAssign,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -262,6 +492,8 @@ class _CenterCard extends StatelessWidget {
     final boothCount = (center['boothCount'] ?? 1) as int;
     final tColor     = _typeColor(type);
     final rule       = center['boothRule'] as Map?;
+    final isLocked   = (center['isLocked'] == true) ||
+                       (center['is_locked'] as num? ?? 0) == 1;
 
     return GestureDetector(
       onTap: onTap,
@@ -276,34 +508,33 @@ class _CenterCard extends StatelessWidget {
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
 
-          // ── Main row ────────────────────────────────────────────────────
+          // ── Main row ──────────────────────────────────────────────────────
           Row(children: [
 
-            // Sensitivity type + booth count column
+            // Sensitivity + booth count column
             Container(
-              width: 62,
+              width: 64,
               padding: const EdgeInsets.symmetric(vertical: 14),
               decoration: BoxDecoration(
                 color: tColor.withOpacity(0.1),
                 borderRadius: const BorderRadius.only(
-                    topLeft: Radius.circular(12), bottomLeft: Radius.circular(12)),
+                    topLeft: Radius.circular(12),
+                    bottomLeft: Radius.circular(12)),
                 border: Border(right: BorderSide(color: tColor.withOpacity(0.3))),
               ),
               child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
-                // Sensitivity badge
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                   decoration: BoxDecoration(
-                    color: tColor.withOpacity(0.18),
-                    borderRadius: BorderRadius.circular(6),
-                  ),
+                      color: tColor.withOpacity(0.18),
+                      borderRadius: BorderRadius.circular(6)),
                   child: Text(type,
-                      style: TextStyle(color: tColor,
-                          fontSize: type == 'A++' ? 11 : 15,
+                      style: TextStyle(
+                          color: tColor,
+                          fontSize: type == 'A++' ? 10 : 14,
                           fontWeight: FontWeight.w900)),
                 ),
                 const SizedBox(height: 6),
-                // Booth count — prominent
                 Row(mainAxisAlignment: MainAxisAlignment.center, children: [
                   Icon(Icons.how_to_vote_outlined, size: 11, color: tColor),
                   const SizedBox(width: 2),
@@ -311,8 +542,8 @@ class _CenterCard extends StatelessWidget {
                       color: tColor, fontSize: 14, fontWeight: FontWeight.w900)),
                 ]),
                 Text('बूथ', style: TextStyle(
-                    color: tColor.withOpacity(0.7), fontSize: 9,
-                    fontWeight: FontWeight.w600)),
+                    color: tColor.withOpacity(0.7),
+                    fontSize: 9, fontWeight: FontWeight.w600)),
               ]),
             ),
 
@@ -320,24 +551,40 @@ class _CenterCard extends StatelessWidget {
             Expanded(child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
               child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text('${center['name']}',
-                    style: const TextStyle(color: kDark, fontWeight: FontWeight.w700, fontSize: 14)),
+                Row(children: [
+                  Expanded(child: Text('${center['name']}',
+                      style: const TextStyle(color: kDark,
+                          fontWeight: FontWeight.w700, fontSize: 14))),
+                  if (isLocked)
+                    const Padding(
+                      padding: EdgeInsets.only(left: 6),
+                      child: Icon(Icons.lock_outline, size: 14, color: kError)),
+                  if (!canAssign)
+                    Padding(
+                      padding: const EdgeInsets.only(left: 4),
+                      child: Icon(Icons.block_rounded,
+                          size: 13, color: kSubtle.withOpacity(0.5))),
+                ]),
                 const SizedBox(height: 4),
                 Row(children: [
-                  Flexible(child: _tagSmall(Icons.local_police_outlined, '${center['thana']}')),
+                  Flexible(child: _tagSmall(Icons.local_police_outlined,
+                      '${center['thana']}')),
                   const SizedBox(width: 10),
-                  Flexible(child: _tagSmall(Icons.account_balance_outlined, '${center['gpName']}')),
+                  Flexible(child: _tagSmall(Icons.account_balance_outlined,
+                      '${center['gpName']}')),
                 ]),
                 const SizedBox(height: 2),
                 _tagSmall(Icons.layers_outlined,
                     '${center['sectorName']} › ${center['zoneName']} › ${center['superZoneName']}'),
                 if ((center['blockName'] ?? '').toString().isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  _tagSmall(Icons.location_city_outlined, 'ब्लॉक: ${center['blockName']}'),
+                  _tagSmall(Icons.location_city_outlined,
+                      'ब्लॉक: ${center['blockName']}'),
                 ],
                 if ((center['busNo'] ?? '').toString().isNotEmpty) ...[
                   const SizedBox(height: 2),
-                  _tagSmall(Icons.directions_bus_outlined, 'बस: ${center['busNo']}'),
+                  _tagSmall(Icons.directions_bus_outlined,
+                      'बस: ${center['busNo']}'),
                 ],
               ]),
             )),
@@ -348,23 +595,27 @@ class _CenterCard extends StatelessWidget {
               child: Container(
                 padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
                 decoration: BoxDecoration(
-                  color: dutyCount > 0 ? kSuccess.withOpacity(0.1) : kSurface,
+                  color: dutyCount > 0
+                      ? kSuccess.withOpacity(0.1) : kSurface,
                   borderRadius: BorderRadius.circular(10),
                   border: Border.all(
-                      color: dutyCount > 0 ? kSuccess.withOpacity(0.4) : kBorder.withOpacity(0.4)),
+                      color: dutyCount > 0
+                          ? kSuccess.withOpacity(0.4)
+                          : kBorder.withOpacity(0.4)),
                 ),
                 child: Column(children: [
                   Text('$dutyCount', style: TextStyle(
                       color: dutyCount > 0 ? kSuccess : kSubtle,
                       fontSize: 18, fontWeight: FontWeight.w900)),
                   Text('स्टाफ', style: TextStyle(
-                      color: dutyCount > 0 ? kSuccess : kSubtle, fontSize: 10)),
+                      color: dutyCount > 0 ? kSuccess : kSubtle,
+                      fontSize: 10)),
                 ]),
               ),
             ),
           ]),
 
-          // ── Rule summary strip ───────────────────────────────────────────
+          // ── Rule summary strip ─────────────────────────────────────────────
           if (rule != null) _RuleSummaryStrip(rule: rule, typeColor: tColor),
         ]),
       ),
@@ -375,12 +626,14 @@ class _CenterCard extends StatelessWidget {
       Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 11, color: kSubtle),
         const SizedBox(width: 3),
-        Flexible(child: Text(text, overflow: TextOverflow.ellipsis,
+        Flexible(child: Text(text,
+            overflow: TextOverflow.ellipsis,
             style: const TextStyle(color: kSubtle, fontSize: 11))),
       ]);
 }
 
-// ── Rule summary strip ────────────────────────────────────────────────────────
+
+// ─── Rule summary strip ────────────────────────────────────────────────────────
 class _RuleSummaryStrip extends StatelessWidget {
   final Map  rule;
   final Color typeColor;
@@ -420,16 +673,16 @@ class _RuleSummaryStrip extends StatelessWidget {
         Expanded(child: SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(children: [
-            if (siA + siU > 0) _chip('SI', siA, siU, typeColor),
-            if (hcA + hcU > 0) _chip('HC', hcA, hcU, typeColor),
-            if (cA + cU > 0)   _chip('CO', cA, cU, typeColor),
+            if (siA + siU > 0) _chip('SI',  siA, siU, typeColor),
+            if (hcA + hcU > 0) _chip('HC',  hcA, hcU, typeColor),
+            if (cA  + cU  > 0) _chip('CO',  cA,  cU,  typeColor),
             if (auxA + auxU > 0) _chip('Aux', auxA, auxU, const Color(0xFFE65100)),
             if (pac > 0) _singleChip('PAC', pac, const Color(0xFF00695C)),
           ]),
         )),
         const SizedBox(width: 6),
-        Text('कुल $total', style: TextStyle(color: typeColor,
-            fontSize: 10, fontWeight: FontWeight.w800)),
+        Text('कुल $total', style: TextStyle(
+            color: typeColor, fontSize: 10, fontWeight: FontWeight.w800)),
       ]),
     );
   }
@@ -469,34 +722,46 @@ class _RuleSummaryStrip extends StatelessWidget {
       borderRadius: BorderRadius.circular(5),
       border: Border.all(color: color.withOpacity(0.25)),
     ),
-    child: Text('$label: $val', style: TextStyle(
-        color: color, fontSize: 9, fontWeight: FontWeight.w700)),
+    child: Text('$label: $val',
+        style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w700)),
   );
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  Duties Dialog
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutiesDialog extends StatefulWidget {
-  final Map center;
+  final Map    center;
+  final int?   activeElectionId;
+  final String activeElectionName;
+  final bool   canAssign;
   final void Function(BuildContext ctx) onAssign;
   final VoidCallback onDutyRemoved;
+
   const _DutiesDialog({
     required this.center,
+    required this.activeElectionId,
+    required this.activeElectionName,
+    required this.canAssign,
     required this.onAssign,
     required this.onDutyRemoved,
   });
+
   @override
   State<_DutiesDialog> createState() => _DutiesDialogState();
 }
 
 class _DutiesDialogState extends State<_DutiesDialog> {
-  final List<Map> _duties = [];
+  final List<Map> _duties    = [];
   int  _page    = 1;
   int  _total   = 0;
   bool _loading = false;
   bool _hasMore = true;
-  _ArmedFilter _armedFilter = _ArmedFilter.all;
+
+  _ArmedFilter    _armedFilter    = _ArmedFilter.all;
+  _ElectionFilter _electionFilter = _ElectionFilter.current;
+
   final _scroll = ScrollController();
 
   @override
@@ -518,16 +783,42 @@ class _DutiesDialogState extends State<_DutiesDialog> {
         && !_loading && _hasMore) _load();
   }
 
+  // ── Filter helpers ────────────────────────────────────────────────────────
   List<Map> get _filteredDuties {
-    if (_armedFilter == _ArmedFilter.all) return _duties;
-    return _duties.where((d) {
-      final armed = _parseArmed(d['isArmed'] ?? d['is_armed']);
-      return _armedFilter == _ArmedFilter.armed ? armed : !armed;
-    }).toList();
+    var list = _duties;
+
+    // Election filter
+    if (_electionFilter == _ElectionFilter.current &&
+        widget.activeElectionId != null) {
+      list = list.where((d) {
+        final eid = d['electionId'] ?? d['election_id'];
+        if (eid == null) return false;
+        return (eid as num).toInt() == widget.activeElectionId;
+      }).toList();
+    }
+
+    // Armed filter
+    if (_armedFilter != _ArmedFilter.all) {
+      list = list.where((d) {
+        final armed = _parseArmed(d['isArmed'] ?? d['is_armed']);
+        return _armedFilter == _ArmedFilter.armed ? armed : !armed;
+      }).toList();
+    }
+
+    return list;
   }
 
-  int get _armedCount   => _duties.where((d) => _parseArmed(d['isArmed'] ?? d['is_armed'])).length;
+  int get _armedCount   => _duties
+      .where((d) => _parseArmed(d['isArmed'] ?? d['is_armed'])).length;
   int get _unarmedCount => _duties.length - _armedCount;
+
+  int get _currentElectionCount => widget.activeElectionId == null
+      ? 0
+      : _duties.where((d) {
+          final eid = d['electionId'] ?? d['election_id'];
+          if (eid == null) return false;
+          return (eid as num).toInt() == widget.activeElectionId;
+        }).length;
 
   Future<void> _load({bool reset = false}) async {
     if (_loading) return;
@@ -565,6 +856,8 @@ class _DutiesDialogState extends State<_DutiesDialog> {
       widget.onDutyRemoved();
       _load(reset: true);
       if (mounted) _snack('ड्यूटी हटा दी गई');
+    } on ApiException catch (e) {
+      if (mounted) showApiError(context, e);
     } catch (e) {
       if (mounted) _snack('त्रुटि: $e', error: true);
     }
@@ -590,18 +883,19 @@ class _DutiesDialogState extends State<_DutiesDialog> {
     final screenH    = MediaQuery.of(context).size.height;
     final isLocked   = (widget.center['isLocked'] == true) ||
                        (widget.center['is_locked'] as num? ?? 0) == 1;
+    final canAct     = widget.canAssign && !isLocked;
 
     return Dialog(
       backgroundColor: Colors.transparent,
       child: ConstrainedBox(
-        constraints: BoxConstraints(maxWidth: 500, maxHeight: screenH * 0.88),
+        constraints: BoxConstraints(maxWidth: 520, maxHeight: screenH * 0.88),
         child: Container(
           decoration: _dlgDec(),
           child: Column(mainAxisSize: MainAxisSize.min, children: [
 
             _DialogHeader(
-              title: '${center['name']}',
-              icon: Icons.location_on_outlined,
+              title:   '${center['name']}',
+              icon:    Icons.location_on_outlined,
               onClose: () => Navigator.pop(context),
             ),
 
@@ -613,7 +907,6 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                 Row(children: [
                   _TypeBadge(type: type),
                   const SizedBox(width: 8),
-                  // Booth count chip — prominent
                   Container(
                     padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
@@ -622,7 +915,8 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                       border: Border.all(color: _typeColor(type).withOpacity(0.4)),
                     ),
                     child: Row(mainAxisSize: MainAxisSize.min, children: [
-                      Icon(Icons.how_to_vote_outlined, size: 13, color: _typeColor(type)),
+                      Icon(Icons.how_to_vote_outlined,
+                          size: 13, color: _typeColor(type)),
                       const SizedBox(width: 4),
                       Text('$boothCount बूथ',
                           style: TextStyle(color: _typeColor(type),
@@ -646,12 +940,14 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                   _infoChip(Icons.layers_outlined, 'जोन: ${center['zoneName']}'),
                   _infoChip(Icons.public_outlined, 'SZ: ${center['superZoneName']}'),
                   if ((center['blockName'] ?? '').toString().isNotEmpty)
-                    _infoChip(Icons.location_city_outlined, 'ब्लॉक: ${center['blockName']}'),
+                    _infoChip(Icons.location_city_outlined,
+                        'ब्लॉक: ${center['blockName']}'),
                   if ((center['busNo'] ?? '').toString().isNotEmpty)
-                    _infoChip(Icons.directions_bus_outlined, 'बस: ${center['busNo']}'),
+                    _infoChip(Icons.directions_bus_outlined,
+                        'बस: ${center['busNo']}'),
                 ]),
 
-                // Rule preview — inline detail
+                // Rule preview
                 if (rule != null) ...[
                   const SizedBox(height: 8),
                   _InlineRulePreview(rule: rule, typeColor: _typeColor(type)),
@@ -659,6 +955,18 @@ class _DutiesDialogState extends State<_DutiesDialog> {
 
                 const SizedBox(height: 10),
 
+                // ── Election filter toggle ─────────────────────────────────
+                _ElectionFilterBar(
+                  current:              _electionFilter,
+                  currentCount:         _currentElectionCount,
+                  totalCount:           _duties.length,
+                  activeElectionName:   widget.activeElectionName,
+                  onChanged: (f) => setState(() => _electionFilter = f),
+                ),
+
+                const SizedBox(height: 8),
+
+                // ── Armed filter bar ──────────────────────────────────────
                 _ArmedFilterBar(
                   current:      _armedFilter,
                   totalCount:   _duties.length,
@@ -675,43 +983,59 @@ class _DutiesDialogState extends State<_DutiesDialog> {
 
             Expanded(
               child: _loading && _duties.isEmpty
-                  ? const Center(child: CircularProgressIndicator(color: kPrimary))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: kPrimary))
                   : filtered.isEmpty
                       ? Center(child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center, children: [
-                          Icon(Icons.people_outline, size: 40, color: kSubtle.withOpacity(0.5)),
-                          const SizedBox(height: 10),
-                          Text(
-                            _duties.isEmpty
-                                ? 'इस बूथ पर कोई स्टाफ नहीं'
-                                : _armedFilter == _ArmedFilter.armed
-                                    ? 'कोई सशस्त्र स्टाफ नहीं'
-                                    : 'कोई निःशस्त्र स्टाफ नहीं',
-                            style: const TextStyle(color: kSubtle, fontSize: 13)),
-                        ]))
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(Icons.people_outline, size: 40,
+                                color: kSubtle.withOpacity(0.5)),
+                            const SizedBox(height: 10),
+                            Text(
+                              _duties.isEmpty
+                                  ? 'इस बूथ पर कोई स्टाफ नहीं'
+                                  : _electionFilter == _ElectionFilter.current
+                                      ? 'वर्तमान चुनाव में कोई स्टाफ नहीं'
+                                      : _armedFilter == _ArmedFilter.armed
+                                          ? 'कोई सशस्त्र स्टाफ नहीं'
+                                          : 'कोई निःशस्त्र स्टाफ नहीं',
+                              style: const TextStyle(
+                                  color: kSubtle, fontSize: 13)),
+                          ]))
                       : ListView.builder(
                           controller: _scroll,
-                          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 14, vertical: 10),
                           itemCount: filtered.length + (_hasMore ? 1 : 0),
                           itemBuilder: (_, i) {
                             if (i >= filtered.length) {
                               return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 12),
-                                child: Center(child: SizedBox(width: 18, height: 18,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))));
+                                padding:
+                                    EdgeInsets.symmetric(vertical: 12),
+                                child: Center(
+                                    child: SizedBox(
+                                        width: 18, height: 18,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: kPrimary))));
                             }
                             return _DutyCard(
-                              duty: filtered[i],
-                              isLocked: isLocked,
-                              onRemove: () => _removeDuty(filtered[i]),
+                              duty:               filtered[i],
+                              isLocked:           isLocked,
+                              activeElectionId:   widget.activeElectionId,
+                              activeElectionName: widget.activeElectionName,
+                              onRemove:           () => _removeDuty(filtered[i]),
                             );
                           },
                         ),
             ),
 
+            // Footer buttons
             Container(
               padding: const EdgeInsets.all(14),
-              decoration: const BoxDecoration(border: Border(top: BorderSide(color: kBorder))),
+              decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: kBorder))),
               child: Row(children: [
                 Expanded(child: OutlinedButton(
                   onPressed: () => Navigator.pop(context),
@@ -719,19 +1043,32 @@ class _DutiesDialogState extends State<_DutiesDialog> {
                       foregroundColor: kSubtle,
                       side: const BorderSide(color: kBorder),
                       padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                      shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(10))),
                   child: const Text('बंद करें'),
                 )),
                 const SizedBox(width: 12),
-                Expanded(child: ElevatedButton.icon(
-                  style: ElevatedButton.styleFrom(
-                      backgroundColor: kPrimary,
-                      foregroundColor: Colors.white,
-                      padding: const EdgeInsets.symmetric(vertical: 12),
-                      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
-                  onPressed: isLocked ? null : () => widget.onAssign(context),
-                  icon: const Icon(Icons.person_add_outlined, size: 16),
-                  label: const Text('स्टाफ जोड़ें'),
+                Expanded(child: Tooltip(
+                  message: canAct
+                      ? ''
+                      : (isLocked ? 'Super Zone locked' : 'कोई सक्रिय चुनाव नहीं'),
+                  child: ElevatedButton.icon(
+                    style: ElevatedButton.styleFrom(
+                        backgroundColor: canAct ? kPrimary : kSubtle,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10))),
+                    onPressed: canAct
+                        ? () => widget.onAssign(context)
+                        : null,
+                    icon: Icon(
+                        canAct
+                            ? Icons.person_add_outlined
+                            : Icons.lock_outline,
+                        size: 16),
+                    label: Text(canAct ? 'स्टाफ जोड़ें' : 'अक्षम'),
+                  ),
                 )),
               ]),
             ),
@@ -742,9 +1079,78 @@ class _DutiesDialogState extends State<_DutiesDialog> {
   }
 }
 
-// ── Inline rule preview ───────────────────────────────────────────────────────
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Election filter bar
+// ══════════════════════════════════════════════════════════════════════════════
+class _ElectionFilterBar extends StatelessWidget {
+  final _ElectionFilter current;
+  final int             currentCount;
+  final int             totalCount;
+  final String          activeElectionName;
+  final ValueChanged<_ElectionFilter> onChanged;
+
+  const _ElectionFilterBar({
+    required this.current,
+    required this.currentCount,
+    required this.totalCount,
+    required this.activeElectionName,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final label = activeElectionName.isNotEmpty
+        ? activeElectionName
+        : 'वर्तमान चुनाव';
+
+    return Row(children: [
+      const Icon(Icons.ballot_outlined, size: 13, color: kSubtle),
+      const SizedBox(width: 5),
+      const Text('चुनाव:', style: TextStyle(
+          color: kSubtle, fontSize: 11, fontWeight: FontWeight.w700)),
+      const SizedBox(width: 8),
+      Expanded(child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          _chip(_ElectionFilter.current,
+              '$label ($currentCount)', const Color(0xFF2E7D32)),
+          const SizedBox(width: 6),
+          _chip(_ElectionFilter.all,
+              'सभी ($totalCount)', kPrimary),
+        ]),
+      )),
+    ]);
+  }
+
+  Widget _chip(_ElectionFilter filter, String label, Color color) {
+    final selected = current == filter;
+    return GestureDetector(
+      onTap: () => onChanged(filter),
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 150),
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+        decoration: BoxDecoration(
+          color:        selected ? color : color.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(20),
+          border:       Border.all(
+              color: selected ? color : color.withOpacity(0.35)),
+        ),
+        child: Text(label, style: TextStyle(
+            color:      selected ? Colors.white : color,
+            fontSize:   11,
+            fontWeight: FontWeight.w700)),
+      ),
+    );
+  }
+}
+
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  Inline rule preview
+// ══════════════════════════════════════════════════════════════════════════════
 class _InlineRulePreview extends StatelessWidget {
-  final Map rule;
+  final Map  rule;
   final Color typeColor;
   const _InlineRulePreview({required this.rule, required this.typeColor});
 
@@ -775,22 +1181,22 @@ class _InlineRulePreview extends StatelessWidget {
         Row(children: [
           Icon(Icons.rule_outlined, size: 12, color: typeColor),
           const SizedBox(width: 5),
-          Text('बूथ मानक (Rule)', style: TextStyle(color: typeColor,
-              fontSize: 11, fontWeight: FontWeight.w800)),
+          Text('बूथ मानक (Rule)', style: TextStyle(
+              color: typeColor, fontSize: 11, fontWeight: FontWeight.w800)),
           const Spacer(),
-          Text('कुल $total स्टाफ', style: TextStyle(color: typeColor,
-              fontSize: 11, fontWeight: FontWeight.w700)),
+          Text('कुल $total स्टाफ', style: TextStyle(
+              color: typeColor, fontSize: 11, fontWeight: FontWeight.w700)),
         ]),
         const SizedBox(height: 6),
         SingleChildScrollView(
           scrollDirection: Axis.horizontal,
           child: Row(children: [
-            if (siA > 0)  _miniChip('SI सशस्त्र',    siA, kArmedColor),
-            if (siU > 0)  _miniChip('SI निःशस्त्र',  siU, kUnarmedColor),
-            if (hcA > 0)  _miniChip('HC सशस्त्र',    hcA, kArmedColor),
-            if (hcU > 0)  _miniChip('HC निःशस्त्र',  hcU, kUnarmedColor),
-            if (cA  > 0)  _miniChip('CO सशस्त्र',    cA,  kArmedColor),
-            if (cU  > 0)  _miniChip('CO निःशस्त्र',  cU,  kUnarmedColor),
+            if (siA  > 0) _miniChip('SI सशस्त्र',    siA,  kArmedColor),
+            if (siU  > 0) _miniChip('SI निःशस्त्र',  siU,  kUnarmedColor),
+            if (hcA  > 0) _miniChip('HC सशस्त्र',    hcA,  kArmedColor),
+            if (hcU  > 0) _miniChip('HC निःशस्त्र',  hcU,  kUnarmedColor),
+            if (cA   > 0) _miniChip('CO सशस्त्र',    cA,   kArmedColor),
+            if (cU   > 0) _miniChip('CO निःशस्त्र',  cU,   kUnarmedColor),
             if (auxA > 0) _miniChip('Aux सशस्त्र',   auxA, kArmedColor),
             if (auxU > 0) _miniChip('Aux निःशस्त्र', auxU, kUnarmedColor),
           ]),
@@ -808,7 +1214,8 @@ class _InlineRulePreview extends StatelessWidget {
       border: Border.all(color: color.withOpacity(0.3)),
     ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(color == kArmedColor ? Icons.gavel : Icons.shield_outlined,
+      Icon(color == kArmedColor
+          ? Icons.gavel : Icons.shield_outlined,
           size: 9, color: color),
       const SizedBox(width: 3),
       Text('$label: $count', style: TextStyle(
@@ -817,14 +1224,24 @@ class _InlineRulePreview extends StatelessWidget {
   );
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
-//  Duty card — FIXED: uses _parseArmed() for all armed detection
+//  Duty card — election chip + proper ApiException wiring
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutyCard extends StatelessWidget {
-  final Map duty;
-  final bool isLocked;
+  final Map    duty;
+  final bool   isLocked;
+  final int?   activeElectionId;
+  final String activeElectionName;
   final VoidCallback onRemove;
-  const _DutyCard({required this.duty, required this.onRemove, required this.isLocked});
+
+  const _DutyCard({
+    required this.duty,
+    required this.onRemove,
+    required this.isLocked,
+    required this.activeElectionId,
+    required this.activeElectionName,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -833,112 +1250,225 @@ class _DutyCard extends StatelessWidget {
     final rank  = '${d['rank'] ?? d['user_rank'] ?? ''}';
     final pno   = '${d['pno'] ?? ''}';
     final thana = '${d['staffThana'] ?? d['thana'] ?? ''}';
+    final armed = _parseArmed(d['isArmed'] ?? d['is_armed']);
 
-    // ✅ FIXED: use _parseArmed which handles bool/int/String
-    final armed     = _parseArmed(d['isArmed'] ?? d['is_armed']);
+    // ── Election context ──────────────────────────────────────────────────
+    final dutyElectionId   = d['electionId'] ?? d['election_id'];
+    final dutyElectionName = (d['electionName'] as String? ?? '').trim();
+    final isCurrentElection = activeElectionId != null &&
+        dutyElectionId != null &&
+        (dutyElectionId as num).toInt() == activeElectionId;
+
     final rankColor = _rankColor(rank);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
-      padding: const EdgeInsets.fromLTRB(12, 10, 8, 10),
       decoration: BoxDecoration(
         color: Colors.white,
         border: Border.all(color: armed
             ? kArmedColor.withOpacity(0.3)
             : kUnarmedColor.withOpacity(0.25)),
         borderRadius: BorderRadius.circular(10),
-        // Subtle left accent bar to make armed/unarmed obvious at a glance
         boxShadow: [BoxShadow(
-          color: armed ? kArmedColor.withOpacity(0.08) : kUnarmedColor.withOpacity(0.06),
-          blurRadius: 4, offset: const Offset(0, 1))],
+            color: armed
+                ? kArmedColor.withOpacity(0.07)
+                : kUnarmedColor.withOpacity(0.05),
+            blurRadius: 4, offset: const Offset(0, 1))],
       ),
-      child: Row(children: [
-        // Colored left accent
-        Container(
-          width: 4, height: 40,
-          margin: const EdgeInsets.only(right: 10),
-          decoration: BoxDecoration(
-            color: armed ? kArmedColor : kUnarmedColor,
-            borderRadius: BorderRadius.circular(2),
-          ),
-        ),
-        // Avatar
-        Container(width: 36, height: 36,
-          decoration: BoxDecoration(color: rankColor.withOpacity(0.12),
-              shape: BoxShape.circle, border: Border.all(color: rankColor.withOpacity(0.3))),
-          child: Center(child: Text(
-            name.split(' ').where((w) => w.isNotEmpty).take(2).map((w) => w[0]).join().toUpperCase(),
-            style: TextStyle(color: rankColor, fontWeight: FontWeight.w900, fontSize: 12)))),
-        const SizedBox(width: 10),
-        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          Row(children: [
-            Expanded(child: Text(name, style: const TextStyle(
-                color: kDark, fontWeight: FontWeight.w700, fontSize: 13),
-                maxLines: 1, overflow: TextOverflow.ellipsis)),
-            // Armed chip
-            _ArmedChip(isArmed: armed),
-          ]),
-          const SizedBox(height: 3),
-          Wrap(spacing: 8, children: [
-            if (rank.isNotEmpty) Container(
-              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-              decoration: BoxDecoration(color: rankColor.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(4),
-                  border: Border.all(color: rankColor.withOpacity(0.3))),
-              child: Text(rank, style: TextStyle(color: rankColor, fontSize: 9,
-                  fontWeight: FontWeight.w700))),
-            if (pno.isNotEmpty)
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.badge_outlined, size: 10, color: kSubtle),
-                const SizedBox(width: 2),
-                Text(pno, style: const TextStyle(color: kSubtle, fontSize: 10)),
-              ]),
-            if (thana.isNotEmpty)
-              Row(mainAxisSize: MainAxisSize.min, children: [
-                const Icon(Icons.local_police_outlined, size: 10, color: kSubtle),
-                const SizedBox(width: 2),
-                Flexible(child: Text(thana, style: const TextStyle(color: kSubtle, fontSize: 10),
-                    maxLines: 1, overflow: TextOverflow.ellipsis)),
-              ]),
-          ]),
-        ])),
-        const SizedBox(width: 4),
-        GestureDetector(
-          onTap: isLocked ? null : onRemove,
-          child: Container(width: 32, height: 32,
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        // Main row
+        Row(children: [
+          // Left accent bar
+          Container(
+            width: 4, height: 52,
+            margin: const EdgeInsets.only(right: 10, left: 2),
             decoration: BoxDecoration(
-              color: isLocked ? kSubtle.withOpacity(0.06) : kError.withOpacity(0.08),
-              borderRadius: BorderRadius.circular(8),
-              border: Border.all(color: isLocked
-                  ? kSubtle.withOpacity(0.2) : kError.withOpacity(0.25)),
+              color: armed ? kArmedColor : kUnarmedColor,
+              borderRadius: BorderRadius.circular(2),
             ),
-            child: Icon(
-              isLocked ? Icons.lock_outline : Icons.person_remove_outlined,
-              size: 15, color: isLocked ? kSubtle : kError)),
-        ),
+          ),
+          // Avatar
+          Container(
+            width: 36, height: 36,
+            decoration: BoxDecoration(
+                color: rankColor.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: rankColor.withOpacity(0.3))),
+            child: Center(child: Text(
+                name.split(' ').where((w) => w.isNotEmpty).take(2)
+                    .map((w) => w[0]).join().toUpperCase(),
+                style: TextStyle(color: rankColor,
+                    fontWeight: FontWeight.w900, fontSize: 12)))),
+          const SizedBox(width: 10),
+          Expanded(child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 10),
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+              Row(children: [
+                Expanded(child: Text(name,
+                    style: const TextStyle(color: kDark,
+                        fontWeight: FontWeight.w700, fontSize: 13),
+                    maxLines: 1, overflow: TextOverflow.ellipsis)),
+                _ArmedChip(isArmed: armed),
+              ]),
+              const SizedBox(height: 3),
+              Wrap(spacing: 8, children: [
+                if (rank.isNotEmpty) Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 5, vertical: 1),
+                    decoration: BoxDecoration(
+                        color: rankColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(
+                            color: rankColor.withOpacity(0.3))),
+                    child: Text(rank, style: TextStyle(color: rankColor,
+                        fontSize: 9, fontWeight: FontWeight.w700))),
+                if (pno.isNotEmpty)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.badge_outlined, size: 10, color: kSubtle),
+                    const SizedBox(width: 2),
+                    Text(pno, style: const TextStyle(
+                        color: kSubtle, fontSize: 10)),
+                  ]),
+                if (thana.isNotEmpty)
+                  Row(mainAxisSize: MainAxisSize.min, children: [
+                    const Icon(Icons.local_police_outlined,
+                        size: 10, color: kSubtle),
+                    const SizedBox(width: 2),
+                    Flexible(child: Text(thana,
+                        style: const TextStyle(color: kSubtle, fontSize: 10),
+                        maxLines: 1, overflow: TextOverflow.ellipsis)),
+                  ]),
+              ]),
+            ]),
+          )),
+          const SizedBox(width: 4),
+          // Remove button
+          Padding(
+            padding: const EdgeInsets.only(right: 8),
+            child: GestureDetector(
+              onTap: isLocked ? null : onRemove,
+              child: Container(
+                  width: 32, height: 32,
+                  decoration: BoxDecoration(
+                    color: isLocked
+                        ? kSubtle.withOpacity(0.06)
+                        : kError.withOpacity(0.08),
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: isLocked
+                        ? kSubtle.withOpacity(0.2)
+                        : kError.withOpacity(0.25)),
+                  ),
+                  child: Icon(
+                      isLocked
+                          ? Icons.lock_outline
+                          : Icons.person_remove_outlined,
+                      size: 15,
+                      color: isLocked ? kSubtle : kError)),
+            ),
+          ),
+        ]),
+
+        // ── Election chip strip ─────────────────────────────────────────
+        if (dutyElectionId != null) ...[
+          Padding(
+            padding: const EdgeInsets.fromLTRB(18, 0, 10, 8),
+            child: Row(children: [
+              _ElectionChip(
+                electionId:   (dutyElectionId as num).toInt(),
+                electionName: dutyElectionName.isNotEmpty
+                    ? dutyElectionName
+                    : (isCurrentElection && activeElectionName.isNotEmpty
+                        ? activeElectionName
+                        : 'चुनाव #$dutyElectionId'),
+                isCurrent: isCurrentElection,
+              ),
+            ]),
+          ),
+        ],
       ]),
     );
   }
 }
 
+
+// ── Election chip ─────────────────────────────────────────────────────────────
+class _ElectionChip extends StatelessWidget {
+  final int    electionId;
+  final String electionName;
+  final bool   isCurrent;
+
+  const _ElectionChip({
+    required this.electionId,
+    required this.electionName,
+    required this.isCurrent,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = isCurrent ? const Color(0xFF2E7D32) : kSubtle;
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
+      decoration: BoxDecoration(
+        color: color.withOpacity(0.09),
+        borderRadius: BorderRadius.circular(5),
+        border: Border.all(color: color.withOpacity(0.35)),
+      ),
+      child: Row(mainAxisSize: MainAxisSize.min, children: [
+        Icon(
+            isCurrent
+                ? Icons.how_to_vote_rounded
+                : Icons.history_edu_outlined,
+            size: 9, color: color),
+        const SizedBox(width: 4),
+        Text(electionName,
+            style: TextStyle(
+                color: color, fontSize: 9, fontWeight: FontWeight.w700)),
+        if (!isCurrent) ...[
+          const SizedBox(width: 4),
+          Container(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 1),
+            decoration: BoxDecoration(
+                color: kSubtle.withOpacity(0.12),
+                borderRadius: BorderRadius.circular(3)),
+            child: const Text('पुराना',
+                style: TextStyle(color: kSubtle,
+                    fontSize: 8, fontWeight: FontWeight.w600)),
+          ),
+        ],
+      ]),
+    );
+  }
+}
+
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  Assign Dialog
 // ══════════════════════════════════════════════════════════════════════════════
 class _AssignDialog extends StatefulWidget {
-  final Map center;
+  final Map    center;
+  final int?   activeElectionId;
+  final String activeElectionName;
   final VoidCallback onAssigned;
-  const _AssignDialog({required this.center, required this.onAssigned});
+
+  const _AssignDialog({
+    required this.center,
+    required this.activeElectionId,
+    required this.activeElectionName,
+    required this.onAssigned,
+  });
+
   @override
   State<_AssignDialog> createState() => _AssignDialogState();
 }
 
 class _AssignDialogState extends State<_AssignDialog> {
-  final List<Map> _staff      = [];
-  int    _staffPage           = 1;
-  int    _staffTotal          = 0;
-  bool   _staffLoading        = false;
-  bool   _staffHasMore        = true;
-  String _staffQ              = '';
+  final List<Map>  _staff      = [];
+  int    _staffPage             = 1;
+  int    _staffTotal            = 0;
+  bool   _staffLoading          = false;
+  bool   _staffHasMore          = true;
+  String _staffQ                = '';
   Timer? _searchTimer;
 
   final _searchCtrl  = TextEditingController();
@@ -946,7 +1476,7 @@ class _AssignDialogState extends State<_AssignDialog> {
   final Set<int> _selected = {};
   final _busCtrl           = TextEditingController();
 
-  bool _saving = false;
+  bool _saving             = false;
   _ArmedFilter _armedFilter = _ArmedFilter.all;
 
   List<Map> get _filteredStaff {
@@ -957,7 +1487,8 @@ class _AssignDialogState extends State<_AssignDialog> {
     }).toList();
   }
 
-  int get _armedCount   => _staff.where((s) => _parseArmed(s['isArmed'] ?? s['is_armed'])).length;
+  int get _armedCount   => _staff.where((s) =>
+      _parseArmed(s['isArmed'] ?? s['is_armed'])).length;
   int get _unarmedCount => _staff.length - _armedCount;
 
   @override
@@ -980,8 +1511,9 @@ class _AssignDialogState extends State<_AssignDialog> {
   }
 
   void _onStaffScroll() {
-    if (_staffScroll.position.pixels >= _staffScroll.position.maxScrollExtent - 150
-        && !_staffLoading && _staffHasMore) _loadStaff();
+    if (_staffScroll.position.pixels >=
+            _staffScroll.position.maxScrollExtent - 150 &&
+        !_staffLoading && _staffHasMore) _loadStaff();
   }
 
   void _onSearchChanged() {
@@ -1043,12 +1575,20 @@ class _AssignDialogState extends State<_AssignDialog> {
       }
       widget.onAssigned();
       if (mounted) Navigator.pop(context);
+    } on ApiException catch (e) {
+      if (mounted) {
+        setState(() => _saving = false);
+        showApiError(context, e);
+      }
     } catch (e) {
       if (mounted) {
         setState(() => _saving = false);
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(
           content: Text('त्रुटि: $e'),
-          backgroundColor: kError, behavior: SnackBarBehavior.floating));
+          backgroundColor: kError,
+          behavior: SnackBarBehavior.floating,
+          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+        ));
       }
     }
   }
@@ -1070,8 +1610,8 @@ class _AssignDialogState extends State<_AssignDialog> {
           child: Column(mainAxisSize: MainAxisSize.min, children: [
 
             _DialogHeader(
-              title: 'स्टाफ असाइन करें',
-              icon: Icons.person_add_outlined,
+              title:   'स्टाफ असाइन करें',
+              icon:    Icons.person_add_outlined,
               onClose: () => Navigator.pop(context),
             ),
 
@@ -1082,44 +1622,71 @@ class _AssignDialogState extends State<_AssignDialog> {
               child: Row(children: [
                 _TypeBadge(type: type),
                 const SizedBox(width: 8),
-                // Booth count chip
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 3),
                   decoration: BoxDecoration(
                     color: _typeColor(type).withOpacity(0.12),
                     borderRadius: BorderRadius.circular(6),
-                    border: Border.all(color: _typeColor(type).withOpacity(0.3)),
+                    border: Border.all(
+                        color: _typeColor(type).withOpacity(0.3)),
                   ),
                   child: Row(mainAxisSize: MainAxisSize.min, children: [
-                    Icon(Icons.how_to_vote_outlined, size: 11, color: _typeColor(type)),
+                    Icon(Icons.how_to_vote_outlined,
+                        size: 11, color: _typeColor(type)),
                     const SizedBox(width: 3),
-                    Text('$bc बूथ',
-                        style: TextStyle(color: _typeColor(type),
-                            fontSize: 11, fontWeight: FontWeight.w700)),
+                    Text('$bc बूथ', style: TextStyle(
+                        color: _typeColor(type),
+                        fontSize: 11, fontWeight: FontWeight.w700)),
                   ]),
                 ),
                 const SizedBox(width: 8),
                 Expanded(child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
                   Text('${center['name']}',
-                      style: const TextStyle(color: kDark, fontWeight: FontWeight.w700, fontSize: 13),
+                      style: const TextStyle(color: kDark,
+                          fontWeight: FontWeight.w700, fontSize: 13),
                       overflow: TextOverflow.ellipsis),
-                  Text('${center['thana']}  •  ${center['gpName']}  •  ${center['sectorName']}',
+                  Text(
+                      '${center['thana']}  •  ${center['gpName']}'
+                      '  •  ${center['sectorName']}',
                       style: const TextStyle(color: kSubtle, fontSize: 11),
                       overflow: TextOverflow.ellipsis),
                 ])),
                 if (_selected.isNotEmpty)
                   Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 4),
                     decoration: BoxDecoration(
                         color: kPrimary.withOpacity(0.1),
                         borderRadius: BorderRadius.circular(20),
-                        border: Border.all(color: kPrimary.withOpacity(0.4))),
+                        border: Border.all(
+                            color: kPrimary.withOpacity(0.4))),
                     child: Text('${_selected.length} चुने',
-                        style: const TextStyle(color: kPrimary, fontSize: 11,
-                            fontWeight: FontWeight.w700))),
+                        style: const TextStyle(color: kPrimary,
+                            fontSize: 11, fontWeight: FontWeight.w700))),
               ]),
             ),
+
+            // Election context strip
+            if (widget.activeElectionName.isNotEmpty)
+              Container(
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 16, vertical: 6),
+                color: const Color(0xFF1B5E20).withOpacity(0.08),
+                child: Row(children: [
+                  const Icon(Icons.how_to_vote_rounded,
+                      size: 13, color: Color(0xFF2E7D32)),
+                  const SizedBox(width: 6),
+                  Expanded(child: Text(
+                      'असाइन होगा: ${widget.activeElectionName}',
+                      style: const TextStyle(
+                          color: Color(0xFF2E7D32),
+                          fontSize: 11, fontWeight: FontWeight.w600),
+                      maxLines: 1, overflow: TextOverflow.ellipsis)),
+                ]),
+              ),
 
             const Divider(height: 1, color: kBorder),
 
@@ -1131,7 +1698,9 @@ class _AssignDialogState extends State<_AssignDialog> {
                   style: const TextStyle(color: kDark, fontSize: 13),
                   decoration: _searchDec(
                     'नाम, PNO, थाना से खोजें... ($_staffTotal उपलब्ध)',
-                    onClear: _staffQ.isNotEmpty ? () { _searchCtrl.clear(); } : null,
+                    onClear: _staffQ.isNotEmpty
+                        ? () { _searchCtrl.clear(); }
+                        : null,
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1140,7 +1709,7 @@ class _AssignDialogState extends State<_AssignDialog> {
                   totalCount:   _staff.length,
                   armedCount:   _armedCount,
                   unarmedCount: _unarmedCount,
-                  onChanged:    (f) => setState(() {
+                  onChanged: (f) => setState(() {
                     _armedFilter = f;
                     _selected.clear();
                   }),
@@ -1151,11 +1720,14 @@ class _AssignDialogState extends State<_AssignDialog> {
 
             Expanded(
               child: _staffLoading && _staff.isEmpty
-                  ? const Center(child: CircularProgressIndicator(color: kPrimary))
+                  ? const Center(
+                      child: CircularProgressIndicator(color: kPrimary))
                   : filtered.isEmpty
                       ? Center(child: Column(
-                          mainAxisAlignment: MainAxisAlignment.center, children: [
-                          Icon(Icons.people_outline, size: 40, color: kSubtle.withOpacity(0.4)),
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                          Icon(Icons.people_outline, size: 40,
+                              color: kSubtle.withOpacity(0.4)),
                           const SizedBox(height: 10),
                           Text(
                             _staff.isEmpty
@@ -1165,19 +1737,27 @@ class _AssignDialogState extends State<_AssignDialog> {
                                     : _armedFilter == _ArmedFilter.armed
                                         ? 'कोई सशस्त्र स्टाफ उपलब्ध नहीं'
                                         : 'कोई निःशस्त्र स्टाफ उपलब्ध नहीं',
-                            style: const TextStyle(color: kSubtle, fontSize: 13),
+                            style: const TextStyle(
+                                color: kSubtle, fontSize: 13),
                             textAlign: TextAlign.center),
                         ]))
                       : ListView.separated(
                           controller: _staffScroll,
-                          itemCount: filtered.length + (_staffHasMore ? 1 : 0),
-                          separatorBuilder: (_, __) => const Divider(height: 1, color: kBorder),
+                          itemCount:
+                              filtered.length + (_staffHasMore ? 1 : 0),
+                          separatorBuilder: (_, __) => const Divider(
+                              height: 1, color: kBorder),
                           itemBuilder: (_, i) {
                             if (i >= filtered.length) {
                               return const Padding(
-                                padding: EdgeInsets.symmetric(vertical: 10),
-                                child: Center(child: SizedBox(width: 16, height: 16,
-                                    child: CircularProgressIndicator(strokeWidth: 2, color: kPrimary))));
+                                padding: EdgeInsets.symmetric(
+                                    vertical: 10),
+                                child: Center(
+                                    child: SizedBox(
+                                        width: 16, height: 16,
+                                        child: CircularProgressIndicator(
+                                            strokeWidth: 2,
+                                            color: kPrimary))));
                             }
                             final s   = filtered[i];
                             final sid = s['id'] as int;
@@ -1185,8 +1765,11 @@ class _AssignDialogState extends State<_AssignDialog> {
                               staff:    s,
                               selected: _selected.contains(sid),
                               onTap: () => setState(() {
-                                if (_selected.contains(sid)) _selected.remove(sid);
-                                else _selected.add(sid);
+                                if (_selected.contains(sid)) {
+                                  _selected.remove(sid);
+                                } else {
+                                  _selected.add(sid);
+                                }
                               }),
                             );
                           },
@@ -1195,23 +1778,32 @@ class _AssignDialogState extends State<_AssignDialog> {
 
             Container(
               padding: const EdgeInsets.fromLTRB(14, 10, 14, 14),
-              decoration: const BoxDecoration(border: Border(top: BorderSide(color: kBorder))),
+              decoration: const BoxDecoration(
+                  border: Border(top: BorderSide(color: kBorder))),
               child: Column(children: [
                 TextFormField(
                   controller: _busCtrl,
                   style: const TextStyle(color: kDark, fontSize: 13),
                   decoration: InputDecoration(
                     labelText: 'बस संख्या (वैकल्पिक)',
-                    labelStyle: const TextStyle(color: kSubtle, fontSize: 12),
-                    prefixIcon: const Icon(Icons.directions_bus_outlined, size: 18, color: kSubtle),
+                    labelStyle:
+                        const TextStyle(color: kSubtle, fontSize: 12),
+                    prefixIcon: const Icon(
+                        Icons.directions_bus_outlined,
+                        size: 18, color: kSubtle),
                     isDense: true, filled: true, fillColor: Colors.white,
-                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                    border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
                         borderSide: const BorderSide(color: kBorder)),
-                    enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
+                    enabledBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
                         borderSide: const BorderSide(color: kBorder)),
-                    focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-                        borderSide: const BorderSide(color: kPrimary, width: 2)),
-                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+                    focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10),
+                        borderSide:
+                            const BorderSide(color: kPrimary, width: 2)),
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -1221,8 +1813,10 @@ class _AssignDialogState extends State<_AssignDialog> {
                     style: OutlinedButton.styleFrom(
                         foregroundColor: kSubtle,
                         side: const BorderSide(color: kBorder),
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 12),
+                        shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(10))),
                     child: const Text('रद्द'),
                   )),
                   if (_selected.isNotEmpty) ...[
@@ -1231,13 +1825,21 @@ class _AssignDialogState extends State<_AssignDialog> {
                       style: ElevatedButton.styleFrom(
                           backgroundColor: kPrimary,
                           foregroundColor: Colors.white,
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10))),
+                          padding: const EdgeInsets.symmetric(
+                              vertical: 12),
+                          shape: RoundedRectangleBorder(
+                              borderRadius:
+                                  BorderRadius.circular(10))),
                       onPressed: _saving ? null : _assign,
                       child: _saving
-                          ? const SizedBox(width: 16, height: 16,
-                              child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white))
-                          : Text(_selected.length == 1 ? 'असाइन करें' : '${_selected.length} असाइन करें'),
+                          ? const SizedBox(
+                              width: 16, height: 16,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white))
+                          : Text(_selected.length == 1
+                              ? 'असाइन करें'
+                              : '${_selected.length} असाइन करें'),
                     )),
                   ],
                 ]),
@@ -1250,6 +1852,7 @@ class _AssignDialogState extends State<_AssignDialog> {
   }
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  _ArmedFilterBar
 // ══════════════════════════════════════════════════════════════════════════════
@@ -1257,9 +1860,10 @@ class _ArmedFilterBar extends StatelessWidget {
   final _ArmedFilter current;
   final int totalCount, armedCount, unarmedCount;
   final ValueChanged<_ArmedFilter> onChanged;
+
   const _ArmedFilterBar({
-    required this.current, required this.totalCount,
-    required this.armedCount, required this.unarmedCount,
+    required this.current,       required this.totalCount,
+    required this.armedCount,    required this.unarmedCount,
     required this.onChanged,
   });
 
@@ -1268,14 +1872,15 @@ class _ArmedFilterBar extends StatelessWidget {
     return Row(children: [
       const Icon(Icons.shield_outlined, size: 13, color: kSubtle),
       const SizedBox(width: 5),
-      const Text('शस्त्र:', style: TextStyle(color: kSubtle, fontSize: 11, fontWeight: FontWeight.w700)),
+      const Text('शस्त्र:', style: TextStyle(
+          color: kSubtle, fontSize: 11, fontWeight: FontWeight.w700)),
       const SizedBox(width: 8),
       Expanded(child: SingleChildScrollView(
         scrollDirection: Axis.horizontal,
         child: Row(children: [
-          _chip(_ArmedFilter.all,     'सभी ($totalCount)',             kPrimary),
+          _chip(_ArmedFilter.all,     'सभी ($totalCount)',              kPrimary),
           const SizedBox(width: 6),
-          _chip(_ArmedFilter.armed,   '🗡 सशस्त्र ($armedCount)',     kArmedColor),
+          _chip(_ArmedFilter.armed,   '🗡 सशस्त्र ($armedCount)',      kArmedColor),
           const SizedBox(width: 6),
           _chip(_ArmedFilter.unarmed, '🛡 निःशस्त्र ($unarmedCount)', kUnarmedColor),
         ]),
@@ -1293,15 +1898,18 @@ class _ArmedFilterBar extends StatelessWidget {
         decoration: BoxDecoration(
           color:        selected ? color : color.withOpacity(0.08),
           borderRadius: BorderRadius.circular(20),
-          border:       Border.all(color: selected ? color : color.withOpacity(0.35)),
+          border:       Border.all(
+              color: selected ? color : color.withOpacity(0.35)),
         ),
         child: Text(label, style: TextStyle(
-            color: selected ? Colors.white : color,
-            fontSize: 11, fontWeight: FontWeight.w700)),
+            color:      selected ? Colors.white : color,
+            fontSize:   11,
+            fontWeight: FontWeight.w700)),
       ),
     );
   }
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  _ArmedChip
@@ -1313,7 +1921,7 @@ class _ArmedChip extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final color = isArmed ? kArmedColor : kUnarmedColor;
-    final label = isArmed ? 'सशस्त्र' : 'निःशस्त्र';
+    final label = isArmed ? 'सशस्त्र'  : 'निःशस्त्र';
     final icon  = isArmed ? Icons.gavel : Icons.shield_outlined;
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
@@ -1325,25 +1933,31 @@ class _ArmedChip extends StatelessWidget {
       child: Row(mainAxisSize: MainAxisSize.min, children: [
         Icon(icon, size: 10, color: color),
         const SizedBox(width: 3),
-        Text(label, style: TextStyle(color: color, fontSize: 9, fontWeight: FontWeight.w700)),
+        Text(label, style: TextStyle(
+            color: color, fontSize: 9, fontWeight: FontWeight.w700)),
       ]),
     );
   }
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
-//  Staff picker row — FIXED armed detection
+//  Staff picker row
 // ══════════════════════════════════════════════════════════════════════════════
 class _StaffPickerRow extends StatelessWidget {
-  final Map staff;
-  final bool selected;
+  final Map          staff;
+  final bool         selected;
   final VoidCallback onTap;
-  const _StaffPickerRow({required this.staff, required this.selected, required this.onTap});
+
+  const _StaffPickerRow({
+    required this.staff,
+    required this.selected,
+    required this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
     final s       = staff;
-    // ✅ FIXED: use _parseArmed
     final isArmed = _parseArmed(s['isArmed'] ?? s['is_armed']);
     final rank    = '${s['rank'] ?? s['user_rank'] ?? ''}';
     final rc      = _rankColor(rank);
@@ -1362,7 +1976,8 @@ class _StaffPickerRow extends StatelessWidget {
             decoration: BoxDecoration(
               color:  selected ? kPrimary : kSurface,
               shape:  BoxShape.circle,
-              border: Border.all(color: selected ? kPrimary : kBorder),
+              border: Border.all(
+                  color: selected ? kPrimary : kBorder),
             ),
             child: selected
                 ? const Icon(Icons.check, color: Colors.white, size: 14)
@@ -1370,18 +1985,28 @@ class _StaffPickerRow extends StatelessWidget {
           ),
           const SizedBox(width: 10),
           // Avatar
-          Container(width: 34, height: 34,
-            decoration: BoxDecoration(color: rc.withOpacity(0.12),
-                shape: BoxShape.circle, border: Border.all(color: rc.withOpacity(0.3))),
+          Container(
+            width: 34, height: 34,
+            decoration: BoxDecoration(
+                color: rc.withOpacity(0.12),
+                shape: BoxShape.circle,
+                border: Border.all(color: rc.withOpacity(0.3))),
             child: Center(child: Text(
-              '${s['name']}'.split(' ').where((w) => w.isNotEmpty)
-                  .take(2).map((w) => w[0]).join().toUpperCase(),
-              style: TextStyle(color: rc, fontWeight: FontWeight.w900, fontSize: 12)))),
+                '${s['name']}'.split(' ')
+                    .where((w) => w.isNotEmpty)
+                    .take(2)
+                    .map((w) => w[0])
+                    .join()
+                    .toUpperCase(),
+                style: TextStyle(color: rc,
+                    fontWeight: FontWeight.w900, fontSize: 12)))),
           const SizedBox(width: 10),
-          Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+          Expanded(child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start, children: [
             Row(children: [
               Expanded(child: Text('${s['name']}',
-                  style: TextStyle(color: selected ? kPrimary : kDark,
+                  style: TextStyle(
+                      color: selected ? kPrimary : kDark,
                       fontSize: 13, fontWeight: FontWeight.w600),
                   maxLines: 1, overflow: TextOverflow.ellipsis)),
               _ArmedChip(isArmed: isArmed),
@@ -1389,19 +2014,25 @@ class _StaffPickerRow extends StatelessWidget {
             const SizedBox(height: 2),
             Row(children: [
               if (rank.isNotEmpty) Container(
-                margin: const EdgeInsets.only(right: 6),
-                padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-                decoration: BoxDecoration(color: rc.withOpacity(0.1),
-                    borderRadius: BorderRadius.circular(4),
-                    border: Border.all(color: rc.withOpacity(0.3))),
-                child: Text(rank, style: TextStyle(color: rc, fontSize: 9,
-                    fontWeight: FontWeight.w700))),
+                  margin: const EdgeInsets.only(right: 6),
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 5, vertical: 1),
+                  decoration: BoxDecoration(
+                      color: rc.withOpacity(0.1),
+                      borderRadius: BorderRadius.circular(4),
+                      border: Border.all(color: rc.withOpacity(0.3))),
+                  child: Text(rank, style: TextStyle(
+                      color: rc, fontSize: 9,
+                      fontWeight: FontWeight.w700))),
               if ('${s['pno']}'.isNotEmpty)
-                Text('PNO: ${s['pno']}', style: const TextStyle(color: kSubtle, fontSize: 10)),
+                Text('PNO: ${s['pno']}',
+                    style: const TextStyle(color: kSubtle, fontSize: 10)),
               if ('${s['thana']}'.isNotEmpty) ...[
-                const Text('  •  ', style: TextStyle(color: kSubtle, fontSize: 10)),
+                const Text('  •  ',
+                    style: TextStyle(color: kSubtle, fontSize: 10)),
                 Flexible(child: Text('${s['thana']}',
-                    style: const TextStyle(color: kSubtle, fontSize: 10),
+                    style: const TextStyle(
+                        color: kSubtle, fontSize: 10),
                     maxLines: 1, overflow: TextOverflow.ellipsis)),
               ],
             ]),
@@ -1412,13 +2043,58 @@ class _StaffPickerRow extends StatelessWidget {
   }
 }
 
+
 // ══════════════════════════════════════════════════════════════════════════════
 //  Shared helpers
 // ══════════════════════════════════════════════════════════════════════════════
 
+/// Shimmer placeholder — used for the loading banner state
+class _ShimmerBox extends StatefulWidget {
+  final double? width, height;
+  final double  radius;
+  const _ShimmerBox({this.width, this.height, this.radius = 6});
+
+  @override
+  State<_ShimmerBox> createState() => _ShimmerBoxState();
+}
+
+class _ShimmerBoxState extends State<_ShimmerBox>
+    with SingleTickerProviderStateMixin {
+  late AnimationController _ctrl;
+  late Animation<double>   _anim;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = AnimationController(
+        vsync: this,
+        duration: const Duration(milliseconds: 1000))
+      ..repeat(reverse: true);
+    _anim = CurvedAnimation(parent: _ctrl, curve: Curves.easeInOut);
+  }
+
+  @override
+  void dispose() { _ctrl.dispose(); super.dispose(); }
+
+  @override
+  Widget build(BuildContext context) => AnimatedBuilder(
+    animation: _anim,
+    builder: (_, __) => Container(
+      width: widget.width, height: widget.height,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(widget.radius),
+        color: Color.lerp(
+            const Color(0xFFEDE8D5),
+            const Color(0xFFF5EED8),
+            _anim.value),
+      ),
+    ),
+  );
+}
+
 class _DialogHeader extends StatelessWidget {
-  final String title;
-  final IconData icon;
+  final String       title;
+  final IconData     icon;
   final VoidCallback? onClose;
   const _DialogHeader({required this.title, required this.icon, this.onClose});
 
@@ -1431,19 +2107,23 @@ class _DialogHeader extends StatelessWidget {
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       child: Row(children: [
-        Container(padding: const EdgeInsets.all(6),
-          decoration: BoxDecoration(color: kPrimary.withOpacity(0.25),
+        Container(
+          padding: const EdgeInsets.all(6),
+          decoration: BoxDecoration(
+              color: kPrimary.withOpacity(0.25),
               borderRadius: BorderRadius.circular(7)),
           child: Icon(icon, color: kBorder, size: 16)),
         const SizedBox(width: 10),
         Expanded(child: Text(title,
-            style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w700, fontSize: 15),
+            style: const TextStyle(color: Colors.white,
+                fontWeight: FontWeight.w700, fontSize: 15),
             overflow: TextOverflow.ellipsis)),
         if (onClose != null)
           IconButton(
             icon: const Icon(Icons.close, color: Colors.white60, size: 20),
             onPressed: onClose,
-            padding: EdgeInsets.zero, constraints: const BoxConstraints()),
+            padding: EdgeInsets.zero,
+            constraints: const BoxConstraints()),
       ]),
     );
   }
@@ -1452,15 +2132,18 @@ class _DialogHeader extends StatelessWidget {
 class _TypeBadge extends StatelessWidget {
   final String type;
   const _TypeBadge({required this.type});
+
   @override
   Widget build(BuildContext context) {
     final color = _typeColor(type);
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
       decoration: BoxDecoration(
-          color: color.withOpacity(0.12), borderRadius: BorderRadius.circular(6),
+          color: color.withOpacity(0.12),
+          borderRadius: BorderRadius.circular(6),
           border: Border.all(color: color.withOpacity(0.4))),
-      child: Text(type, style: TextStyle(color: color, fontSize: 12, fontWeight: FontWeight.w900)),
+      child: Text(type, style: TextStyle(
+          color: color, fontSize: 12, fontWeight: FontWeight.w900)),
     );
   }
 }
@@ -1491,45 +2174,60 @@ Color _rankColor(String rank) {
 Widget _countBadge(int count) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
   decoration: BoxDecoration(
-    color:  count > 0 ? kSuccess.withOpacity(0.1) : kSurface,
+    color:        count > 0 ? kSuccess.withOpacity(0.1) : kSurface,
     borderRadius: BorderRadius.circular(20),
-    border: Border.all(color: count > 0 ? kSuccess.withOpacity(0.4) : kBorder),
+    border:       Border.all(
+        color: count > 0 ? kSuccess.withOpacity(0.4) : kBorder),
   ),
   child: Text('$count स्टाफ', style: TextStyle(
-      color: count > 0 ? kSuccess : kSubtle, fontSize: 11, fontWeight: FontWeight.w700)),
+      color:      count > 0 ? kSuccess : kSubtle,
+      fontSize:   11,
+      fontWeight: FontWeight.w700)),
 );
 
 BoxDecoration _dlgDec() => BoxDecoration(
   color:        kBg,
   borderRadius: BorderRadius.circular(16),
   border:       Border.all(color: kBorder, width: 1.2),
-  boxShadow: [BoxShadow(color: kPrimary.withOpacity(0.15),
-      blurRadius: 20, offset: const Offset(0, 8))],
+  boxShadow: [BoxShadow(
+      color:      kPrimary.withOpacity(0.15),
+      blurRadius: 20,
+      offset:     const Offset(0, 8))],
 );
 
-InputDecoration _searchDec(String hint, {VoidCallback? onClear}) => InputDecoration(
-  hintText:  hint,
-  hintStyle: const TextStyle(color: kSubtle, fontSize: 13),
+InputDecoration _searchDec(String hint, {VoidCallback? onClear}) =>
+    InputDecoration(
+  hintText:   hint,
+  hintStyle:  const TextStyle(color: kSubtle, fontSize: 13),
   prefixIcon: const Icon(Icons.search, color: kSubtle, size: 18),
   suffixIcon: onClear != null
-      ? IconButton(icon: const Icon(Icons.clear, size: 16, color: kSubtle), onPressed: onClear)
+      ? IconButton(
+          icon:      const Icon(Icons.clear, size: 16, color: kSubtle),
+          onPressed: onClear)
       : null,
-  filled: true, fillColor: Colors.white, isDense: true,
-  contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-  border: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: kBorder)),
-  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: kBorder)),
-  focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(10),
-      borderSide: const BorderSide(color: kPrimary, width: 2)),
+  filled:     true, fillColor: Colors.white, isDense: true,
+  contentPadding:
+      const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+  border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide:   const BorderSide(color: kBorder)),
+  enabledBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide:   const BorderSide(color: kBorder)),
+  focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(10),
+      borderSide:   const BorderSide(color: kPrimary, width: 2)),
 );
 
 Widget _infoChip(IconData icon, String? text) {
-  if (text == null || text.isEmpty || text == 'null') return const SizedBox.shrink();
+  if (text == null || text.isEmpty || text == 'null') {
+    return const SizedBox.shrink();
+  }
   return Row(mainAxisSize: MainAxisSize.min, children: [
     Icon(icon, size: 11, color: kSubtle),
     const SizedBox(width: 4),
-    Flexible(child: Text(text, style: const TextStyle(color: kSubtle, fontSize: 11),
+    Flexible(child: Text(text,
+        style: const TextStyle(color: kSubtle, fontSize: 11),
         overflow: TextOverflow.ellipsis)),
   ]);
 }
@@ -1537,8 +2235,24 @@ Widget _infoChip(IconData icon, String? text) {
 Widget _pill(String text, Color color) => Container(
   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
   decoration: BoxDecoration(
-    color: color.withOpacity(0.1), borderRadius: BorderRadius.circular(20),
-    border: Border.all(color: color.withOpacity(0.3)),
+    color:        color.withOpacity(0.1),
+    borderRadius: BorderRadius.circular(20),
+    border:       Border.all(color: color.withOpacity(0.3)),
   ),
-  child: Text(text, style: TextStyle(color: color, fontSize: 11, fontWeight: FontWeight.w700)),
+  child: Text(text, style: TextStyle(
+      color:      color,
+      fontSize:   11,
+      fontWeight: FontWeight.w700)),
 );
+
+/// Fallback showApiError — if your `widgets.dart` already exports this,
+/// remove this stub and rely on the import above.
+// ignore: unused_element
+void showApiError(BuildContext context, ApiException e) {
+  ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+    content: Text(e.message.isNotEmpty ? e.message : 'API त्रुटि हुई'),
+    backgroundColor: kError,
+    behavior: SnackBarBehavior.floating,
+    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+  ));
+}

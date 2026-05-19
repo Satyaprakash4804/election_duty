@@ -58,7 +58,20 @@ def login():
     write_log("INFO", f"User '{user['name']}' ({user['role']}) logged in", "Auth")
 
     is_web = body.get("platform") == "web"
-
+    
+    districts_list = []
+    if user["role"] == "multi_super_admin":
+        conn2 = get_db()
+        try:
+            with conn2.cursor() as cur2:
+                cur2.execute(
+                    "SELECT district FROM user_districts WHERE user_id=%s ORDER BY district",
+                    (user["id"],)
+                )
+                districts_list = [r["district"] for r in cur2.fetchall()]
+        finally:
+            conn2.close()
+            
     response_data = {
         "user": {
             "id":       user["id"],
@@ -67,6 +80,7 @@ def login():
             "pno":      user["pno"],
             "role":     user["role"].upper(),
             "district": user.get("district"),
+            "districts": districts_list,  
             "mobile":   user.get("mobile"),
         }
     }

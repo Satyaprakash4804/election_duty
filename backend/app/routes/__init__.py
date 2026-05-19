@@ -279,3 +279,74 @@ def log_exception(e):
     except Exception:
         pass
     return err("Internal server error", 500)
+
+
+
+def multi_super_admin_required(f):
+    """multi_super_admin OR master."""
+    return _role_guard("master", "multi_super_admin")(f)
+
+
+def super_or_multi_required(f):
+    """
+    Accepts:
+      - master                 (unrestricted)
+      - super_admin            (always — bound to their own district)
+      - multi_super_admin      (bound to any of their assigned districts)
+      - admin                  (legacy compat — only their district)
+    The route is expected to call `resolve_active_district()` (below)
+    to pick the working district based on role + headers.
+    """
+    return _role_guard("master", "super_admin", "multi_super_admin", "admin")(f)
+
+
+def resolve_active_district() -> tuple[str | None, object | None]:
+    """
+    Returns (district, error_response).
+    
+    Resolution order:
+      • master                → header X-Active-District (required), or None
+      • super_admin           → request.user["district"]
+      • multi_super_admin     → header X-Active-District (must be in their
+                                assigned list — checked against user_districts)
+      • admin                 → request.user["district"]
+    
+    On error returns (None, flask_response_tuple).
+    """
+    from db import get_db
+    user = getattr(request, "user", None) or {}
+    role = (user.get("role") or "").lower()
+
+    header_dist = (request.headers.get("X-Active-District") or "").strip()
+
+    if role == "master":
+        return (header_dist or None), None
+
+    if role in ("super_admin", "admin"):
+        d = (user.get("district") or "").strip()
+        if not d:
+            return None, err("No district configured on account", 400)
+        return d, None
+
+    if role == "multi_super_admin":
+        if not header_dist:
+            return None, err(
+                "X-Active-District header required for multi_super_admin", 400
+            )
+        # Verify the district is assigned to this user
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "SELECT 1 FROM user_districts WHERE user_id=%s AND district=%s",
+                    (user.get("id"), header_dist)
+                )
+                if not cur.fetchone():
+                    return None, err(
+                        f"District '{header_dist}' is not assigned to this user", 403
+                    )
+        finally:
+            conn.close()
+        return header_dist, None
+
+    return None, err(f"Role '{role}' has no district context", 403)

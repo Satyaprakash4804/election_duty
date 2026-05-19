@@ -2,7 +2,7 @@ import 'dart:ui';
 import 'package:flutter/material.dart';
 import '../../services/auth_service.dart';
 import '../../core/constants.dart';
-
+import '../../services/api_service.dart';
 // ─────────────────────────────────────────────
 //  COLOR PALETTE
 // ─────────────────────────────────────────────
@@ -869,6 +869,10 @@ class _LoginPageState extends State<LoginPage>
           break;
         case 'SUPER_ADMIN':
           destination = '/super';
+          break;
+        case 'MULTI_SUPER_ADMIN':                  // 🆕
+          destination = '/multi-super';
+          ApiService.activeDistrict = null;        // start with no district selected
           break;
         case 'ADMIN':
           destination = '/admin';

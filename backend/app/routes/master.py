@@ -1415,3 +1415,550 @@ def migrate():
 @master_bp.route("/ping", methods=["GET"])
 def ping():
     return ok("pong")
+
+
+
+
+@master_bp.route("/multi-super-admins", methods=["GET"])
+@master_required
+def list_multi_super_admins():
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT u.id, u.name, u.username, u.is_active, u.created_at,
+                       GROUP_CONCAT(ud.district ORDER BY ud.district SEPARATOR '||') AS districts,
+                       COUNT(ud.district) AS district_count
+                FROM users u
+                LEFT JOIN user_districts ud ON ud.user_id = u.id
+                WHERE u.role = 'multi_super_admin'
+                GROUP BY u.id
+                ORDER BY u.created_at DESC
+            """)
+            rows = cur.fetchall()
+    finally:
+        conn.close()
+ 
+    out = []
+    for r in rows:
+        districts = (r["districts"] or "").split("||") if r["districts"] else []
+        districts = [d for d in districts if d]
+        out.append({
+            "id":            r["id"],
+            "name":          r["name"],
+            "username":      r["username"],
+            "isActive":      bool(r["is_active"]),
+            "createdAt":     r["created_at"].isoformat() if r["created_at"] else None,
+            "districts":     districts,
+            "districtCount": len(districts),
+        })
+    return ok(out)
+ 
+ 
+@master_bp.route("/multi-super-admins", methods=["POST"])
+@master_required
+def create_multi_super_admin():
+    """
+    Body:
+    {
+      "name":      "...",
+      "username":  "...",
+      "password":  "...",
+      "districts": ["आगरा", "लखनऊ", "बरेली"]
+    }
+    """
+    body      = request.get_json() or {}
+    name      = (body.get("name")     or "").strip()
+    username  = (body.get("username") or "").strip()
+    password  = body.get("password") or ""
+    districts = body.get("districts") or []
+ 
+    if not name or not username or not password:
+        return err("name, username and password are required")
+    if len(password) < 6:
+        return err("Password must be at least 6 characters")
+    if not isinstance(districts, list) or len(districts) == 0:
+        return err("districts (non-empty array) is required")
+ 
+    # Dedupe & strip
+    districts = sorted({(d or "").strip() for d in districts if (d or "").strip()})
+    if not districts:
+        return err("districts must contain at least one non-empty value")
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM users WHERE username=%s", (username,))
+            if cur.fetchone():
+                return err("Username already taken", 409)
+ 
+            # NOTE: users.district stays empty for multi_super_admin — the
+            # m2m table user_districts holds the real list.
+            cur.execute("""
+                INSERT INTO users
+                    (name, username, password, role, district, is_active, created_by)
+                VALUES (%s,%s,%s,'multi_super_admin','',1,%s)
+            """, (name, username, hash_password(password), request.master_id))
+            new_id = cur.lastrowid
+ 
+            for d in districts:
+                cur.execute("""
+                    INSERT INTO user_districts (user_id, district, assigned_by)
+                    VALUES (%s,%s,%s)
+                """, (new_id, d, request.master_id))
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    write_log(
+        "INFO",
+        f"Multi-Super-Admin '{name}' created with {len(districts)} districts by master ID:{request.master_id}",
+        "Auth"
+    )
+    return ok(
+        {"id": new_id, "name": name, "username": username, "districts": districts},
+        f"Multi Super Admin created with {len(districts)} district(s)",
+        201
+    )
+ 
+ 
+@master_bp.route("/multi-super-admins/<int:uid>", methods=["GET"])
+@master_required
+def get_multi_super_admin(uid):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, name, username, is_active, created_at
+                FROM users WHERE id=%s AND role='multi_super_admin'
+            """, (uid,))
+            row = cur.fetchone()
+            if not row:
+                return err("Multi Super Admin not found", 404)
+ 
+            cur.execute(
+                "SELECT district FROM user_districts WHERE user_id=%s ORDER BY district",
+                (uid,)
+            )
+            districts = [r["district"] for r in cur.fetchall()]
+    finally:
+        conn.close()
+ 
+    return ok({
+        "id":        row["id"],
+        "name":      row["name"],
+        "username":  row["username"],
+        "isActive":  bool(row["is_active"]),
+        "createdAt": row["created_at"].isoformat() if row["created_at"] else None,
+        "districts": districts,
+    })
+ 
+ 
+@master_bp.route("/multi-super-admins/<int:uid>", methods=["PUT"])
+@master_required
+def update_multi_super_admin(uid):
+    """
+    Body (all optional):
+      { "name": "...", "username": "...", "districts": ["आगरा","..."] }
+    Districts: provide the FULL desired list; we replace atomically.
+    """
+    body      = request.get_json() or {}
+    name      = body.get("name")
+    username  = body.get("username")
+    districts = body.get("districts")
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM users WHERE id=%s AND role='multi_super_admin'",
+                (uid,)
+            )
+            if not cur.fetchone():
+                return err("Multi Super Admin not found", 404)
+ 
+            if username is not None:
+                u = (username or "").strip()
+                if not u:
+                    return err("username cannot be empty")
+                cur.execute(
+                    "SELECT id FROM users WHERE username=%s AND id!=%s", (u, uid)
+                )
+                if cur.fetchone():
+                    return err("Username already taken", 409)
+                cur.execute("UPDATE users SET username=%s WHERE id=%s", (u, uid))
+ 
+            if name is not None:
+                n = (name or "").strip()
+                if not n:
+                    return err("name cannot be empty")
+                cur.execute("UPDATE users SET name=%s WHERE id=%s", (n, uid))
+ 
+            if districts is not None:
+                if not isinstance(districts, list):
+                    return err("districts must be an array")
+                ds = sorted({(d or "").strip() for d in districts if (d or "").strip()})
+                if not ds:
+                    return err("districts cannot be empty")
+                cur.execute("DELETE FROM user_districts WHERE user_id=%s", (uid,))
+                for d in ds:
+                    cur.execute("""
+                        INSERT INTO user_districts (user_id, district, assigned_by)
+                        VALUES (%s,%s,%s)
+                    """, (uid, d, request.master_id))
+        conn.commit()
+    finally:
+        conn.close()
+ 
+    write_log("INFO", f"Multi-Super-Admin ID:{uid} updated by master", "Auth")
+    return ok(None, "Multi Super Admin updated")
+ 
+ 
+@master_bp.route("/multi-super-admins/<int:uid>", methods=["DELETE"])
+@master_required
+def delete_multi_super_admin(uid):
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT name FROM users WHERE id=%s AND role='multi_super_admin'",
+                (uid,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return err("Multi Super Admin not found", 404)
+            # user_districts cascades via FK
+            cur.execute("DELETE FROM users WHERE id=%s", (uid,))
+        conn.commit()
+    finally:
+        conn.close()
+    write_log("WARN", f"Multi-Super-Admin '{row['name']}' (ID:{uid}) deleted by master", "Auth")
+    return ok(None, f"Multi Super Admin '{row['name']}' deleted")
+ 
+ 
+@master_bp.route("/multi-super-admins/<int:uid>/status", methods=["PATCH"])
+@master_required
+def toggle_multi_super_admin_status(uid):
+    body      = request.get_json() or {}
+    is_active = body.get("isActive")
+    if is_active is None:
+        return err("isActive field required")
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT name FROM users WHERE id=%s AND role='multi_super_admin'",
+                (uid,)
+            )
+            row = cur.fetchone()
+            if not row:
+                return err("Multi Super Admin not found", 404)
+            cur.execute(
+                "UPDATE users SET is_active=%s WHERE id=%s",
+                (1 if is_active else 0, uid)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    action = "activated" if is_active else "deactivated"
+    write_log("INFO", f"Multi-Super-Admin '{row['name']}' (ID:{uid}) {action} by master", "Auth")
+    return ok({"id": uid, "isActive": bool(is_active)}, f"Multi Super Admin {action}")
+ 
+ 
+@master_bp.route("/multi-super-admins/<int:uid>/reset-password", methods=["PATCH"])
+@master_required
+def reset_multi_super_admin_password(uid):
+    body     = request.get_json() or {}
+    password = body.get("password") or ""
+    if len(password) < 6:
+        return err("Password must be at least 6 characters")
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT id FROM users WHERE id=%s AND role='multi_super_admin'",
+                (uid,)
+            )
+            if not cur.fetchone():
+                return err("Multi Super Admin not found", 404)
+            cur.execute(
+                "UPDATE users SET password=%s WHERE id=%s",
+                (hash_password(password), uid)
+            )
+        conn.commit()
+    finally:
+        conn.close()
+    write_log("WARN", f"Password reset for Multi-Super-Admin ID:{uid} by master", "Auth")
+    return ok(None, "Password reset successful")
+ 
+ 
+@master_bp.route("/elections/status-summary", methods=["GET"])
+@master_required
+def elections_status_summary():
+    """
+    Returns one row per *known district* (collected from BOTH the
+    election_configs table AND the users table) with its current
+    election state:
+ 
+        status = 'active'     → config exists, not archived, not finalized
+        status = 'finalized'  → manually finalized (auto_finalized=0)
+        status = 'auto_final' → auto-finalized after election_date passed
+        status = 'archived'   → archived but never finalized (cancelled / superseded)
+        status = 'none'       → district has no config at all
+ 
+    Each row also carries the most-recent config's identifying fields
+    so the UI can render chips + tap-to-history.
+    """
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            # 🔁 Opportunistic archive of expired configs so the summary is fresh
+            _auto_archive_expired(cur)
+            conn.commit()
+ 
+            # All districts known to the system (config + admins + super_admins)
+            cur.execute("""
+                SELECT DISTINCT district FROM (
+                    SELECT district FROM election_configs WHERE district <> ''
+                    UNION
+                    SELECT district FROM users WHERE district <> ''
+                      AND role IN ('admin','super_admin')
+                    UNION
+                    SELECT district FROM user_districts
+                ) t
+                ORDER BY district
+            """)
+            districts = [r["district"] for r in cur.fetchall() if r["district"]]
+ 
+            # For each district, pick the most recent config row (any state)
+            out = []
+            for d in districts:
+                cur.execute("""
+                    SELECT id, district, election_name, election_type, phase,
+                           election_year, election_date, is_active, is_archived,
+                           is_finalized, auto_finalized, finalized_at, archived_at,
+                           created_at, updated_at
+                    FROM election_configs
+                    WHERE district = %s
+                    ORDER BY
+                        is_active   DESC,
+                        is_archived ASC,
+                        COALESCE(updated_at, created_at) DESC
+                    LIMIT 1
+                """, (d,))
+                cfg = cur.fetchone()
+ 
+                if not cfg:
+                    out.append({
+                        "district":      d,
+                        "configId":      None,
+                        "electionName":  "",
+                        "electionType":  "",
+                        "phase":         "",
+                        "electionYear":  "",
+                        "electionDate":  "",
+                        "status":        "none",
+                        "isActive":      False,
+                        "isArchived":    False,
+                        "isFinalized":   False,
+                        "autoFinalized": False,
+                        "finalizedAt":   None,
+                        "archivedAt":    None,
+                    })
+                    continue
+ 
+                if cfg["is_finalized"]:
+                    status = "auto_final" if cfg.get("auto_finalized") else "finalized"
+                elif cfg["is_active"] and not cfg["is_archived"]:
+                    status = "active"
+                elif cfg["is_archived"]:
+                    status = "archived"
+                else:
+                    status = "none"
+ 
+                out.append({
+                    "district":      cfg["district"],
+                    "configId":      cfg["id"],
+                    "electionName":  cfg.get("election_name") or "",
+                    "electionType":  cfg.get("election_type") or "",
+                    "phase":         cfg.get("phase") or "",
+                    "electionYear":  cfg.get("election_year") or "",
+                    "electionDate":  cfg["election_date"].isoformat() if cfg.get("election_date") else "",
+                    "status":        status,
+                    "isActive":      bool(cfg["is_active"]),
+                    "isArchived":    bool(cfg["is_archived"]),
+                    "isFinalized":   bool(cfg["is_finalized"]),
+                    "autoFinalized": bool(cfg.get("auto_finalized")),
+                    "finalizedAt":   cfg["finalized_at"].isoformat() if cfg.get("finalized_at") else None,
+                    "archivedAt":    cfg["archived_at"].isoformat() if cfg.get("archived_at") else None,
+                })
+    finally:
+        conn.close()
+ 
+    # Aggregate counts for convenience
+    counts = {"active": 0, "finalized": 0, "auto_final": 0, "archived": 0, "none": 0}
+    for r in out:
+        counts[r["status"]] = counts.get(r["status"], 0) + 1
+ 
+    return ok({"districts": out, "counts": counts, "total": len(out)})
+ 
+ 
+# ══════════════════════════════════════════════════════════════════════════════
+#  14. MASTER-TRIGGERED FINALIZE (PER-DISTRICT, PER-CONFIG)
+# ══════════════════════════════════════════════════════════════════════════════
+ 
+@master_bp.route("/election/finalize/<int:config_id>", methods=["POST"])
+@master_required
+def master_finalize_config(config_id):
+    """
+    Master manually finalizes a specific election_config by its ID.
+    
+    Body (optional):
+      { "force": true }   → bypass the election_date-must-be-past check
+    """
+    from app.election_guard import finalize_district_auto
+ 
+    body  = request.get_json() or {}
+    force = bool(body.get("force", False))
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, district, election_name, election_date, is_finalized
+                FROM election_configs WHERE id=%s
+            """, (config_id,))
+            cfg = cur.fetchone()
+    finally:
+        conn.close()
+ 
+    if not cfg:
+        return err("Election config not found", 404)
+    if cfg["is_finalized"]:
+        return err(
+            f"Election '{cfg['election_name']}' is already finalized",
+            409,
+        )
+ 
+    if not force:
+        ed = cfg.get("election_date")
+        if ed is None:
+            return err("Election date is not set. Set it first, or pass force=true.", 400)
+        if ed > date.today():
+            return err(
+                f"Election date is {ed} — finalize only allowed on/after that date. "
+                "Pass force=true to override.",
+                400,
+            )
+ 
+    district = cfg["district"]
+    try:
+        finalize_district_auto(district, config_id)
+        # Stamp as manual finalize by master
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE election_configs SET auto_finalized=0, finalized_by=%s WHERE id=%s",
+                    (request.master_id, config_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        write_log("ERROR", f"master finalize failed (cfg={config_id}): {e}", "ElectionFinalize")
+        return err(f"Finalize failed: {e}", 500)
+ 
+    write_log(
+        "INFO",
+        f"Master ID:{request.master_id} finalized election cfg={config_id} district={district}",
+        "ElectionFinalize",
+    )
+    return ok(
+        {"configId": config_id, "district": district,
+         "electionName": cfg.get("election_name") or ""},
+        "चुनाव सफलतापूर्वक समाप्त किया गया (Election finalized)",
+    )
+ 
+ 
+@master_bp.route("/election/finalize-by-district", methods=["POST"])
+@master_required
+def master_finalize_by_district():
+    """
+    Convenience: finalize the currently-active config for a named district.
+    Body:
+      { "district": "आगरा", "force": false }
+    """
+    body     = request.get_json() or {}
+    district = (body.get("district") or "").strip()
+    force    = bool(body.get("force", False))
+    if not district:
+        return err("district is required")
+ 
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id FROM election_configs
+                WHERE district=%s AND is_active=1 AND is_archived=0 AND is_finalized=0
+                ORDER BY created_at DESC LIMIT 1
+            """, (district,))
+            row = cur.fetchone()
+    finally:
+        conn.close()
+ 
+    if not row:
+        return err(f"No active election config for '{district}'", 404)
+ 
+    config_id = row["id"]
+ 
+    # Re-fetch full row for the date guard
+    conn = get_db()
+    try:
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT id, district, election_name, election_date, is_finalized
+                FROM election_configs WHERE id=%s
+            """, (config_id,))
+            cfg = cur.fetchone()
+    finally:
+        conn.close()
+ 
+    if not force:
+        ed = cfg.get("election_date")
+        if ed is None:
+            return err("Election date is not set. Set it first, or pass force=true.", 400)
+        if ed > date.today():
+            return err(
+                f"Election date is {ed} — finalize only allowed on/after that date. "
+                "Pass force=true to override.", 400,
+            )
+ 
+    from app.election_guard import finalize_district_auto
+    try:
+        finalize_district_auto(district, config_id)
+        conn = get_db()
+        try:
+            with conn.cursor() as cur:
+                cur.execute(
+                    "UPDATE election_configs SET auto_finalized=0, finalized_by=%s WHERE id=%s",
+                    (request.master_id, config_id),
+                )
+            conn.commit()
+        finally:
+            conn.close()
+    except Exception as e:
+        write_log("ERROR", f"master finalize failed (district={district}): {e}", "ElectionFinalize")
+        return err(f"Finalize failed: {e}", 500)
+ 
+    write_log(
+        "INFO",
+        f"Master ID:{request.master_id} finalized district={district} (cfg={config_id})",
+        "ElectionFinalize",
+    )
+    return ok(
+        {"configId": config_id, "district": district,
+         "electionName": cfg.get("election_name") or ""},
+        "चुनाव सफलतापूर्वक समाप्त किया गया (Election finalized)",
+    )
+ 

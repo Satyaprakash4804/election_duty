@@ -4,7 +4,7 @@ import 'services/auth_service.dart';
 // 🔹 ADMIN PAGES
 import 'screens/admin/admin_dashboard.dart';
 import 'screens/staff/staff_dashboard_page.dart';
-
+import 'screens/super_admin/multi_super_dashboard.dart';
 // 🔹 AUTH / LOGIN
 import 'screens/auth/login_page.dart';
 import 'screens/master_admin/master_dashboard.dart';
@@ -157,6 +157,7 @@ class _MyAppState extends State<MyApp> {
         '/admin':    (_) => const AdminDashboard(),
         '/master':   (_) => const MasterDashboard(),
         '/super':    (_) => const SuperDashboard(),
+        '/multi-super': (_) => const MultiSuperDashboard(),
         '/staff':    (_) => const StaffDashboardPage(),
         '/map-view': (_) => const MapViewPage(),
       },
@@ -200,6 +201,8 @@ class AuthCheck extends StatelessWidget {
             return const MasterDashboard();
           case "SUPER_ADMIN":
             return const SuperDashboard();
+          case "MULTI_SUPER_ADMIN":
+            return const MultiSuperDashboard();
           case "ADMIN":
             return const AdminDashboard();
           case "STAFF":
