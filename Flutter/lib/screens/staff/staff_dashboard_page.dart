@@ -123,8 +123,35 @@ Color _rankColor(String rank) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
+//  MANAK BOOTH TIERS (matches admin exactly)
+// ══════════════════════════════════════════════════════════════════════════════
+const List<Map<String, dynamic>> kBoothTiers = [
+  {'count': 1,  'label': '1 बूथ'},
+  {'count': 2,  'label': '2 बूथ'},
+  {'count': 3,  'label': '3 बूथ'},
+  {'count': 4,  'label': '4 बूथ'},
+  {'count': 5,  'label': '5 बूथ'},
+  {'count': 6,  'label': '6 बूथ'},
+  {'count': 7,  'label': '7 बूथ'},
+  {'count': 8,  'label': '8 बूथ'},
+  {'count': 9,  'label': '9 बूथ'},
+  {'count': 10, 'label': '10 बूथ'},
+  {'count': 11, 'label': '11 बूथ'},
+  {'count': 12, 'label': '12 बूथ'},
+  {'count': 13, 'label': '13 बूथ'},
+  {'count': 14, 'label': '14 बूथ'},
+  {'count': 15, 'label': '15 और उससे अधिक बूथ'},
+];
+
+const List<Map<String, dynamic>> kSensitivities = [
+  {'key': 'A++', 'hi': 'अति-अति संवेदनशील', 'color': Color(0xFF6C3483)},
+  {'key': 'A',   'hi': 'अति संवेदनशील',      'color': Color(0xFFC0392B)},
+  {'key': 'B',   'hi': 'संवेदनशील',           'color': Color(0xFFE67E22)},
+  {'key': 'C',   'hi': 'सामान्य',             'color': Color(0xFF1A5276)},
+];
+
+// ══════════════════════════════════════════════════════════════════════════════
 //  ELECTION CONFIG MODEL
-//  Handles BOTH camelCase and snake_case keys from every API source
 // ══════════════════════════════════════════════════════════════════════════════
 class _ElectionConfig {
   final String district;
@@ -152,7 +179,6 @@ class _ElectionConfig {
   bool get isEmpty => electionName.isEmpty && district.isEmpty;
 
   factory _ElectionConfig.fromMap(Map<dynamic, dynamic> m) {
-    // Date normalisation: YYYY-MM-DD → DD.MM.YYYY
     String rawDate =
         (m['electionDate'] ?? m['election_date'] ?? '').toString().trim();
     if (rawDate.contains('-') && rawDate.length >= 10) {
@@ -193,10 +219,8 @@ class _ElectionConfig {
     'sayaSamay':    sayaSamay,
   };
 
-  // For display in Hindi date format
   String get displayDate {
     if (electionDate.isEmpty) return '—';
-    // If already DD.MM.YYYY
     if (electionDate.contains('.')) {
       final p = electionDate.split('.');
       if (p.length == 3) {
@@ -211,8 +235,7 @@ class _ElectionConfig {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  MANAK (BOOTH RULES) MODEL
-//  Represents per-sensitivity, per-booth-count rules exactly like admin page
+//  MANAK RULE MODEL — columnar (matches admin exactly)
 // ══════════════════════════════════════════════════════════════════════════════
 class _ManakRule {
   final String sensitivity;
@@ -241,6 +264,10 @@ class _ManakRule {
     this.pac          = 0,
   });
 
+  int get totalSI      => siArmed + siUnarmed;
+  int get totalHC      => hcArmed + hcUnarmed;
+  int get totalConst   => constArmed + constUnarmed;
+  int get totalAux     => auxArmed + auxUnarmed;
   int get totalArmed   => siArmed + hcArmed + constArmed + auxArmed;
   int get totalUnarmed => siUnarmed + hcUnarmed + constUnarmed + auxUnarmed;
   int get total        => totalArmed + totalUnarmed;
@@ -273,22 +300,12 @@ class _ManakRule {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  MANAK RULES PARSER
-//  Converts the raw boothRules list (from backend) into grouped _ManakRule
-//  objects, matching the admin display format.
+//  MANAK PARSER
 // ══════════════════════════════════════════════════════════════════════════════
 class _ManakParser {
-  /// Parses the raw boothRules list returned by the staff API.
-  /// The backend expands per-rank rows; we need to re-aggregate them by
-  /// (sensitivity, boothCount) into _ManakRule objects.
-  ///
-  /// Two shapes are handled:
-  ///   A) Per-rank rows: {sensitivity, rank, is_armed, count}  (legacy)
-  ///   B) Full columnar rows: {sensitivity, booth_count, si_armed_count, …}  (preferred)
   static List<_ManakRule> parse(List rules) {
     if (rules.isEmpty) return [];
 
-    // Detect shape by checking if first item has columnar keys
     final first = rules.first as Map;
     final isColumnar = first.containsKey('siArmedCount') ||
         first.containsKey('si_armed_count') ||
@@ -304,58 +321,52 @@ class _ManakParser {
     }
 
     // Per-rank shape: aggregate into columnar
-    final Map<String, Map<String, int>> agg = {};
+    final Map<String, Map<String, dynamic>> agg = {};
     for (final row in rules) {
       if (row is! Map) continue;
       final sens       = (row['sensitivity'] ?? 'C').toString();
       final boothCount = ((row['boothCount'] ?? row['booth_count'] ?? 1) as num).toInt();
       final key        = '$sens|$boothCount';
-      agg.putIfAbsent(key, () => {
-        'boothCount': boothCount,
-      });
+      agg.putIfAbsent(key, () => {'boothCount': boothCount, 'sensitivity': sens});
 
       final rank    = (row['rank'] ?? '').toString().toLowerCase();
       final isArmed = _isArmed(row['is_armed'] ?? row['isArmed']);
       final count   = ((row['count'] ?? 0) as num).toInt();
-
       if (count <= 0) continue;
 
       if (rank == 'si' || rank == 'sub inspector') {
-        if (isArmed) agg[key]!['siArmed']    = (agg[key]!['siArmed']    ?? 0) + count;
-        else          agg[key]!['siUnarmed']  = (agg[key]!['siUnarmed']  ?? 0) + count;
+        if (isArmed) agg[key]!['siArmed']      = (agg[key]!['siArmed']      ?? 0) + count;
+        else          agg[key]!['siUnarmed']    = (agg[key]!['siUnarmed']    ?? 0) + count;
       } else if (rank == 'head constable') {
-        if (isArmed) agg[key]!['hcArmed']    = (agg[key]!['hcArmed']    ?? 0) + count;
-        else          agg[key]!['hcUnarmed']  = (agg[key]!['hcUnarmed']  ?? 0) + count;
+        if (isArmed) agg[key]!['hcArmed']      = (agg[key]!['hcArmed']      ?? 0) + count;
+        else          agg[key]!['hcUnarmed']    = (agg[key]!['hcUnarmed']    ?? 0) + count;
       } else if (rank == 'constable') {
         if (isArmed) agg[key]!['constArmed']   = (agg[key]!['constArmed']   ?? 0) + count;
         else          agg[key]!['constUnarmed'] = (agg[key]!['constUnarmed'] ?? 0) + count;
       } else {
-        // Home Guard / Aux
-        if (isArmed) agg[key]!['auxArmed']   = (agg[key]!['auxArmed']   ?? 0) + count;
-        else          agg[key]!['auxUnarmed'] = (agg[key]!['auxUnarmed'] ?? 0) + count;
+        if (isArmed) agg[key]!['auxArmed']     = (agg[key]!['auxArmed']     ?? 0) + count;
+        else          agg[key]!['auxUnarmed']   = (agg[key]!['auxUnarmed']   ?? 0) + count;
       }
-      agg[key]!['_sens_code'] = _sensCode(sens);
     }
 
-    return agg.entries.map((e) {
-      final m = e.value;
-      return _ManakRule(
-        sensitivity:  e.key.split('|').first,
-        boothCount:   m['boothCount'] ?? 1,
-        siArmed:      m['siArmed']      ?? 0,
-        siUnarmed:    m['siUnarmed']    ?? 0,
-        hcArmed:      m['hcArmed']      ?? 0,
-        hcUnarmed:    m['hcUnarmed']    ?? 0,
-        constArmed:   m['constArmed']   ?? 0,
-        constUnarmed: m['constUnarmed'] ?? 0,
-        auxArmed:     m['auxArmed']     ?? 0,
-        auxUnarmed:   m['auxUnarmed']   ?? 0,
-      );
-    }).where((r) => r.hasAny).toList()
+    return agg.values
+        .map((m) => _ManakRule(
+          sensitivity:  m['sensitivity'] as String,
+          boothCount:   m['boothCount']  as int,
+          siArmed:      (m['siArmed']      ?? 0) as int,
+          siUnarmed:    (m['siUnarmed']    ?? 0) as int,
+          hcArmed:      (m['hcArmed']      ?? 0) as int,
+          hcUnarmed:    (m['hcUnarmed']    ?? 0) as int,
+          constArmed:   (m['constArmed']   ?? 0) as int,
+          constUnarmed: (m['constUnarmed'] ?? 0) as int,
+          auxArmed:     (m['auxArmed']     ?? 0) as int,
+          auxUnarmed:   (m['auxUnarmed']   ?? 0) as int,
+        ))
+        .where((r) => r.hasAny)
+        .toList()
       ..sort((a, b) {
         final sc = _sensCode(a.sensitivity).compareTo(_sensCode(b.sensitivity));
-        if (sc != 0) return sc;
-        return a.boothCount.compareTo(b.boothCount);
+        return sc != 0 ? sc : a.boothCount.compareTo(b.boothCount);
       });
   }
 
@@ -434,12 +445,10 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
       final electionResp = results[2];
       final districtResp = results[3];
 
-      // ── Parse user ──────────────────────────────────────────────────────
       final userData = userResp['data'] is Map
           ? Map<String, dynamic>.from(userResp['data'] as Map)
           : <String, dynamic>{};
 
-      // ── Parse duty ──────────────────────────────────────────────────────
       Map? dutyData;
       if (resp is Map) {
         dutyData = resp.containsKey('data')
@@ -448,7 +457,6 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
       }
       final roleType = (dutyData?['roleType'] ?? 'none').toString();
 
-      // ── Parse election config ───────────────────────────────────────────
       _ElectionConfig electionConfig = const _ElectionConfig();
       if (electionResp is Map) {
         final ecData = electionResp['data'];
@@ -458,7 +466,6 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
         }
       }
 
-      // Fallback: inject district from user profile if config has none
       if (electionConfig.district.isEmpty && userData['district'] != null) {
         electionConfig = _ElectionConfig(
           district:     userData['district']?.toString() ?? '',
@@ -476,26 +483,21 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
       final electionDate = electionConfig.electionDate;
       bool isAfter = false;
       if (electionDate.isNotEmpty) {
-        // Parse DD.MM.YYYY
         DateTime? ed;
         if (electionDate.contains('.')) {
           final p = electionDate.split('.');
-          if (p.length == 3) {
-            ed = DateTime.tryParse('${p[2]}-${p[1]}-${p[0]}');
-          }
+          if (p.length == 3) ed = DateTime.tryParse('${p[2]}-${p[1]}-${p[0]}');
         } else {
           ed = DateTime.tryParse(electionDate);
         }
         if (ed != null) isAfter = DateTime.now().isAfter(ed);
       }
 
-      // ── Parse district duty ─────────────────────────────────────────────
       Map? districtDuty;
       if (districtResp is Map && districtResp['data'] is Map) {
         districtDuty = Map<String, dynamic>.from(districtResp['data'] as Map);
       }
 
-      // ── History check ───────────────────────────────────────────────────
       bool hasPast = false;
       try {
         final histRes = await ApiService.get('/staff/history', token: token);
@@ -527,7 +529,6 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
   void _openHistory() => Navigator.push(
       context, MaterialPageRoute(builder: (_) => const DutyHistoryPage()));
 
-  // ── Role helpers ──────────────────────────────────────────────────────────
   IconData _roleIcon() {
     if (_districtDuty != null && _roleType == 'none') return Icons.shield_outlined;
     switch (_roleType) {
@@ -659,9 +660,7 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
     }
   }
 
-  // ══════════════════════════════════════════════════════════════════════════
-  //  BUILD
-  // ══════════════════════════════════════════════════════════════════════════
+  // ── BUILD ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final items = _navItems;
@@ -707,7 +706,6 @@ class _StaffDashboardPageState extends State<StaffDashboardPage>
         ])),
       ]),
       actions: [
-        // History button
         GestureDetector(
           onTap: _openHistory,
           child: Container(
@@ -914,15 +912,11 @@ class _NavItem {
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  ELECTION BANNER
-//  ✅ FIX: Now uses _ElectionConfig model, shows all fields properly
 // ══════════════════════════════════════════════════════════════════════════════
 class _ElectionBanner extends StatelessWidget {
   final _ElectionConfig electionConfig;
   final bool isFinalized;
-  const _ElectionBanner({
-    required this.electionConfig,
-    this.isFinalized = false,
-  });
+  const _ElectionBanner({required this.electionConfig, this.isFinalized = false});
 
   @override
   Widget build(BuildContext context) {
@@ -1422,7 +1416,6 @@ class _CoStaffSection extends StatelessWidget {
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  BOOTH — DUTY CARD SECTION
-//  ✅ FIX: Election config is now properly passed to PDF builder
 // ══════════════════════════════════════════════════════════════════════════════
 class _DutyCardSection extends StatefulWidget {
   final Map? duty, user;
@@ -1470,7 +1463,6 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
       'superOfficers':  d['superOfficers']  ?? [],
       'sahyogi':      sahyogi,
       'allStaff':     sahyogi,
-      // ✅ FIX: All election fields properly mapped from _ElectionConfig
       'electionName': ec.electionName,
       'electionType': ec.electionType,
       'electionDate': ec.electionDate,
@@ -1491,7 +1483,6 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
       final doc    = pw.Document();
       final shape  = _toAdminShape();
       final cfg    = widget.electionConfig.toConfigMap();
-      // Ensure district in config
       if (cfg['district']?.isEmpty == true && shape['adminDistrict'] != null) {
         cfg['district'] = shape['adminDistrict'] as String;
       }
@@ -1522,7 +1513,6 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
     final u  = widget.user ?? {};
     final ec = widget.electionConfig;
     return Column(children: [
-      // ── Header ──────────────────────────────────────────────────────────
       Container(
         padding: const EdgeInsets.all(20),
         decoration: BoxDecoration(
@@ -1569,9 +1559,7 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
           ),
         ]),
       ),
-
       const SizedBox(height: 12),
-
       if (_hasMarked)
         Container(
           margin: const EdgeInsets.only(bottom: 12),
@@ -1588,13 +1576,10 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
                     fontWeight: FontWeight.w700))),
           ]),
         ),
-
-      // ✅ FIX: Election config banner on duty card (full details)
       if (!ec.isEmpty) ...[
         _ElectionBanner(electionConfig: ec),
         const SizedBox(height: 4),
       ],
-
       _SectionCard(icon: Icons.preview_outlined, title: 'कार्ड विवरण',
         child: Column(children: [
           _PreviewRow('नाम',          u['name']),
@@ -1606,20 +1591,13 @@ class _DutyCardSectionState extends State<_DutyCardSection> {
               ? 'बस–${d['busNo']}' : null),
           _PreviewRow('सेक्टर',        d['sectorName']),
           _PreviewRow('जोन',           d['zoneName']),
-          if (ec.electionName.isNotEmpty)
-            _PreviewRow('चुनाव',       ec.electionName),
-          if (ec.electionType.isNotEmpty)
-            _PreviewRow('प्रकार',      ec.electionType),
-          if (ec.phase.isNotEmpty)
-            _PreviewRow('चरण',         ec.phase),
-          if (ec.electionDate.isNotEmpty)
-            _PreviewRow('मतदान तिथि',  ec.displayDate),
-          if (ec.pratahSamay.isNotEmpty)
-            _PreviewRow('प्रातः समय',  ec.pratahSamay),
-          if (ec.sayaSamay.isNotEmpty)
-            _PreviewRow('सायं समय',    ec.sayaSamay),
-          if (ec.district.isNotEmpty)
-            _PreviewRow('जनपद',        ec.district),
+          if (ec.electionName.isNotEmpty) _PreviewRow('चुनाव', ec.electionName),
+          if (ec.electionType.isNotEmpty) _PreviewRow('प्रकार', ec.electionType),
+          if (ec.phase.isNotEmpty)        _PreviewRow('चरण', ec.phase),
+          if (ec.electionDate.isNotEmpty) _PreviewRow('मतदान तिथि', ec.displayDate),
+          if (ec.pratahSamay.isNotEmpty)  _PreviewRow('प्रातः समय', ec.pratahSamay),
+          if (ec.sayaSamay.isNotEmpty)    _PreviewRow('सायं समय', ec.sayaSamay),
+          if (ec.district.isNotEmpty)     _PreviewRow('जनपद', ec.district),
           _PreviewRow('सहयोगी',
               '${(d['allStaff'] as List?)?.length ?? 0} कर्मी'),
         ])),
@@ -1778,7 +1756,6 @@ class _DistrictDetailSection extends StatelessWidget {
         ]),
       ),
       const SizedBox(height: 14),
-      // ✅ FIX: Full election config details shown
       if (!electionConfig.isEmpty)
         _SectionCard(icon: Icons.how_to_vote_outlined, title: 'चुनाव विवरण',
           child: Column(children: [
@@ -1854,7 +1831,6 @@ class _DistrictBatchStaffSection extends StatelessWidget {
 
 // ══════════════════════════════════════════════════════════════════════════════
 //  DISTRICT DUTY CARD
-//  ✅ FIX: Election config properly passed to PDF
 // ══════════════════════════════════════════════════════════════════════════════
 class _DistrictDutyCardSection extends StatefulWidget {
   final Map duty, user;
@@ -1897,7 +1873,6 @@ class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
       'sahyogi':    batchStaff,
       'allStaff':   batchStaff,
       'staff':      batchStaff,
-      // ✅ FIX: All election fields from _ElectionConfig
       'electionName': ec.electionName,
       'electionType': ec.electionType,
       'electionDate': ec.electionDate,
@@ -2010,13 +1985,10 @@ class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
                     fontWeight: FontWeight.w700))),
           ]),
         ),
-
-      // ✅ FIX: Full election banner on district duty card
       if (!ec.isEmpty) ...[
         _ElectionBanner(electionConfig: ec),
         const SizedBox(height: 4),
       ],
-
       _SectionCard(icon: Icons.preview_outlined, title: 'कार्ड विवरण',
         child: Column(children: [
           _PreviewRow('नाम',           u['name']),
@@ -2028,18 +2000,12 @@ class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
             _PreviewRow('बस', d['busNo']),
           _PreviewRow('जनपद',          ec.district.isNotEmpty
               ? ec.district : (u['district'] ?? '')),
-          if (ec.electionName.isNotEmpty)
-            _PreviewRow('चुनाव',       ec.electionName),
-          if (ec.electionType.isNotEmpty)
-            _PreviewRow('प्रकार',      ec.electionType),
-          if (ec.phase.isNotEmpty)
-            _PreviewRow('चरण',         ec.phase),
-          if (ec.electionDate.isNotEmpty)
-            _PreviewRow('मतदान तिथि',  ec.displayDate),
-          if (ec.pratahSamay.isNotEmpty)
-            _PreviewRow('प्रातः समय',  ec.pratahSamay),
-          if (ec.sayaSamay.isNotEmpty)
-            _PreviewRow('सायं समय',    ec.sayaSamay),
+          if (ec.electionName.isNotEmpty) _PreviewRow('चुनाव', ec.electionName),
+          if (ec.electionType.isNotEmpty) _PreviewRow('प्रकार', ec.electionType),
+          if (ec.phase.isNotEmpty)        _PreviewRow('चरण', ec.phase),
+          if (ec.electionDate.isNotEmpty) _PreviewRow('मतदान तिथि', ec.displayDate),
+          if (ec.pratahSamay.isNotEmpty)  _PreviewRow('प्रातः समय', ec.pratahSamay),
+          if (ec.sayaSamay.isNotEmpty)    _PreviewRow('सायं समय', ec.sayaSamay),
           _PreviewRow('सहयोगी',
               '${(d['batchStaff'] as List? ?? []).length} कर्मी'),
         ])),
@@ -2048,7 +2014,7 @@ class _DistrictDutyCardSectionState extends State<_DistrictDutyCardSection> {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  SECTOR — OVERVIEW
+//  SECTOR — OVERVIEW / INFO / ATTENDANCE
 // ══════════════════════════════════════════════════════════════════════════════
 class _SectorOverviewSection extends StatelessWidget {
   final Map? duty, user;
@@ -2088,8 +2054,7 @@ class _SectorOverviewSection extends StatelessWidget {
           ])),
         ]),
       ),
-      _HeroCard(user: user, duty: duty, noDuty: false,
-          subtitle: 'सेक्टर अधिकारी'),
+      _HeroCard(user: user, duty: duty, noDuty: false, subtitle: 'सेक्टर अधिकारी'),
       const SizedBox(height: 16),
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true,
@@ -2137,9 +2102,6 @@ class _SectorOverviewSection extends StatelessWidget {
   }
 }
 
-// ══════════════════════════════════════════════════════════════════════════════
-//  SECTOR — INFO
-// ══════════════════════════════════════════════════════════════════════════════
 class _SectorInfoSection extends StatelessWidget {
   final Map? duty;
   const _SectorInfoSection({required this.duty});
@@ -2308,8 +2270,7 @@ class _SectorAttendanceSectionState extends State<_SectorAttendanceSection> {
           hintStyle: const TextStyle(color: kSubtle, fontSize: 12),
           prefixIcon: const Icon(Icons.search, color: kSubtle, size: 18),
           filled: true, fillColor: Colors.white, isDense: true,
-          contentPadding: const EdgeInsets.symmetric(
-              horizontal: 12, vertical: 10),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
           border: OutlineInputBorder(
               borderRadius: BorderRadius.circular(10),
               borderSide: const BorderSide(color: kBorder)),
@@ -2367,11 +2328,11 @@ class _BoothAttCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final staff  = (center['staff'] as List? ?? []);
-    final type   = '${center['center_type'] ?? 'C'}';
-    final tc     = _typeColor(type);
+    final staff   = (center['staff'] as List? ?? []);
+    final type    = '${center['center_type'] ?? 'C'}';
+    final tc      = _typeColor(type);
     final present = staff.where((s) => getAttended(s as Map)).length;
-    final r      = _rs(context);
+    final r       = _rs(context);
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -2384,10 +2345,8 @@ class _BoothAttCard extends StatelessWidget {
         Container(
           padding: EdgeInsets.fromLTRB(r.s(12, 14), 12, r.s(12, 14), 12),
           decoration: BoxDecoration(color: tc.withOpacity(0.06),
-              borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(14)),
-              border: Border(bottom: BorderSide(
-                  color: tc.withOpacity(0.2)))),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+              border: Border(bottom: BorderSide(color: tc.withOpacity(0.2)))),
           child: Row(children: [
             Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -2437,8 +2396,7 @@ class _BoothAttCard extends StatelessWidget {
             return Container(
               padding: EdgeInsets.fromLTRB(r.s(12, 14), 10, r.s(12, 14), 10),
               decoration: BoxDecoration(border: i < staff.length - 1
-                  ? Border(bottom: BorderSide(
-                      color: kBorder.withOpacity(0.3)))
+                  ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.3)))
                   : null),
               child: Row(children: [
                 Container(width: 36, height: 36,
@@ -2448,36 +2406,29 @@ class _BoothAttCard extends StatelessWidget {
                         border: Border.all(
                             color: (armed ? kArmed : kUnarmed).withOpacity(0.3))),
                     child: Icon(armed ? Icons.security : Icons.person_outline,
-                        size: 16,
-                        color: armed ? kArmed : kUnarmed)),
+                        size: 16, color: armed ? kArmed : kUnarmed)),
                 const SizedBox(width: 10),
                 Expanded(child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Text('${s['name'] ?? '—'}', style: const TextStyle(
-                      color: kDark, fontSize: 13,
-                      fontWeight: FontWeight.w700)),
+                      color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
                   Row(children: [
                     Text(rh(s['user_rank']),
-                        style: const TextStyle(
-                            color: kSubtle, fontSize: 10)),
+                        style: const TextStyle(color: kSubtle, fontSize: 10)),
                     const Text('  •  ',
                         style: TextStyle(color: kSubtle, fontSize: 10)),
                     Text('${s['pno'] ?? ''}',
-                        style: const TextStyle(
-                            color: kSubtle, fontSize: 10)),
+                        style: const TextStyle(color: kSubtle, fontSize: 10)),
                     const SizedBox(width: 6),
                     Container(
-                      padding: const EdgeInsets.symmetric(
-                          horizontal: 5, vertical: 1),
+                      padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                       decoration: BoxDecoration(
-                          color: (armed ? kArmed : kUnarmed)
-                              .withOpacity(0.1),
+                          color: (armed ? kArmed : kUnarmed).withOpacity(0.1),
                           borderRadius: BorderRadius.circular(4)),
                       child: Text(armed ? 'सशस्त्र' : 'निःशस्त्र',
                           style: TextStyle(
                               color: armed ? kArmed : kUnarmed,
-                              fontSize: 8,
-                              fontWeight: FontWeight.w700))),
+                              fontSize: 8, fontWeight: FontWeight.w700))),
                   ]),
                 ])),
                 GestureDetector(
@@ -2493,11 +2444,9 @@ class _BoothAttCard extends StatelessWidget {
                           width: 1.5),
                     ),
                     child: Row(
-                        mainAxisAlignment: MainAxisAlignment.center,
-                        children: [
+                        mainAxisAlignment: MainAxisAlignment.center, children: [
                       Icon(att ? Icons.check : Icons.close,
-                          size: 14,
-                          color: att ? Colors.white : kError),
+                          size: 14, color: att ? Colors.white : kError),
                       const SizedBox(width: 2),
                       Text(att ? 'हाँ' : 'नहीं', style: TextStyle(
                           color: att ? Colors.white : kError,
@@ -2539,8 +2488,7 @@ class _ZoneOverviewSection extends StatelessWidget {
           Container(width: 40, height: 40,
               decoration: BoxDecoration(
                   color: kZone, borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.map_outlined,
-                  color: Colors.white, size: 20)),
+              child: const Icon(Icons.map_outlined, color: Colors.white, size: 20)),
           const SizedBox(width: 12),
           const Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2551,8 +2499,7 @@ class _ZoneOverviewSection extends StatelessWidget {
           ])),
         ]),
       ),
-      _HeroCard(user: user, duty: duty, noDuty: false,
-          subtitle: 'जोनल अधिकारी'),
+      _HeroCard(user: user, duty: duty, noDuty: false, subtitle: 'जोनल अधिकारी'),
       const SizedBox(height: 16),
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true,
@@ -2585,7 +2532,6 @@ class _ZoneOverviewSection extends StatelessWidget {
 class _ZoneInfoSection extends StatelessWidget {
   final Map? duty;
   const _ZoneInfoSection({required this.duty});
-
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
@@ -2613,7 +2559,6 @@ class _ZoneInfoSection extends StatelessWidget {
 class _ZoneSectorsSection extends StatelessWidget {
   final Map? duty;
   const _ZoneSectorsSection({required this.duty});
-
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
@@ -2632,11 +2577,9 @@ class _ZoneSectorsSection extends StatelessWidget {
               return Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(border: i < sectors.length - 1
-                    ? Border(bottom: BorderSide(
-                        color: kBorder.withOpacity(0.4)))
+                    ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4)))
                     : null),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Container(padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
@@ -2648,20 +2591,17 @@ class _ZoneSectorsSection extends StatelessWidget {
                     Expanded(child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${s['name'] ?? '—'}', style: const TextStyle(
-                          color: kDark, fontSize: 13,
-                          fontWeight: FontWeight.w700)),
+                          color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
                       Text('${s['gp_count'] ?? 0} GP  •  '
                           '${s['center_count'] ?? 0} बूथ  •  '
                           '${s['staff_assigned'] ?? 0} स्टाफ',
-                          style: const TextStyle(
-                              color: kSubtle, fontSize: 11)),
+                          style: const TextStyle(color: kSubtle, fontSize: 11)),
                     ])),
                   ]),
                   if (offs.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(spacing: 8, runSpacing: 4,
-                        children: offs.map((o) =>
-                            _OfficerChip(o as Map)).toList()),
+                        children: offs.map((o) => _OfficerChip(o as Map)).toList()),
                   ],
                 ]),
               );
@@ -2697,8 +2637,7 @@ class _KshetraOverviewSection extends StatelessWidget {
           Container(width: 40, height: 40,
               decoration: BoxDecoration(
                   color: kKshetra, borderRadius: BorderRadius.circular(10)),
-              child: const Icon(Icons.layers_outlined,
-                  color: Colors.white, size: 20)),
+              child: const Icon(Icons.layers_outlined, color: Colors.white, size: 20)),
           const SizedBox(width: 12),
           const Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -2709,8 +2648,7 @@ class _KshetraOverviewSection extends StatelessWidget {
           ])),
         ]),
       ),
-      _HeroCard(user: user, duty: duty, noDuty: false,
-          subtitle: 'क्षेत्र अधिकारी'),
+      _HeroCard(user: user, duty: duty, noDuty: false, subtitle: 'क्षेत्र अधिकारी'),
       const SizedBox(height: 16),
       GridView.count(
         crossAxisCount: 2, shrinkWrap: true,
@@ -2743,7 +2681,6 @@ class _KshetraOverviewSection extends StatelessWidget {
 class _KshetraInfoSection extends StatelessWidget {
   final Map? duty;
   const _KshetraInfoSection({required this.duty});
-
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
@@ -2769,7 +2706,6 @@ class _KshetraInfoSection extends StatelessWidget {
 class _KshetraZonesSection extends StatelessWidget {
   final Map? duty;
   const _KshetraZonesSection({required this.duty});
-
   @override
   Widget build(BuildContext context) {
     if (duty == null) return const _NoDutyState();
@@ -2788,40 +2724,33 @@ class _KshetraZonesSection extends StatelessWidget {
               return Container(
                 padding: const EdgeInsets.symmetric(vertical: 12),
                 decoration: BoxDecoration(border: i < zones.length - 1
-                    ? Border(bottom: BorderSide(
-                        color: kBorder.withOpacity(0.4)))
+                    ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4)))
                     : null),
-                child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start, children: [
+                child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                   Row(children: [
                     Container(padding: const EdgeInsets.all(8),
                         decoration: BoxDecoration(
                             color: kInfo.withOpacity(0.1),
                             borderRadius: BorderRadius.circular(8)),
-                        child: const Icon(Icons.map_outlined,
-                            color: kInfo, size: 16)),
+                        child: const Icon(Icons.map_outlined, color: kInfo, size: 16)),
                     const SizedBox(width: 10),
                     Expanded(child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start, children: [
                       Text('${z['name'] ?? '—'}', style: const TextStyle(
-                          color: kDark, fontSize: 13,
-                          fontWeight: FontWeight.w700)),
+                          color: kDark, fontSize: 13, fontWeight: FontWeight.w700)),
                       Text('${z['sector_count'] ?? 0} सेक्टर  •  '
                           '${z['center_count'] ?? 0} बूथ  •  '
                           '${z['staff_assigned'] ?? 0} स्टाफ',
-                          style: const TextStyle(
-                              color: kSubtle, fontSize: 11)),
+                          style: const TextStyle(color: kSubtle, fontSize: 11)),
                       if ((z['hq_address'] ?? '').toString().isNotEmpty)
                         Text('HQ: ${z['hq_address']}',
-                            style: const TextStyle(
-                                color: kSubtle, fontSize: 10)),
+                            style: const TextStyle(color: kSubtle, fontSize: 10)),
                     ])),
                   ]),
                   if (offs.isNotEmpty) ...[
                     const SizedBox(height: 8),
                     Wrap(spacing: 8, runSpacing: 4,
-                        children: offs.map((o) =>
-                            _OfficerChip(o as Map)).toList()),
+                        children: offs.map((o) => _OfficerChip(o as Map)).toList()),
                   ],
                 ]),
               );
@@ -2831,35 +2760,31 @@ class _KshetraZonesSection extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  MANAK SECTION
-//  ✅ FIX: Complete rewrite — shows booth-count × sensitivity grid like admin
-//         Uses _ManakParser to handle both columnar and per-rank API shapes
+//  MANAK SECTION — FULL ADMIN-MATCHING TABLE VIEW
+//  ✅ Completely rewritten to match admin ManakBoothReportPage exactly:
+//     sensitivity blocks with summary chips + scrollable 17-column table
 // ══════════════════════════════════════════════════════════════════════════════
 class _ManakSection extends StatelessWidget {
   final List rules;
   final _ElectionConfig electionConfig;
   const _ManakSection({required this.rules, required this.electionConfig});
 
-  static const _sensOrder = ['A++', 'A', 'B', 'C'];
-  static const _sensLabels = {
-    'A++': 'अत्यति संवेदनशील',
-    'A':   'अति संवेदनशील',
-    'B':   'संवेदनशील',
-    'C':   'सामान्य',
-  };
-  static const _sensColors = {
-    'A++': Color(0xFF6C3483),
-    'A':   kError,
-    'B':   kAccent,
-    'C':   kInfo,
-  };
-
   @override
   Widget build(BuildContext context) {
     final parsed = _ManakParser.parse(rules);
 
-    return Column(children: [
-      // Header
+    // Group by sensitivity
+    final Map<String, List<_ManakRule>> grouped = {};
+    for (final r in parsed) {
+      grouped.putIfAbsent(r.sensitivity, () => []).add(r);
+    }
+    // Sort each group by boothCount
+    for (final list in grouped.values) {
+      list.sort((a, b) => a.boothCount.compareTo(b.boothCount));
+    }
+
+    return Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+      // ── Header card ───────────────────────────────────────────────────────
       Container(
         padding: const EdgeInsets.all(16),
         decoration: BoxDecoration(
@@ -2868,10 +2793,15 @@ class _ManakSection extends StatelessWidget {
           borderRadius: BorderRadius.circular(14),
         ),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Row(children: [
-            Icon(Icons.rule_folder_outlined, color: Colors.white, size: 20),
-            SizedBox(width: 12),
-            Expanded(child: Column(
+          Row(children: [
+            Container(width: 40, height: 40,
+                decoration: BoxDecoration(
+                    color: Colors.white.withOpacity(0.12),
+                    borderRadius: BorderRadius.circular(10)),
+                child: const Icon(Icons.rule_folder_outlined,
+                    color: Colors.white, size: 20)),
+            const SizedBox(width: 12),
+            const Expanded(child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('बूथ स्टाफ मानक', style: TextStyle(
                   color: Colors.white, fontSize: 16,
@@ -2884,340 +2814,489 @@ class _ManakSection extends StatelessWidget {
             const SizedBox(height: 10),
             Container(height: 1, color: Colors.white.withOpacity(0.15)),
             const SizedBox(height: 8),
-            Text('${electionConfig.electionName}'
-                '${electionConfig.phase.isNotEmpty ? " — चरण ${electionConfig.phase}" : ""}',
-                style: const TextStyle(color: Colors.white70, fontSize: 11)),
+            Text(
+              '${electionConfig.electionName}'
+              '${electionConfig.phase.isNotEmpty ? " — चरण ${electionConfig.phase}" : ""}',
+              style: const TextStyle(color: Colors.white70, fontSize: 11)),
           ],
         ]),
       ),
       const SizedBox(height: 14),
 
       if (rules.isEmpty || parsed.isEmpty)
-        _ManakEmptyState()
+        _ManakEmpty()
       else
-        _buildGroupedManak(parsed),
+        ...kSensitivities
+            .where((s) => grouped.containsKey(s['key']))
+            .map((s) => Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: _ManakSensBlock(
+                    sensKey:  s['key'] as String,
+                    sensHi:   s['hi']  as String,
+                    color:    s['color'] as Color,
+                    rules:    grouped[s['key']]!,
+                  ),
+                )),
     ]);
   }
-
-  Widget _buildGroupedManak(List<_ManakRule> allRules) {
-    // Group by sensitivity
-    final grouped = <String, List<_ManakRule>>{};
-    for (final r in allRules) {
-      grouped.putIfAbsent(r.sensitivity, () => []).add(r);
-    }
-
-    return Column(
-      children: _sensOrder.where((s) => grouped.containsKey(s)).map((sens) {
-        final color = _sensColors[sens] ?? kPrimary;
-        final label = _sensLabels[sens] ?? sens;
-        final list  = grouped[sens]!..sort((a, b) =>
-            a.boothCount.compareTo(b.boothCount));
-        return _ManakSensBlock(
-            sensKey: sens, label: label, color: color,
-            rules: list);
-      }).toList(),
-    );
-  }
 }
 
-class _ManakEmptyState extends StatelessWidget {
+// ── Empty state ───────────────────────────────────────────────────────────────
+class _ManakEmpty extends StatelessWidget {
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(20),
-      decoration: BoxDecoration(color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: kBorder.withOpacity(0.4))),
-      child: const Column(mainAxisSize: MainAxisSize.min, children: [
-        Icon(Icons.rule_outlined, size: 40, color: kSubtle),
-        SizedBox(height: 10),
-        Text('कोई मानक सेट नहीं है',
-            style: TextStyle(color: kSubtle, fontSize: 13,
-                fontWeight: FontWeight.w600)),
-        SizedBox(height: 4),
-        Text('व्यवस्थापक से मानक सेट करवाएं',
-            style: TextStyle(color: kSubtle, fontSize: 11)),
-      ]),
-    );
-  }
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.all(20),
+    decoration: BoxDecoration(color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: kBorder.withOpacity(0.4))),
+    child: const Column(mainAxisSize: MainAxisSize.min, children: [
+      Icon(Icons.rule_outlined, size: 40, color: kSubtle),
+      SizedBox(height: 10),
+      Text('कोई मानक सेट नहीं है',
+          style: TextStyle(color: kSubtle, fontSize: 13,
+              fontWeight: FontWeight.w600)),
+      SizedBox(height: 4),
+      Text('व्यवस्थापक से मानक सेट करवाएं',
+          style: TextStyle(color: kSubtle, fontSize: 11)),
+    ]),
+  );
 }
 
-// ── Sensitivity block with expandable booth-count rows ──────────────────────
+// ══════════════════════════════════════════════════════════════════════════════
+//  MANAK SENSITIVITY BLOCK — matches admin _SensBlock exactly
+//  Collapsible header + summary chips + full scrollable table
+// ══════════════════════════════════════════════════════════════════════════════
 class _ManakSensBlock extends StatefulWidget {
-  final String sensKey, label;
-  final Color  color;
+  final String sensKey, sensHi;
+  final Color color;
   final List<_ManakRule> rules;
   const _ManakSensBlock({
-    required this.sensKey, required this.label,
-    required this.color,   required this.rules,
+    required this.sensKey, required this.sensHi,
+    required this.color, required this.rules,
   });
   @override
   State<_ManakSensBlock> createState() => _ManakSensBlockState();
 }
 
 class _ManakSensBlockState extends State<_ManakSensBlock> {
-  bool _expanded = false;
+  bool _expanded = true; // open by default so staff can see rules immediately
 
-  int get _totalStaff => widget.rules
-      .fold(0, (acc, r) => acc + r.total);
+  String _fp(double v) =>
+      v == 0 ? '0' : (v % 1 == 0 ? '${v.toInt()}' : v.toStringAsFixed(1));
+
+  // ── Pre-compute totals (matching admin logic) ────────────────────────────
+  _ManakTotals get _totals {
+    int tSI = 0, tHC = 0, tC = 0, tAx = 0;
+    double tPAC = 0;
+    for (final r in widget.rules) {
+      tSI += r.totalSI;
+      tHC += r.totalHC;
+      tC  += r.totalConst;
+      tAx += r.totalAux;
+      tPAC += r.pac;
+    }
+    return _ManakTotals(si: tSI, hc: tHC, c: tC, ax: tAx, pac: tPAC,
+        total: tSI + tHC + tC + tAx);
+  }
 
   @override
   Widget build(BuildContext context) {
+    final t     = _totals;
+    final color = widget.color;
+
     return Container(
-      margin: const EdgeInsets.only(bottom: 12),
       decoration: BoxDecoration(
           color: Colors.white,
           borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: widget.color.withOpacity(0.3))),
+          border: Border.all(color: color.withOpacity(0.3)),
+          boxShadow: [BoxShadow(
+              color: color.withOpacity(0.07),
+              blurRadius: 12, offset: const Offset(0, 4))]),
       child: Column(children: [
-        // Header row — tap to expand
+        // ── Header ─────────────────────────────────────────────────────────
         GestureDetector(
           onTap: () => setState(() => _expanded = !_expanded),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             decoration: BoxDecoration(
-                color: widget.color.withOpacity(0.07),
-                borderRadius: BorderRadius.vertical(
-                    top: const Radius.circular(13),
-                    bottom: _expanded ? Radius.zero : const Radius.circular(13)),
-                border: Border(bottom: _expanded
-                    ? BorderSide(color: widget.color.withOpacity(0.2))
-                    : BorderSide.none)),
+              color: kSurface.withOpacity(0.6),
+              borderRadius: BorderRadius.vertical(
+                  top: const Radius.circular(14),
+                  bottom: _expanded ? Radius.zero : const Radius.circular(14)),
+              border: Border(bottom: _expanded
+                  ? BorderSide(color: kBorder.withOpacity(0.3))
+                  : BorderSide.none),
+            ),
             child: Row(children: [
               Container(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 4),
-                  decoration: BoxDecoration(
-                      color: widget.color,
-                      borderRadius: BorderRadius.circular(6)),
-                  child: Text(widget.sensKey, style: const TextStyle(
-                      color: Colors.white, fontSize: 12,
-                      fontWeight: FontWeight.w900))),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                decoration: BoxDecoration(
+                    color: color, borderRadius: BorderRadius.circular(8)),
+                child: Text(widget.sensKey,
+                    style: const TextStyle(color: Colors.white,
+                        fontSize: 13, fontWeight: FontWeight.w900)),
+              ),
               const SizedBox(width: 10),
               Expanded(child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start, children: [
-                Text(widget.label, style: TextStyle(
-                    color: widget.color,
-                    fontWeight: FontWeight.w700, fontSize: 13)),
-                Text('${widget.rules.length} बूथ-श्रेणी  •  '
-                    'कुल $_totalStaff कर्मी/बूथ',
-                    style: const TextStyle(color: kSubtle, fontSize: 10)),
+                Text('${widget.sensHi} श्रेणी',
+                    style: const TextStyle(color: kDark, fontSize: 13,
+                        fontWeight: FontWeight.w800)),
+                Row(children: [
+                  Text('${widget.rules.length}/15 मानक  •  ',
+                      style: const TextStyle(color: kSubtle, fontSize: 10)),
+                  Text('कुल बल: ${t.total}',
+                      style: TextStyle(color: color,
+                          fontSize: 10, fontWeight: FontWeight.w700)),
+                ]),
               ])),
+              // status pill
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: kSuccess.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: kSuccess.withOpacity(0.35)),
+                ),
+                child: Row(mainAxisSize: MainAxisSize.min, children: [
+                  const Icon(Icons.check_circle_rounded,
+                      size: 11, color: kSuccess),
+                  const SizedBox(width: 4),
+                  const Text('सेट', style: TextStyle(
+                      color: kSuccess, fontSize: 10, fontWeight: FontWeight.w700)),
+                ]),
+              ),
+              const SizedBox(width: 6),
               Icon(_expanded
                   ? Icons.keyboard_arrow_up
                   : Icons.keyboard_arrow_down,
-                  color: widget.color, size: 20),
+                  color: color, size: 20),
             ]),
           ),
         ),
 
-        // Expandable rows — one per booth-count
-        if (_expanded)
-          Padding(
-            padding: const EdgeInsets.all(12),
-            child: Column(
-              children: widget.rules.map((rule) =>
-                  _ManakBoothRow(rule: rule, color: widget.color)).toList(),
-            ),
-          ),
-      ]),
-    );
-  }
-}
-
-// ── Single booth-count manak row with rank breakdown ──────────────────────────
-class _ManakBoothRow extends StatelessWidget {
-  final _ManakRule rule;
-  final Color      color;
-  const _ManakBoothRow({required this.rule, required this.color});
-
-  String get _boothLabel {
-    if (rule.boothCount >= 15) return '15+ बूथ';
-    if (rule.boothCount == 1)  return '1 बूथ';
-    return '${rule.boothCount} बूथ';
-  }
-
-  String _fp(double v) => v == 0 ? '0'
-      : (v % 1 == 0 ? '${v.toInt()}' : v.toStringAsFixed(1));
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-          color: kBg,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: kBorder.withOpacity(0.4))),
-      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Sub-header: booth count + total
-        Container(
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-          decoration: BoxDecoration(
-              color: color.withOpacity(0.05),
-              borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(9)),
-              border: Border(bottom: BorderSide(
-                  color: color.withOpacity(0.15)))),
-          child: Row(children: [
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-              decoration: BoxDecoration(
-                  color: color.withOpacity(0.12),
-                  borderRadius: BorderRadius.circular(6)),
-              child: Text(_boothLabel, style: TextStyle(
-                  color: color, fontSize: 11,
-                  fontWeight: FontWeight.w800)),
-            ),
-            const Spacer(),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                  color: color, borderRadius: BorderRadius.circular(20)),
-              child: Text('कुल: ${rule.total} कर्मी', style: const TextStyle(
-                  color: Colors.white, fontSize: 10,
-                  fontWeight: FontWeight.w800)),
-            ),
-          ]),
-        ),
-
-        // Rank breakdown chips
-        Padding(
-          padding: const EdgeInsets.all(10),
-          child: Wrap(spacing: 8, runSpacing: 6, children: [
-            if (rule.siArmed > 0)
-              _RankChip('SI', true, rule.siArmed,
-                  const Color(0xFF117A65)),
-            if (rule.siUnarmed > 0)
-              _RankChip('SI', false, rule.siUnarmed,
-                  const Color(0xFF117A65)),
-            if (rule.hcArmed > 0)
-              _RankChip('HC', true, rule.hcArmed,
-                  const Color(0xFFB8860B)),
-            if (rule.hcUnarmed > 0)
-              _RankChip('HC', false, rule.hcUnarmed,
-                  const Color(0xFFB8860B)),
-            if (rule.constArmed > 0)
-              _RankChip('Const', true, rule.constArmed,
-                  const Color(0xFF6D4C41)),
-            if (rule.constUnarmed > 0)
-              _RankChip('Const', false, rule.constUnarmed,
-                  const Color(0xFF6D4C41)),
-            if (rule.auxArmed > 0)
-              _RankChip('Aux', true, rule.auxArmed,
-                  const Color(0xFFE65100)),
-            if (rule.auxUnarmed > 0)
-              _RankChip('Aux', false, rule.auxUnarmed,
-                  const Color(0xFFE65100)),
-            if (rule.pac > 0)
-              _PacChip(_fp(rule.pac)),
-          ]),
-        ),
-
-        // Summary row: armed / unarmed counts
-        if (rule.totalArmed > 0 || rule.totalUnarmed > 0)
+        if (_expanded) ...[
+          // ── Summary chips (matches admin) ─────────────────────────────────
           Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-            decoration: BoxDecoration(
-                color: kSurface.withOpacity(0.5),
-                borderRadius: const BorderRadius.vertical(
-                    bottom: Radius.circular(9))),
-            child: Row(children: [
-              if (rule.totalArmed > 0) Row(
-                  mainAxisSize: MainAxisSize.min, children: [
-                Container(width: 8, height: 8,
-                    decoration: BoxDecoration(
-                        color: kArmed, shape: BoxShape.circle)),
-                const SizedBox(width: 4),
-                Text('सशस्त्र: ${rule.totalArmed}',
-                    style: const TextStyle(color: kArmed, fontSize: 11,
-                        fontWeight: FontWeight.w700)),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            color: color.withOpacity(0.04),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(children: [
+                _SumChip('SI',     '${t.si}',  color),
+                _SumChip('HC',     '${t.hc}',  color),
+                _SumChip('Const.', '${t.c}',   color),
+                _SumChip('Aux.',   '${t.ax}',  const Color(0xFFE65100)),
+                if (t.pac > 0)
+                  _SumChip('PAC',  _fp(t.pac), const Color(0xFF00695C)),
+                _SumChip('कुल बल', '${t.total}', kSuccess),
               ]),
-              if (rule.totalArmed > 0 && rule.totalUnarmed > 0)
-                const Text('  •  ',
-                    style: TextStyle(color: kSubtle, fontSize: 11)),
-              if (rule.totalUnarmed > 0) Row(
-                  mainAxisSize: MainAxisSize.min, children: [
-                Container(width: 8, height: 8,
-                    decoration: BoxDecoration(
-                        color: kUnarmed, shape: BoxShape.circle)),
-                const SizedBox(width: 4),
-                Text('निःशस्त्र: ${rule.totalUnarmed}',
-                    style: const TextStyle(color: kUnarmed, fontSize: 11,
-                        fontWeight: FontWeight.w700)),
-              ]),
-            ]),
+            ),
           ),
+
+          // ── Full scrollable table ─────────────────────────────────────────
+          _ManakTable(rules: widget.rules, color: widget.color),
+        ],
       ]),
     );
   }
 }
 
-class _RankChip extends StatelessWidget {
-  final String label;
-  final bool   armed;
-  final int    count;
-  final Color  color;
-  const _RankChip(this.label, this.armed, this.count, this.color);
-
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-    decoration: BoxDecoration(
-        color: color.withOpacity(0.09),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: color.withOpacity(0.3))),
-    child: Row(mainAxisSize: MainAxisSize.min, children: [
-      Icon(armed ? Icons.security : Icons.person_outline,
-          size: 11, color: color),
-      const SizedBox(width: 4),
-      Text('$label ', style: TextStyle(
-          color: color.withOpacity(0.8), fontSize: 11,
-          fontWeight: FontWeight.w600)),
-      Text(armed ? 'सश°' : 'नि°',
-          style: TextStyle(color: color.withOpacity(0.6), fontSize: 9)),
-      const SizedBox(width: 4),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-        decoration: BoxDecoration(
-            color: color, borderRadius: BorderRadius.circular(4)),
-        child: Text('$count', style: const TextStyle(
-            color: Colors.white, fontSize: 10,
-            fontWeight: FontWeight.w900))),
-    ]),
-  );
+class _ManakTotals {
+  final int si, hc, c, ax, total;
+  final double pac;
+  const _ManakTotals({
+    required this.si, required this.hc, required this.c,
+    required this.ax, required this.pac, required this.total,
+  });
 }
 
-class _PacChip extends StatelessWidget {
-  final String value;
-  const _PacChip(this.value);
+class _SumChip extends StatelessWidget {
+  final String label, value;
+  final Color color;
+  const _SumChip(this.label, this.value, this.color);
+
   @override
   Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+    margin: const EdgeInsets.only(right: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
     decoration: BoxDecoration(
-        color: const Color(0xFF00695C).withOpacity(0.1),
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFF00695C).withOpacity(0.3))),
+      color: color.withOpacity(0.08),
+      borderRadius: BorderRadius.circular(8),
+      border: Border.all(color: color.withOpacity(0.3)),
+    ),
     child: Row(mainAxisSize: MainAxisSize.min, children: [
-      const Icon(Icons.military_tech_outlined,
-          size: 11, color: Color(0xFF00695C)),
-      const SizedBox(width: 4),
-      const Text('PAC ', style: TextStyle(
-          color: Color(0xFF00695C), fontSize: 11,
+      Text('$label: ', style: TextStyle(
+          color: color.withOpacity(0.8), fontSize: 10,
           fontWeight: FontWeight.w600)),
-      Container(
-        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
-        decoration: BoxDecoration(
-            color: const Color(0xFF00695C),
-            borderRadius: BorderRadius.circular(4)),
-        child: Text(value, style: const TextStyle(
-            color: Colors.white, fontSize: 10,
-            fontWeight: FontWeight.w900))),
+      Text(value, style: TextStyle(
+          color: color, fontSize: 11, fontWeight: FontWeight.w900)),
     ]),
   );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  SHARED WIDGETS
+//  MANAK TABLE — mirrors admin _ReportTable exactly
+//  17 columns: क्र.स | label | (no center count — staff don't have it) |
+//  Scale-5: SI | HC | Const | Aux | PAC |
+//  Per-rule breakdown: SI सश | HC | HC सश | HC निः |
+//                      Const | Const सश | Const निः | Aux | PAC
+//
+//  NOTE: Staff don't have center-count data (only admin does).
+//        So the "पोलिंग सेन्टर संख्या" column is omitted.
+//        All other columns match admin exactly.
+// ══════════════════════════════════════════════════════════════════════════════
+class _ManakTable extends StatelessWidget {
+  final List<_ManakRule> rules;
+  final Color color;
+  const _ManakTable({required this.rules, required this.color});
+
+  String _fp(double v) =>
+      v == 0 ? '0' : (v % 1 == 0 ? '${v.toInt()}' : v.toStringAsFixed(1));
+
+  // Build a lookup: boothCount → rule
+  Map<int, _ManakRule> get _byCount =>
+      {for (final r in rules) r.boothCount: r};
+
+  @override
+  Widget build(BuildContext context) {
+    final byCount = _byCount;
+
+    // Compute grand totals
+    int mSI_A=0, mSI_U=0, mHC_A=0, mHC_U=0;
+    int mC_A=0,  mC_U=0,  mAx_A=0, mAx_U=0;
+    double mPAC = 0;
+    for (final r in rules) {
+      mSI_A += r.siArmed;   mSI_U += r.siUnarmed;
+      mHC_A += r.hcArmed;   mHC_U += r.hcUnarmed;
+      mC_A  += r.constArmed; mC_U += r.constUnarmed;
+      mAx_A += r.auxArmed;  mAx_U += r.auxUnarmed;
+      mPAC  += r.pac;
+    }
+
+    // Column widths: 16 cols (no center-count col)
+    // 0=क्र.स | 1=label | 2=SI | 3=HC | 4=Const | 5=Aux | 6=PAC |
+    // 7=SI सश | 8=HC | 9=HC सश | 10=HC निः |
+    // 11=Const | 12=Const सश | 13=Const निः | 14=Aux | 15=PAC
+    const Map<int, TableColumnWidth> colWidths = {
+      0: FixedColumnWidth(30),   // क्र.स
+      1: FixedColumnWidth(92),   // label
+      // Scale
+      2: FixedColumnWidth(30),
+      3: FixedColumnWidth(30),
+      4: FixedColumnWidth(34),
+      5: FixedColumnWidth(36),
+      6: FixedColumnWidth(34),
+      // Breakdown
+      7:  FixedColumnWidth(32),
+      8:  FixedColumnWidth(34),
+      9:  FixedColumnWidth(34),
+      10: FixedColumnWidth(34),
+      11: FixedColumnWidth(34),
+      12: FixedColumnWidth(36),
+      13: FixedColumnWidth(36),
+      14: FixedColumnWidth(38),
+      15: FixedColumnWidth(34),
+    };
+
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(minWidth: 700),
+        child: Table(
+          columnWidths: colWidths,
+          border: TableBorder.all(
+              color: kBorder.withOpacity(0.25), width: 0.5),
+          children: [
+            // ── Group header row ──────────────────────────────────────────
+            TableRow(
+              decoration: BoxDecoration(color: color.withOpacity(0.10)),
+              children: [
+                _TH(''),
+                _TH('', alignLeft: true),
+                // Scale group
+                _TH2('Scale (प्रति बूथ मानक)', color: color, bold: true),
+                _TH(''), _TH(''), _TH(''), _TH(''),
+                // Breakdown group
+                _TH2('पुलिस बल विवरण (पद एवं श्रेणी वार)',
+                    color: color, bold: true),
+                _TH(''), _TH(''), _TH(''),
+                _TH(''), _TH(''), _TH(''), _TH(''), _TH(''),
+              ],
+            ),
+
+            // ── Column headers ─────────────────────────────────────────────
+            TableRow(
+              decoration: const BoxDecoration(color: kSurface),
+              children: [
+                _TH('क्र.\nस.'),
+                _TH('मतदान केन्द्र\nका प्रकार', alignLeft: true),
+                // Scale
+                _TH('SI'),
+                _TH('HC'),
+                _TH('Const.'),
+                _TH('Aux.\nForce'),
+                _TH('PAC\n(sec.)'),
+                // Breakdown
+                _TH('SI\nसश°'),
+                _TH('HC'),
+                _TH('HC\nसश°'),
+                _TH('HC\nनिः°'),
+                _TH('Const.'),
+                _TH('Const.\nसश°'),
+                _TH('Const.\nनिः°'),
+                _TH('Aux.\nForce'),
+                _TH('PAC\n(sec.)'),
+              ],
+            ),
+
+            // ── Data rows (1..15) ──────────────────────────────────────────
+            ...List.generate(15, (idx) {
+              final i  = idx + 1;
+              final r  = byCount[i];
+              final bg = idx % 2 == 1
+                  ? kBg.withOpacity(0.5)
+                  : Colors.white;
+              final label = i < 15
+                  ? '${kBoothTiers[i - 1]['label']}'
+                  : '15+ बूथ';
+              final hasRule = r != null && r.hasAny;
+
+              return TableRow(
+                decoration: BoxDecoration(color: bg),
+                children: [
+                  _TD('$i', center: true),
+                  _TD(label, alignLeft: true),
+                  // Scale
+                  _TDn(r?.totalSI    ?? 0, hasData: hasRule),
+                  _TDn(r?.totalHC    ?? 0, hasData: hasRule),
+                  _TDn(r?.totalConst ?? 0, hasData: hasRule),
+                  _TDn(r?.totalAux   ?? 0, hasData: hasRule),
+                  _TDs(_fp(r?.pac ?? 0),   hasData: hasRule && (r?.pac ?? 0) > 0),
+                  // Breakdown
+                  _TDn(r?.siArmed      ?? 0, hasData: hasRule),
+                  _TDn(r?.totalHC      ?? 0, hasData: hasRule),
+                  _TDn(r?.hcArmed      ?? 0, hasData: hasRule),
+                  _TDn(r?.hcUnarmed    ?? 0, hasData: hasRule),
+                  _TDn(r?.totalConst   ?? 0, hasData: hasRule),
+                  _TDn(r?.constArmed   ?? 0, hasData: hasRule),
+                  _TDn(r?.constUnarmed ?? 0, hasData: hasRule),
+                  _TDn(r?.totalAux     ?? 0, hasData: hasRule),
+                  _TDs(_fp(r?.pac ?? 0),    hasData: hasRule && (r?.pac ?? 0) > 0),
+                ],
+              );
+            }),
+
+            // ── Total row ──────────────────────────────────────────────────
+            TableRow(
+              decoration: BoxDecoration(color: color.withOpacity(0.09)),
+              children: [
+                _TD('', center: true),
+                _TD('योग', alignLeft: true, bold: true),
+                // Scale totals (sum of manak rules)
+                _TD('${mSI_A+mSI_U}', center: true, bold: true),
+                _TD('${mHC_A+mHC_U}', center: true, bold: true),
+                _TD('${mC_A+mC_U}',   center: true, bold: true),
+                _TD('${mAx_A+mAx_U}', center: true, bold: true),
+                _TD(_fp(mPAC),         center: true, bold: true),
+                // Breakdown totals
+                _TD('$mSI_A',          center: true, bold: true),
+                _TD('${mHC_A+mHC_U}', center: true, bold: true),
+                _TD('$mHC_A',          center: true, bold: true),
+                _TD('$mHC_U',          center: true, bold: true),
+                _TD('${mC_A+mC_U}',   center: true, bold: true),
+                _TD('$mC_A',           center: true, bold: true),
+                _TD('$mC_U',           center: true, bold: true),
+                _TD('${mAx_A+mAx_U}', center: true, bold: true),
+                _TD(_fp(mPAC),         center: true, bold: true),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ── Table cell helpers (matching admin style) ─────────────────────────────────
+
+Widget _TH(String text, {bool alignLeft = false}) => TableCell(
+  verticalAlignment: TableCellVerticalAlignment.middle,
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+    child: Text(text,
+        textAlign: alignLeft ? TextAlign.left : TextAlign.center,
+        style: const TextStyle(
+            fontSize: 9.5, fontWeight: FontWeight.w700,
+            color: kDark, height: 1.2)),
+  ),
+);
+
+Widget _TH2(String text, {Color? color, bool bold = false}) => TableCell(
+  verticalAlignment: TableCellVerticalAlignment.middle,
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+    child: Text(text,
+        textAlign: TextAlign.center,
+        maxLines: 2, overflow: TextOverflow.ellipsis,
+        style: TextStyle(
+            fontSize: 8,
+            fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+            color: color ?? kDark, height: 1.2)),
+  ),
+);
+
+Widget _TD(String text,
+    {bool center = false, bool bold = false, bool alignLeft = false}) =>
+    TableCell(
+      verticalAlignment: TableCellVerticalAlignment.middle,
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+        child: Text(text,
+            textAlign: center
+                ? TextAlign.center
+                : (alignLeft ? TextAlign.left : TextAlign.center),
+            style: TextStyle(
+                fontSize: 11,
+                fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
+                color: bold ? kDark : kDark.withOpacity(0.8),
+                height: 1.2)),
+      ),
+    );
+
+Widget _TDn(int v, {bool hasData = true}) => TableCell(
+  verticalAlignment: TableCellVerticalAlignment.middle,
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+    child: Text('$v',
+        textAlign: TextAlign.center,
+        style: TextStyle(
+            fontSize: 11,
+            fontWeight: v > 0 ? FontWeight.w700 : FontWeight.w400,
+            color: v > 0
+                ? kDark
+                : (hasData ? kSubtle.withOpacity(0.5) : kSubtle.withOpacity(0.25)),
+            height: 1.2)),
+  ),
+);
+
+Widget _TDs(String text, {bool hasData = true}) => TableCell(
+  verticalAlignment: TableCellVerticalAlignment.middle,
+  child: Container(
+    padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+    child: Text(text,
+        textAlign: TextAlign.center,
+        style: TextStyle(
+            fontSize: 11,
+            fontWeight: hasData ? FontWeight.w700 : FontWeight.w400,
+            color: hasData ? kDark : kSubtle.withOpacity(0.3),
+            height: 1.2)),
+  ),
+);
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  SHARED WIDGETS (unchanged from original)
 // ══════════════════════════════════════════════════════════════════════════════
 
 class _ProfileCard extends StatelessWidget {
@@ -3306,11 +3385,9 @@ class _HeroCard extends StatelessWidget {
       const SizedBox(height: 12),
       Wrap(spacing: 10, runSpacing: 8, children: [
         if ((user?['thana'] ?? '').toString().isNotEmpty)
-          _HeroBadge(Icons.local_police_outlined,
-              user!['thana'].toString()),
+          _HeroBadge(Icons.local_police_outlined, user!['thana'].toString()),
         if ((user?['district'] ?? '').toString().isNotEmpty)
-          _HeroBadge(Icons.location_city_outlined,
-              user!['district'].toString()),
+          _HeroBadge(Icons.location_city_outlined, user!['district'].toString()),
         _HeroBadge(Icons.military_tech_outlined,
             rh(user?['rank'] ?? user?['user_rank'])),
       ]),
@@ -3321,8 +3398,7 @@ class _HeroCard extends StatelessWidget {
         Container(height: 1, color: Colors.white.withOpacity(0.15)),
         const SizedBox(height: 10),
         Row(children: [
-          const Icon(Icons.how_to_vote_outlined,
-              size: 14, color: Colors.white54),
+          const Icon(Icons.how_to_vote_outlined, size: 14, color: Colors.white54),
           const SizedBox(width: 6),
           Expanded(child: Text(
             'ड्यूटी: ${duty!['centerName'] ?? duty!['sectorName'] ?? duty!['zoneName'] ?? duty!['superZoneName'] ?? '—'}',
@@ -3348,8 +3424,7 @@ class _HeroBadge extends StatelessWidget {
     child: Row(mainAxisSize: MainAxisSize.min, children: [
       Icon(icon, size: 12, color: Colors.white60),
       const SizedBox(width: 5),
-      Text(label, style: const TextStyle(
-          color: Colors.white70, fontSize: 11)),
+      Text(label, style: const TextStyle(color: Colors.white70, fontSize: 11)),
     ]),
   );
 }
@@ -3372,10 +3447,8 @@ class _SectionCard extends StatelessWidget {
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
             color: kSurface.withOpacity(0.6),
-            borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(14)),
-            border: Border(bottom: BorderSide(
-                color: kBorder.withOpacity(0.4)))),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+            border: Border(bottom: BorderSide(color: kBorder.withOpacity(0.4)))),
         child: Row(children: [
           Container(width: 28, height: 28,
               decoration: BoxDecoration(
@@ -3471,8 +3544,7 @@ class _OfficerCard extends StatelessWidget {
       return Container(
         padding: const EdgeInsets.symmetric(vertical: 10),
         decoration: BoxDecoration(border: i < officers.length - 1
-            ? Border(bottom: BorderSide(
-                color: kBorder.withOpacity(0.4)))
+            ? Border(bottom: BorderSide(color: kBorder.withOpacity(0.4)))
             : null),
         child: Row(children: [
           Container(width: 36, height: 36,

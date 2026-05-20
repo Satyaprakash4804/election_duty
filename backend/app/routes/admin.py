@@ -1,10 +1,3 @@
-"""
-admin.py — main admin blueprint (production merged version)
-────────────────────────────────────────────────────────────
-All duty assignment endpoints are guarded by require_active_election().
-Every INSERT into duty_assignments / district_duty_assignments stamps election_id.
-Auto-finalize runs opportunistically when election_date has passed.
-"""
 
 import json
 import io
@@ -186,8 +179,9 @@ def normalize_rule(r):
         "const_unarmed_count": r.get("constUnarmedCount", 0),
         "aux_armed_count":     r.get("auxArmedCount", 0),
         "aux_unarmed_count":   r.get("auxUnarmedCount", 0),
-        "pac_count":           r.get("pacCount", 0),
+        "pac_count":           float(r.get("pacCount") or 0),  # ← float, not int
     }
+
 
 def _serialize_booth_rule(r):
     return {
@@ -355,97 +349,203 @@ def lock_sz(super_zone_id):
 def get_super_zones():
     d_ids = _district_admin_ids()
     d_ph, d_params = _district_placeholder(d_ids)
+
     conn = get_db()
+
     try:
         with conn.cursor() as cur:
+
+            # ─────────────────────────────────────────────
+            # Main super zone list
+            # ─────────────────────────────────────────────
             cur.execute(f"""
-                SELECT sz.id, sz.name, sz.district, sz.block,
-                       COUNT(DISTINCT ms.id)         AS center_count,
-                       COUNT(DISTINCT da.staff_id)   AS assigned_count,
-                       COALESCE(l.is_locked, 0)      AS is_locked
+                SELECT
+                    sz.id,
+                    sz.name,
+                    sz.district,
+                    sz.block,
+
+                    COUNT(DISTINCT ms.id) AS center_count,
+
+                    COUNT(DISTINCT da.staff_id) AS assigned_count,
+
+                    COALESCE(l.is_locked, 0) AS is_locked
+
                 FROM super_zones sz
-                LEFT JOIN zones z            ON z.super_zone_id      = sz.id
-                LEFT JOIN sectors s          ON s.zone_id            = z.id
-                LEFT JOIN gram_panchayats gp ON gp.sector_id         = s.id
-                LEFT JOIN matdan_sthal ms    ON ms.gram_panchayat_id = gp.id
-                LEFT JOIN duty_assignments da ON da.sthal_id         = ms.id
-                LEFT JOIN sz_duty_locks l    ON l.super_zone_id      = sz.id
+
+                LEFT JOIN zones z
+                    ON z.super_zone_id = sz.id
+
+                LEFT JOIN sectors s
+                    ON s.zone_id = z.id
+
+                LEFT JOIN gram_panchayats gp
+                    ON gp.sector_id = s.id
+
+                LEFT JOIN matdan_sthal ms
+                    ON ms.gram_panchayat_id = gp.id
+
+                LEFT JOIN duty_assignments da
+                    ON da.sthal_id = ms.id
+
+                LEFT JOIN sz_duty_locks l
+                    ON l.super_zone_id = sz.id
+
                 WHERE sz.admin_id IN ({d_ph})
-                GROUP BY sz.id ORDER BY sz.id
+
+                GROUP BY sz.id
+
+                ORDER BY sz.id
             """, d_params)
+
             rows = cur.fetchall()
+
             if not rows:
                 return ok([])
-            sz_ids = [r["id"] for r in rows]
-            sz_ph  = ",".join(["%s"] * len(sz_ids))
 
-            # Get required staff count per super zone from booth_rules
+            sz_ids = [r["id"] for r in rows]
+
+            sz_ph = ",".join(["%s"] * len(sz_ids))
+
+            # ─────────────────────────────────────────────
+            # REQUIRED STAFF COUNT
+            #
+            # IMPORTANT:
+            # booth_rules already store TOTAL required
+            # staff for a center of that booth count.
+            #
+            # DO NOT multiply by booth_count again.
+            # ─────────────────────────────────────────────
             cur.execute(f"""
                 SELECT
                     sz2.id AS sz_id,
+
                     COALESCE(SUM(
-                        ms2.booth_count *
+
                         COALESCE(br.si_armed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.si_unarmed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.hc_armed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.hc_unarmed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.const_armed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.const_unarmed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.aux_armed_count,0) +
-                        ms2.booth_count *
+
                         COALESCE(br.aux_unarmed_count,0)
+
                     ), 0) AS required_count
+
                 FROM super_zones sz2
-                LEFT JOIN zones z2            ON z2.super_zone_id      = sz2.id
-                LEFT JOIN sectors s2          ON s2.zone_id            = z2.id
-                LEFT JOIN gram_panchayats gp2 ON gp2.sector_id         = s2.id
-                LEFT JOIN matdan_sthal ms2    ON ms2.gram_panchayat_id = gp2.id
+
+                LEFT JOIN zones z2
+                    ON z2.super_zone_id = sz2.id
+
+                LEFT JOIN sectors s2
+                    ON s2.zone_id = z2.id
+
+                LEFT JOIN gram_panchayats gp2
+                    ON gp2.sector_id = s2.id
+
+                LEFT JOIN matdan_sthal ms2
+                    ON ms2.gram_panchayat_id = gp2.id
+
                 LEFT JOIN booth_rules br
                     ON br.sensitivity = ms2.center_type
                     AND br.booth_count = LEAST(ms2.booth_count, 15)
                     AND br.admin_id IN ({d_ph})
+
                 WHERE sz2.id IN ({sz_ph})
+
                 GROUP BY sz2.id
             """, d_params + sz_ids)
-            required_map = {r["sz_id"]: int(r["required_count"] or 0)
-                            for r in cur.fetchall()}
 
-            cur.execute(f"SELECT * FROM kshetra_officers WHERE super_zone_id IN ({sz_ph}) "
-                        f"ORDER BY super_zone_id, id", sz_ids)
+            required_map = {
+                r["sz_id"]: int(r["required_count"] or 0)
+                for r in cur.fetchall()
+            }
+
+            # ─────────────────────────────────────────────
+            # Officers
+            # ─────────────────────────────────────────────
+            cur.execute(
+                f"""
+                SELECT *
+                FROM kshetra_officers
+                WHERE super_zone_id IN ({sz_ph})
+                ORDER BY super_zone_id, id
+                """,
+                sz_ids
+            )
+
             officers_by_sz = {}
-            for off in cur.fetchall():
-                officers_by_sz.setdefault(off["super_zone_id"], []).append(_o(off))
 
+            for off in cur.fetchall():
+                officers_by_sz.setdefault(
+                    off["super_zone_id"],
+                    []
+                ).append(_o(off))
+
+            # ─────────────────────────────────────────────
+            # Final response
+            # ─────────────────────────────────────────────
             result = []
+
             for r in rows:
-                sz_id        = r["id"]
+
+                sz_id = r["id"]
+
                 assigned_cnt = int(r["assigned_count"] or 0)
-                required_cnt = required_map.get(sz_id, 0)
-                center_cnt   = int(r["center_count"] or 0)
+
+                required_cnt = int(required_map.get(sz_id, 0))
+
+                center_cnt = int(r["center_count"] or 0)
+
                 result.append({
-                    "id":             sz_id,
-                    "name":           r["name"]     or "",
-                    "district":       r["district"] or "",
-                    "block":          r["block"]    or "",
-                    "center_count":   center_cnt,
-                    "is_locked":      int(r["is_locked"] or 0),
-                    "officers":       officers_by_sz.get(sz_id, []),
-                    # ✅ Duty status fields Flutter reads
+
+                    "id": sz_id,
+
+                    "name": r["name"] or "",
+
+                    "district": r["district"] or "",
+
+                    "block": r["block"] or "",
+
+                    "center_count": center_cnt,
+
+                    "is_locked": int(r["is_locked"] or 0),
+
+                    "officers": officers_by_sz.get(sz_id, []),
+
+                    # Flutter reads these fields
                     "assignedBooths": assigned_cnt,
-                    "totalBooths":    required_cnt,
+
+                    "totalBooths": required_cnt,
+
                     "dutyFullyAssigned": (
-                        required_cnt > 0 and assigned_cnt >= required_cnt
+                        required_cnt > 0 and
+                        assigned_cnt >= required_cnt
                     ),
                 })
+
+    except Exception as e:
+        conn.rollback()
+        write_log(
+            "ERROR",
+            f"get_super_zones error: {e}",
+            "SuperZone"
+        )
+        return err(f"Server error: {e}", 500)
+
     finally:
         conn.close()
+
     return ok(result)
+
 
 @admin_bp.route("/super-zones", methods=["POST"])
 @admin_required
@@ -1155,46 +1255,258 @@ def delete_gram_panchayat(gp_id):
 @admin_bp.route("/gram-panchayats/<int:gp_id>/centers", methods=["POST"])
 @admin_required
 def create_center(gp_id):
-    body = request.get_json() or {}
-    name        = body.get("name")
-    address     = body.get("address")
-    thana       = body.get("thana")
-    bus_no      = body.get("busNo")
-    center_type = body.get("centerType")
-    booth_count = body.get("boothCount")
-    lat         = body.get("latitude")
-    lng         = body.get("longitude")
 
-    if not name or not center_type:
-        return err("name and centerType required")
+    body = request.get_json() or {}
+
+    name        = (body.get("name") or "").strip()
+    address     = (body.get("address") or "").strip()
+    thana       = (body.get("thana") or "").strip()
+    bus_no      = (body.get("busNo") or "").strip()
+    center_type = (body.get("centerType") or "C").strip()
+
+    # ─────────────────────────────────────────────
+    # Booth count
+    # ─────────────────────────────────────────────
     try:
-        booth_count = int(booth_count or 1)
+        booth_count = int(body.get("boothCount") or 1)
+
+        if booth_count < 1:
+            booth_count = 1
+
+        if booth_count > 15:
+            booth_count = 15
+
     except Exception:
         booth_count = 1
 
+    # ─────────────────────────────────────────────
+    # Latitude
+    # ─────────────────────────────────────────────
+    lat = body.get("latitude")
+
+    try:
+        lat = (
+            float(lat)
+            if lat not in [None, "", "null"]
+            else None
+        )
+    except Exception:
+        lat = None
+
+    # ─────────────────────────────────────────────
+    # Longitude
+    # ─────────────────────────────────────────────
+    lng = body.get("longitude")
+
+    try:
+        lng = (
+            float(lng)
+            if lng not in [None, "", "null"]
+            else None
+        )
+    except Exception:
+        lng = None
+
+    # ─────────────────────────────────────────────
+    # Validation
+    # ─────────────────────────────────────────────
+    if not name:
+        return err("Center name required")
+
+    if not center_type:
+        return err("Center type required")
+
     conn = get_db()
+
     try:
         with conn.cursor() as cur:
+
+            # ─────────────────────────────────────
+            # Create center
+            # ─────────────────────────────────────
             cur.execute("""
                 INSERT INTO matdan_sthal
-                (gram_panchayat_id, name, address, thana, bus_no,
-                 center_type, booth_count, latitude, longitude)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
-            """, (gp_id, name, address, thana, bus_no, center_type, booth_count, lat, lng))
-            center_id = cur.lastrowid
-            cur.execute("DELETE FROM matdan_kendra WHERE matdan_sthal_id=%s", (center_id,))
-            for i in range(1, booth_count + 1):
-                cur.execute(
-                    "INSERT INTO matdan_kendra (matdan_sthal_id, room_number) VALUES (%s, %s)",
-                    (center_id, str(i))
+                (
+                    gram_panchayat_id,
+                    name,
+                    address,
+                    thana,
+                    bus_no,
+                    center_type,
+                    booth_count,
+                    latitude,
+                    longitude
                 )
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s)
+            """, (
+                gp_id,
+                name,
+                address,
+                thana,
+                bus_no,
+                center_type,
+                booth_count,
+                lat,
+                lng
+            ))
+
+            center_id = cur.lastrowid
+
+            # ─────────────────────────────────────
+            # Auto create rooms
+            # ─────────────────────────────────────
+            cur.execute(
+                "DELETE FROM matdan_kendra WHERE matdan_sthal_id=%s",
+                (center_id,)
+            )
+
+            for i in range(1, booth_count + 1):
+
+                cur.execute("""
+                    INSERT INTO matdan_kendra
+                    (
+                        matdan_sthal_id,
+                        room_number
+                    )
+                    VALUES (%s,%s)
+                """, (
+                    center_id,
+                    str(i)
+                ))
+
         conn.commit()
+
     except Exception as e:
+
         conn.rollback()
-        return err(f"Create failed: {e}", 500)
+
+        return err(f"Create failed: {str(e)}", 500)
+
     finally:
         conn.close()
-    return ok({"centerId": center_id, "boothCount": booth_count}, "Center created with rooms")
+
+    return ok({
+
+        "centerId": center_id,
+
+        "boothCount": booth_count,
+
+        "latitude": lat,
+
+        "longitude": lng,
+
+    }, "Center created successfully")
+
+# ═══════════════════════════════════════════════════════════════════════
+# UPDATE CENTER
+# ═══════════════════════════════════════════════════════════════════════
+
+@admin_bp.route("/centers/<int:c_id>", methods=["PUT"])
+@admin_required
+def update_center(c_id):
+
+    body = request.get_json() or {}
+
+    name        = (body.get("name") or "").strip()
+    address     = (body.get("address") or "").strip()
+    thana       = (body.get("thana") or "").strip()
+    bus_no      = (body.get("busNo") or "").strip()
+    center_type = (body.get("centerType") or "C").strip()
+
+    # booth count
+    try:
+        booth_count = int(body.get("boothCount") or 1)
+        if booth_count < 1:
+            booth_count = 1
+    except Exception:
+        booth_count = 1
+
+    # latitude
+    lat = body.get("latitude")
+    try:
+        lat = float(lat) if lat not in [None, ""] else None
+    except Exception:
+        lat = None
+
+    # longitude
+    lng = body.get("longitude")
+    try:
+        lng = float(lng) if lng not in [None, ""] else None
+    except Exception:
+        lng = None
+
+    if not name:
+        return err("Center name required")
+
+    conn = get_db()
+
+    try:
+        with conn.cursor() as cur:
+
+            # check exists
+            cur.execute(
+                "SELECT id FROM matdan_sthal WHERE id=%s",
+                (c_id,)
+            )
+
+            old = cur.fetchone()
+
+            if not old:
+                return err("Center not found", 404)
+
+            # update center
+            cur.execute("""
+                UPDATE matdan_sthal
+                SET
+                    name=%s,
+                    address=%s,
+                    thana=%s,
+                    bus_no=%s,
+                    center_type=%s,
+                    booth_count=%s,
+                    latitude=%s,
+                    longitude=%s
+                WHERE id=%s
+            """, (
+                name,
+                address,
+                thana,
+                bus_no,
+                center_type,
+                booth_count,
+                lat,
+                lng,
+                c_id
+            ))
+
+            # rebuild rooms
+            cur.execute(
+                "DELETE FROM matdan_kendra WHERE matdan_sthal_id=%s",
+                (c_id,)
+            )
+
+            for i in range(1, booth_count + 1):
+                cur.execute("""
+                    INSERT INTO matdan_kendra
+                    (matdan_sthal_id, room_number)
+                    VALUES (%s,%s)
+                """, (c_id, str(i)))
+
+        conn.commit()
+
+    except Exception as e:
+        conn.rollback()
+        return err(f"Update failed: {str(e)}", 500)
+
+    finally:
+        conn.close()
+
+    return ok({
+        "centerId": c_id,
+        "boothCount": booth_count,
+        "latitude": lat,
+        "longitude": lng,
+    }, "Center updated successfully")
 
 
 @admin_bp.route("/gram-panchayats/<int:gp_id>/centers", methods=["GET"])
@@ -2507,16 +2819,20 @@ def save_booth_rules():
                 bc = int(r.get("booth_count") or 0)
                 if bc < 1 or bc > 15:
                     continue
-                total = sum([
+                total_staff = sum([
                     r["si_armed_count"], r["si_unarmed_count"],
                     r["hc_armed_count"], r["hc_unarmed_count"],
                     r["const_armed_count"], r["const_unarmed_count"],
                     r["aux_armed_count"], r["aux_unarmed_count"],
                 ])
-                if total == 0:
+                if total_staff == 0 and r["pac_count"] == 0:
                     continue
-                if total > 50:
+                if total_staff > 50:
                     return err(f"Too many staff in boothCount {bc}")
+
+                # ✅ pac_count stored as DECIMAL(4,1) — round to 1 decimal place
+                pac = round(float(r["pac_count"] or 0), 1)
+
                 cur.execute("""
                     INSERT INTO booth_rules
                     (admin_id, election_id, sensitivity, booth_count,
@@ -2526,11 +2842,15 @@ def save_booth_rules():
                      aux_armed_count, aux_unarmed_count, pac_count)
                     VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)
                 """, (_admin_id(), election_id, sens, bc,
-                      r["si_armed_count"], r["si_unarmed_count"],
-                      r["hc_armed_count"], r["hc_unarmed_count"],
-                      r["const_armed_count"], r["const_unarmed_count"],
-                      r["aux_armed_count"], r["aux_unarmed_count"],
-                      math.ceil(float(r["pac_count"] or 0))))
+                      int(r["si_armed_count"]),
+                      int(r["si_unarmed_count"]),
+                      int(r["hc_armed_count"]),
+                      int(r["hc_unarmed_count"]),
+                      int(r["const_armed_count"]),
+                      int(r["const_unarmed_count"]),
+                      int(r["aux_armed_count"]),
+                      int(r["aux_unarmed_count"]),
+                      pac))          # ← float, e.g. 1.5, 2.0, 0.5
         conn.commit()
     except Exception as e:
         try: conn.rollback()
@@ -2541,6 +2861,7 @@ def save_booth_rules():
         conn.close()
     write_log("INFO", f"Booth rules saved: {sens}, {len(rules)} rows by admin {_admin_id()}", "Rules")
     return ok({"sensitivity": sens, "saved": len(rules), "electionId": election_id}, f"{sens} मानक saved")
+
 
 
 @admin_bp.route("/booth-rules/center-counts", methods=["GET"])
@@ -4781,113 +5102,58 @@ def get_admin_config():
 @admin_bp.route("/overview", methods=["GET"])
 @admin_required
 def admin_overview():
-    district = (request.user.get("district") or "").strip()
-    
-    # Run auto-finalize if election date has passed
-    run_auto_finalize_if_due(district)
-    
+    # DISTRICT SHARING: aggregate stats for all admins in same district
     d_ids = _district_admin_ids()
     d_ph, d_params = _district_placeholder(d_ids)
-
-    # Get active election to filter duties
-    cfg_active = get_active_election(district)
-    eid_filter = ""
-    eid_params = []
-    if cfg_active:
-        eid_filter = "AND da.election_id = %s"
-        eid_params = [cfg_active["id"]]
+    district = (request.user.get("district") or "").strip()
 
     conn = get_db()
     try:
         with conn.cursor() as cur:
-            cur.execute(
-                f"SELECT COUNT(*) AS cnt FROM super_zones WHERE admin_id IN ({d_ph})",
-                d_params
-            )
+            cur.execute(f"SELECT COUNT(*) AS cnt FROM super_zones WHERE admin_id IN ({d_ph})", d_params)
             sz = cur.fetchone()["cnt"]
 
             cur.execute(f"""
                 SELECT COUNT(DISTINCT ms.id) AS cnt
                 FROM matdan_sthal ms
                 JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors s          ON s.id  = gp.sector_id
-                JOIN zones z            ON z.id  = s.zone_id
-                JOIN super_zones sz     ON sz.id = z.super_zone_id
+                JOIN sectors s ON s.id = gp.sector_id
+                JOIN zones z ON z.id = s.zone_id
+                JOIN super_zones sz ON sz.id = z.super_zone_id
                 WHERE sz.admin_id IN ({d_ph})
             """, d_params)
             booths = cur.fetchone()["cnt"]
 
-            # Staff count: district-scoped
-            if district:
-                cur.execute(
-                    "SELECT COUNT(*) AS cnt FROM users "
-                    "WHERE role='staff' AND is_active=1 AND district=%s",
-                    (district,)
-                )
-            else:
-                cur.execute(
-                    "SELECT COUNT(*) AS cnt FROM users "
-                    "WHERE role='staff' AND is_active=1"
-                )
+            # Staff count: ALL staff across all districts
+            cur.execute("SELECT COUNT(*) AS cnt FROM users WHERE role='staff' AND is_active=1")
             staff = cur.fetchone()["cnt"]
 
-            # Booth duty count — filtered by active election_id
+            # Duty count: duties at centers belonging to this district's admins
             cur.execute(f"""
-                SELECT COUNT(DISTINCT da.staff_id) AS cnt
+                SELECT COUNT(*) AS cnt
                 FROM duty_assignments da
-                JOIN matdan_sthal ms    ON ms.id = da.sthal_id
+                JOIN matdan_sthal ms ON ms.id = da.sthal_id
                 JOIN gram_panchayats gp ON gp.id = ms.gram_panchayat_id
-                JOIN sectors s          ON s.id  = gp.sector_id
-                JOIN zones z            ON z.id  = s.zone_id
-                JOIN super_zones sz     ON sz.id = z.super_zone_id
-                WHERE sz.admin_id IN ({d_ph}) {eid_filter}
-            """, d_params + eid_params)
-            booth_assigned = cur.fetchone()["cnt"]
-
-            # District duty count — filtered by active election_id
-            if cfg_active:
-                cur.execute(f"""
-                    SELECT COUNT(DISTINCT staff_id) AS cnt
-                    FROM district_duty_assignments
-                    WHERE admin_id IN ({d_ph}) AND election_id = %s
-                """, d_params + [cfg_active["id"]])
-            else:
-                cur.execute(f"""
-                    SELECT COUNT(DISTINCT staff_id) AS cnt
-                    FROM district_duty_assignments
-                    WHERE admin_id IN ({d_ph})
-                """, d_params)
-            district_assigned = cur.fetchone()["cnt"]
+                JOIN sectors s ON s.id = gp.sector_id
+                JOIN zones z ON z.id = s.zone_id
+                JOIN super_zones sz ON sz.id = z.super_zone_id
+                WHERE sz.admin_id IN ({d_ph})
+            """, d_params)
+            assigned = cur.fetchone()["cnt"]
 
     except Exception as e:
         write_log("ERROR", f"overview error: {e}", "Overview")
-        return {
-            "success": True,
-            "data": {
-                "superZones":      0,
-                "totalBooths":     0,
-                "totalStaff":      0,
-                "boothAssigned":   0,
-                "districtAssigned": 0,
-                "assignedDuties":  0,
-                "hasActiveConfig": False,
-                "electionName":    "",
-            }
-        }
+        return {"success": True, "data": {"superZones": 0, "totalBooths": 0, "totalStaff": 0, "assignedDuties": 0}}
     finally:
         conn.close()
 
     return {
         "success": True,
         "data": {
-            "superZones":       int(sz               or 0),
-            "totalBooths":      int(booths            or 0),
-            "totalStaff":       int(staff             or 0),
-            "boothAssigned":    int(booth_assigned    or 0),
-            "districtAssigned": int(district_assigned or 0),
-            "assignedDuties":   int(booth_assigned    or 0) + int(district_assigned or 0),
-            "hasActiveConfig":  bool(cfg_active),
-            "electionName":     cfg_active.get("election_name", "") if cfg_active else "",
+            "superZones":    int(sz or 0),
+            "totalBooths":   int(booths or 0),
+            "totalStaff":    int(staff or 0),
+            "assignedDuties": int(assigned or 0),
         }
     }
 

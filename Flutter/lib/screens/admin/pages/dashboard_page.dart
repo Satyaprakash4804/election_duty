@@ -278,16 +278,82 @@ class _DashboardPageState extends State<DashboardPage>
 
   // ── Stats ─────────────────────────────────────────────────────────────────
   Future<void> _loadStats() async {
-    if (mounted) setState(() => _loadingStats = true);
+    if (!mounted) return;
+
+    setState(() {
+      _loadingStats = true;
+    });
+
     try {
       final token = await AuthService.getToken();
-      final res   = await ApiService.get('/admin/overview', token: token);
-      final data  = res['data'] ?? res;
-      if (mounted) setState(() => _stats = data as Map<String, dynamic>?);
-    } catch (e) {
+
+      final response = await ApiService.get(
+        '/admin/overview',
+        token: token,
+      );
+
+      // DEBUG
+      debugPrint("========== OVERVIEW RESPONSE ==========");
+      debugPrint(response.toString());
+
+      // SAFE RESPONSE PARSING
+      Map<String, dynamic> data = {};
+
+      if (response is Map<String, dynamic>) {
+        if (response['data'] is Map<String, dynamic>) {
+          data = Map<String, dynamic>.from(response['data']);
+        } else {
+          data = Map<String, dynamic>.from(response);
+        }
+      }
+
+      // FINAL SAFE MAP
+      final stats = {
+        'superZones': _toInt(data['superZones']),
+        'totalBooths': _toInt(data['totalBooths']),
+        'totalStaff': _toInt(data['totalStaff']),
+        'assignedDuties': _toInt(
+          data['assignedDuties'] ??
+          data['boothAssigned'] ??
+          data['districtAssigned'],
+        ),
+      };
+
+      debugPrint("========== PARSED STATS ==========");
+      debugPrint(stats.toString());
+
+      if (!mounted) return;
+
+      setState(() {
+        _stats = stats;
+      });
+
+    } catch (e, stack) {
+
+      debugPrint("========== LOAD STATS ERROR ==========");
+      debugPrint(e.toString());
+      debugPrint(stack.toString());
+
+      if (!mounted) return;
+
+      setState(() {
+        _stats = {
+          'superZones': 0,
+          'totalBooths': 0,
+          'totalStaff': 0,
+          'assignedDuties': 0,
+        };
+      });
+
       _handleError(e);
+
     } finally {
-      if (mounted) setState(() => _loadingStats = false);
+
+      if (!mounted) return;
+
+      setState(() {
+        _loadingStats = false;
+      });
     }
   }
 
@@ -551,10 +617,33 @@ class _DashboardPageState extends State<DashboardPage>
       ),
       itemBuilder: (_, i) {
         final items = [
-          _SI('Super Zones',   '${_stats!['superZones']     ?? 0}', Icons.layers_outlined,      kPrimary),
-          _SI('Total Booths',  '${_stats!['totalBooths']    ?? 0}', Icons.location_on_outlined, kSuccess),
-          _SI('Total Staff',   '${_stats!['totalStaff']     ?? 0}', Icons.badge_outlined,       kAccent),
-          _SI('Assigned',      '${_stats!['assignedDuties'] ?? 0}', Icons.how_to_vote_outlined, kInfo),
+          _SI(
+            'Super Zones',
+            '${_toInt(_stats?['superZones'])}',
+            Icons.layers_outlined,
+            kPrimary,
+          ),
+
+          _SI(
+            'Total Booths',
+            '${_toInt(_stats?['totalBooths'])}',
+            Icons.location_on_outlined,
+            kSuccess,
+          ),
+
+          _SI(
+            'Total Staff',
+            '${_toInt(_stats?['totalStaff'])}',
+            Icons.badge_outlined,
+            kAccent,
+          ),
+
+          _SI(
+            'Assigned',
+            '${_toInt(_stats?['assignedDuties'])}',
+            Icons.how_to_vote_outlined,
+            kInfo,
+          ),
         ];
         return _StatCard(item: items[i]);
       },
@@ -582,10 +671,23 @@ class _DashboardPageState extends State<DashboardPage>
     return false;
   }
   static int? _asInt(dynamic v) {
-    if (v == null) return null;
-    if (v is int)  return v;
-    if (v is double) return v.toInt();
-    return int.tryParse('$v');
+      if (v == null) return null;
+      if (v is int)  return v;
+      if (v is double) return v.toInt();
+      return int.tryParse('$v');
+    }
+    static int _toInt(dynamic value) {
+    if (value == null) return 0;
+
+    if (value is int) return value;
+
+    if (value is double) return value.toInt();
+
+    if (value is String) {
+      return int.tryParse(value) ?? 0;
+    }
+
+    return 0;
   }
 }
 

@@ -1,20 +1,3 @@
-// election_history_page.dart
-// ─────────────────────────────────────────────────────────────────────────────
-// Election History — List + Detail with 7 report tabs mirroring live pages.
-//
-// Tabs (mirrors exact live page format + PDF):
-//   1. पदानुक्रम       → hierarchy-full (mirrors hierarchy_report_page.dart)
-//   2. बूथ मानक        → booth-manak + booth-center-counts (mirrors manak_booth_report_page.dart)
-//   3. जनपदीय मानक    → district-rules-full (mirrors manak_district_page.dart Manak tab)
-//   4. जनपदीय ड्यूटी  → district-duty-summary + batches (mirrors manak_district_page.dart Duty tab)
-//   5. बूथ ड्यूटी      → booth-assignments (mirrors booth duty list)
-//   6. गोसवारा          → goswara (mirrors goswara_page.dart)
-//   7. सारांश           → booth-assignments-summary + hierarchy-overview
-//
-// API base: /admin/election/history/<id>/...
-// Active election uses live endpoints directly.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import 'dart:async';
 import 'dart:typed_data';
 import 'package:flutter/material.dart';
@@ -38,8 +21,8 @@ const _kOrange      = Color(0xFFE67E22);
 const _kTeal        = Color(0xFF117A65);
 const _kAmber       = Color(0xFFFFF3CD);
 const _kAmberDk     = Color(0xFF856404);
+const _kGold        = Color(0xFFFFF8E7);
 
-// Manak palette (matches manak_booth_report_page.dart)
 const _kManakBg     = Color(0xFFFDF6E3);
 const _kManakSurf   = Color(0xFFF5E6C8);
 const _kManakPrim   = Color(0xFF8B6914);
@@ -47,17 +30,16 @@ const _kManakDark   = Color(0xFF4A3000);
 const _kManakSubtle = Color(0xFFAA8844);
 const _kManakBorder = Color(0xFFD4A843);
 
-// District palette
 const _kDistrictColor = Color(0xFF6C3483);
 
-// Goswara palette (matches goswara_page.dart)
 const _kGosPrimary  = Color(0xFF1A3A6B);
 const _kGosAccent   = Color(0xFF2E7D32);
 const _kGosGold     = Color(0xFFD4A017);
 const _kGosHdrBg    = Color(0xFFE8EDF5);
 const _kGosTotalBg  = Color(0xFFDDE8F5);
 
-const int _kPageSize = 30;
+const int _kPageSize     = 30;
+const int _kHierPageSize = 20;
 
 const List<Map<String, dynamic>> _kSensList = [
   {'key': 'A++', 'hi': 'अति-अति संवेदनशील', 'color': Color(0xFF6C3483)},
@@ -96,8 +78,6 @@ class _R {
   double s(double small, double large) => small + (large - small) * t;
   bool get isCompact => width < 360;
   bool get isWide    => width >= 600;
-  EdgeInsets symPad(double h, double v) =>
-      EdgeInsets.symmetric(horizontal: h, vertical: v);
 }
 _R _rOf(BuildContext c) => _R(MediaQuery.of(c).size.width);
 
@@ -117,6 +97,38 @@ void _snack(BuildContext ctx, String msg, {bool error = false}) {
     behavior: SnackBarBehavior.floating,
     duration: const Duration(seconds: 3),
   ));
+}
+
+BoxDecoration _cellDec({bool right = true, bool bottom = true, Color? bg}) =>
+    BoxDecoration(
+      color: bg,
+      border: Border(
+        right:  right  ? const BorderSide(color: _kBorder) : BorderSide.none,
+        bottom: bottom ? const BorderSide(color: _kBorder) : BorderSide.none,
+      ),
+    );
+
+Color _sensitivityColor(String? t) {
+  switch (t) {
+    case 'A++': return const Color(0xFF6C3483);
+    case 'A':   return _kRed;
+    case 'B':   return _kOrange;
+    default:    return const Color(0xFF1A5276);
+  }
+}
+
+Color _rankColor(String rank) {
+  const m = {
+    'SP':             Color(0xFF6A1B9A),
+    'ASP':            Color(0xFF1565C0),
+    'DSP':            Color(0xFF1A5276),
+    'Inspector':      Color(0xFF2E7D32),
+    'SI':             Color(0xFF558B2F),
+    'ASI':            Color(0xFF8B6914),
+    'Head Constable': Color(0xFFB8860B),
+    'Constable':      Color(0xFF6D4C41),
+  };
+  return m[rank] ?? _kPrimary;
 }
 
 // ── PDF shared helpers ────────────────────────────────────────────────────────
@@ -154,13 +166,12 @@ pw.Widget _pdfTd(String t, pw.Font font,
     pw.Padding(
       padding: const pw.EdgeInsets.all(4),
       child: pw.Text(t,
-          style: pw.TextStyle(font: font, fontSize: 7.5,
-              color: color),
+          style: pw.TextStyle(font: font, fontSize: 7.5, color: color),
           textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
     );
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  ELECTION CONTEXT  (shared across all tabs)
+//  ELECTION CONTEXT
 // ══════════════════════════════════════════════════════════════════════════════
 class _ElectionContext {
   final int    electionId;
@@ -173,10 +184,8 @@ class _ElectionContext {
     required this.isActive,
   });
 
-  /// Base path for all history endpoints
   String get base => '/admin/election/history/$electionId';
 
-  /// Resolve an endpoint — live vs archived
   String ep(String histPath, String livePath) =>
       isActive ? livePath : '$base/$histPath';
 }
@@ -207,6 +216,18 @@ class _ElectionHistoryListPageState
   bool        _loadingElec    = false;
   String?     _elecError;
   Map?        _activeElection;
+
+  int _page = 1;
+
+  int get _totalPages =>
+      ((_elections.length + _kPageSize - 1) / _kPageSize).ceil().clamp(1, 9999);
+
+  List get _pagedElections {
+    final start = (_page - 1) * _kPageSize;
+    final end   = (start + _kPageSize).clamp(0, _elections.length);
+    if (start >= _elections.length) return [];
+    return _elections.sublist(start, end);
+  }
 
   @override
   void initState() {
@@ -269,9 +290,10 @@ class _ElectionHistoryListPageState
         }
       } catch (_) {}
       setState(() {
-        _elections     = items;
+        _elections      = items;
         _activeElection = activeCfg;
-        _loadingElec   = false;
+        _loadingElec    = false;
+        _page           = 1;
       });
     } catch (e) {
       setState(() { _elecError = e.toString(); _loadingElec = false; });
@@ -289,7 +311,6 @@ class _ElectionHistoryListPageState
     ));
   }
 
-  // ── Build ──────────────────────────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
     final r = _rOf(context);
@@ -298,8 +319,7 @@ class _ElectionHistoryListPageState
       appBar: AppBar(
         backgroundColor: _kPrimary, elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.white, size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
         title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -320,6 +340,12 @@ class _ElectionHistoryListPageState
         if (_isMaster) _buildDistrictPicker(),
         if (_activeElection != null) _buildActiveBanner(),
         Expanded(child: _buildBody()),
+        if (_elections.isNotEmpty && _totalPages > 1)
+          _PagBar(
+            page: _page, total: _elections.length,
+            totalPages: _totalPages, color: _kPrimary,
+            onPage: (p) => setState(() => _page = p),
+            top: false),
       ]),
     );
   }
@@ -330,8 +356,7 @@ class _ElectionHistoryListPageState
     child: _loadingDists
         ? const LinearProgressIndicator(color: _kPrimary)
         : Row(children: [
-            const Icon(Icons.location_city_outlined,
-                color: _kPrimary, size: 18),
+            const Icon(Icons.location_city_outlined, color: _kPrimary, size: 18),
             const SizedBox(width: 8),
             Expanded(child: DropdownButtonHideUnderline(
               child: DropdownButton<String>(
@@ -339,16 +364,14 @@ class _ElectionHistoryListPageState
                 hint: const Text('जनपद चुनें',
                     style: TextStyle(color: _kSubtle, fontSize: 13)),
                 style: const TextStyle(
-                    color: _kDark, fontSize: 13,
-                    fontWeight: FontWeight.w600),
+                    color: _kDark, fontSize: 13, fontWeight: FontWeight.w600),
                 items: _districts.map((d) => DropdownMenuItem(
                     value: d,
-                    child: Text(d,
-                        style: const TextStyle(fontSize: 13)))).toList(),
+                    child: Text(d, style: const TextStyle(fontSize: 13)))).toList(),
                 onChanged: (v) {
                   setState(() {
-                    _selectedDist = v;
-                    _elections    = [];
+                    _selectedDist   = v;
+                    _elections      = [];
                     _activeElection = null;
                   });
                   _loadElections();
@@ -386,8 +409,7 @@ class _ElectionHistoryListPageState
               blurRadius: 8, offset: const Offset(0, 3))],
         ),
         child: Row(children: [
-          const Icon(Icons.how_to_vote_outlined,
-              color: Colors.white, size: 22),
+          const Icon(Icons.how_to_vote_outlined, color: Colors.white, size: 22),
           const SizedBox(width: 10),
           Expanded(child: Column(
               crossAxisAlignment: CrossAxisAlignment.start, children: [
@@ -395,8 +417,7 @@ class _ElectionHistoryListPageState
                 style: const TextStyle(color: Colors.white,
                     fontWeight: FontWeight.w800, fontSize: 13)),
             Text('वर्तमान चुनाव • ${e['electionType'] ?? ''} • ${e['phase'] ?? ''}',
-                style: const TextStyle(
-                    color: Colors.white70, fontSize: 11)),
+                style: const TextStyle(color: Colors.white70, fontSize: 11)),
           ])),
           Container(
             padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
@@ -404,8 +425,7 @@ class _ElectionHistoryListPageState
                 color: Colors.white.withOpacity(0.2),
                 borderRadius: BorderRadius.circular(6)),
             child: const Text('देखें →', style: TextStyle(
-                color: Colors.white, fontSize: 11,
-                fontWeight: FontWeight.w700)),
+                color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
           ),
         ]),
       ),
@@ -420,12 +440,10 @@ class _ElectionHistoryListPageState
           subtitle: 'ऊपर से जनपद का चयन करें'));
     }
     if (_loadingElec) {
-      return const Center(
-          child: CircularProgressIndicator(color: _kPrimary));
+      return const Center(child: CircularProgressIndicator(color: _kPrimary));
     }
     if (_elecError != null) {
-      return Center(child: _ErrorCard(
-          error: _elecError!, onRetry: _loadElections));
+      return Center(child: _ErrorCard(error: _elecError!, onRetry: _loadElections));
     }
     if (_elections.isEmpty) {
       return const Padding(
@@ -436,11 +454,12 @@ class _ElectionHistoryListPageState
             subtitle: 'वर्तमान चुनाव के लिए ऊपर बैनर टैप करें'),
       );
     }
+    final paged = _pagedElections;
     return ListView.builder(
       padding: const EdgeInsets.fromLTRB(12, 10, 12, 20),
-      itemCount: _elections.length,
+      itemCount: paged.length,
       itemBuilder: (_, i) => _ElectionCard(
-          election: _elections[i],
+          election: paged[i],
           onTap: (e) => _openDetail(e)),
     );
   }
@@ -463,9 +482,7 @@ class _ElectionCard extends StatelessWidget {
     final autoFin  = (e['autoFinalized'] == true) || (_toInt(e['auto_finalized']) == 1);
     final finalized = (e['isFinalized'] == true) || (_toInt(e['is_finalized']) == 1);
     final year     = '${e['electionYear'] ?? e['election_year'] ?? ''}';
-
-    final hdrColor = autoFin ? _kOrange
-        : (finalized ? _kPrimary : _kSubtle);
+    final hdrColor = autoFin ? _kOrange : (finalized ? _kPrimary : _kSubtle);
 
     return InkWell(
       onTap: () => onTap(e),
@@ -485,8 +502,7 @@ class _ElectionCard extends StatelessWidget {
             padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
             decoration: BoxDecoration(
               color: hdrColor,
-              borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(12)),
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
             ),
             child: Row(children: [
               Expanded(child: Column(
@@ -494,23 +510,20 @@ class _ElectionCard extends StatelessWidget {
                 Text(name, style: const TextStyle(color: Colors.white,
                     fontWeight: FontWeight.w800, fontSize: 13)),
                 Text('$district | $eType | $phase | $year',
-                    style: const TextStyle(
-                        color: Colors.white70, fontSize: 10)),
+                    style: const TextStyle(color: Colors.white70, fontSize: 10)),
               ])),
               if (autoFin)
                 _Badge('ऑटो फाइनल', Colors.orange[100]!, _kOrange)
               else if (finalized)
                 _Badge('फाइनल', Colors.blue[100]!, _kPrimary),
               const SizedBox(width: 6),
-              const Icon(Icons.chevron_right,
-                  color: Colors.white70, size: 20),
+              const Icon(Icons.chevron_right, color: Colors.white70, size: 20),
             ]),
           ),
           Padding(
             padding: const EdgeInsets.fromLTRB(14, 8, 14, 10),
             child: Row(children: [
-              const Icon(Icons.calendar_today_outlined,
-                  size: 13, color: _kSubtle),
+              const Icon(Icons.calendar_today_outlined, size: 13, color: _kSubtle),
               const SizedBox(width: 4),
               Text('चुनाव तिथि: $date',
                   style: const TextStyle(color: _kSubtle, fontSize: 11)),
@@ -518,8 +531,7 @@ class _ElectionCard extends StatelessWidget {
               const Icon(Icons.arrow_forward_ios, size: 12, color: _kSubtle),
               const SizedBox(width: 4),
               const Text('रिपोर्ट देखें', style: TextStyle(
-                  color: _kPrimary, fontSize: 11,
-                  fontWeight: FontWeight.w700)),
+                  color: _kPrimary, fontSize: 11, fontWeight: FontWeight.w700)),
             ]),
           ),
         ]),
@@ -535,8 +547,7 @@ class _Badge extends StatelessWidget {
   @override
   Widget build(BuildContext context) => Container(
     padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
-    decoration: BoxDecoration(
-        color: bg, borderRadius: BorderRadius.circular(5)),
+    decoration: BoxDecoration(color: bg, borderRadius: BorderRadius.circular(5)),
     child: Text(label, style: TextStyle(
         color: fg, fontSize: 9, fontWeight: FontWeight.w800)),
   );
@@ -565,10 +576,7 @@ class _ElectionHistoryDetailPageState
   late TabController _tab;
 
   @override
-  void initState() {
-    super.initState();
-    _tab = TabController(length: 7, vsync: this);
-  }
+  void initState() { super.initState(); _tab = TabController(length: 7, vsync: this); }
 
   @override
   void dispose() { _tab.dispose(); super.dispose(); }
@@ -577,10 +585,8 @@ class _ElectionHistoryDetailPageState
   int    get _electionId   => _toInt(_e['id'] ?? _e['election_id']);
   String get _electionName =>
       '${_e['electionName'] ?? _e['election_name'] ?? 'चुनाव'}';
-  String get _district     =>
-      widget.district ?? '${_e['district'] ?? ''}';
-  String get _electionDate =>
-      '${_e['electionDate'] ?? _e['election_date'] ?? ''}';
+  String get _district     => widget.district ?? '${_e['district'] ?? ''}';
+  String get _electionDate => '${_e['electionDate'] ?? _e['election_date'] ?? ''}';
   String get _phase        => '${_e['phase'] ?? ''}';
 
   @override
@@ -595,18 +601,15 @@ class _ElectionHistoryDetailPageState
       role:         widget.role,
       isActive:     widget.isActive,
     );
-
     return Scaffold(
       backgroundColor: _kBg,
       appBar: AppBar(
         backgroundColor: _kPrimary, elevation: 0,
         leading: IconButton(
-          icon: const Icon(Icons.arrow_back_ios_new,
-              color: Colors.white, size: 18),
+          icon: const Icon(Icons.arrow_back_ios_new, color: Colors.white, size: 18),
           onPressed: () => Navigator.pop(context),
         ),
-        title: Column(crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        title: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(_electionName, style: TextStyle(
               color: Colors.white,
               fontSize: r.s(13, 14.5), fontWeight: FontWeight.w800),
@@ -615,8 +618,7 @@ class _ElectionHistoryDetailPageState
             'जनपद: $_district'
             '${widget.isActive ? "  • वर्तमान" : "  • इतिहास"}'
             '${_phase.isNotEmpty ? "  • चरण: $_phase" : ""}',
-            style: const TextStyle(
-                color: Colors.white54, fontSize: 9),
+            style: const TextStyle(color: Colors.white54, fontSize: 9),
             overflow: TextOverflow.ellipsis,
           ),
         ]),
@@ -625,30 +627,18 @@ class _ElectionHistoryDetailPageState
           child: Container(
             color: _kPrimary,
             child: TabBar(
-              controller: _tab,
-              isScrollable: true,
-              indicatorColor: _kAccent,
-              indicatorWeight: 3,
-              labelColor: Colors.white,
-              unselectedLabelColor: Colors.white60,
-              labelStyle: TextStyle(
-                  fontSize: r.s(9.5, 10.5),
-                  fontWeight: FontWeight.w800),
+              controller: _tab, isScrollable: true,
+              indicatorColor: _kAccent, indicatorWeight: 3,
+              labelColor: Colors.white, unselectedLabelColor: Colors.white60,
+              labelStyle: TextStyle(fontSize: r.s(9.5, 10.5), fontWeight: FontWeight.w800),
               tabs: const [
-                Tab(text: 'पदानुक्रम',
-                    icon: Icon(Icons.account_tree_outlined, size: 14)),
-                Tab(text: 'बूथ मानक',
-                    icon: Icon(Icons.shield_outlined,       size: 14)),
-                Tab(text: 'जनपदीय मानक',
-                    icon: Icon(Icons.rule_outlined,         size: 14)),
-                Tab(text: 'जनपदीय ड्यूटी',
-                    icon: Icon(Icons.people_outline,        size: 14)),
-                Tab(text: 'बूथ ड्यूटी',
-                    icon: Icon(Icons.how_to_vote_outlined,  size: 14)),
-                Tab(text: 'गोसवारा',
-                    icon: Icon(Icons.table_chart_outlined,  size: 14)),
-                Tab(text: 'सारांश',
-                    icon: Icon(Icons.summarize_outlined,    size: 14)),
+                Tab(text: 'पदानुक्रम',    icon: Icon(Icons.account_tree_outlined, size: 14)),
+                Tab(text: 'बूथ मानक',     icon: Icon(Icons.shield_outlined,       size: 14)),
+                Tab(text: 'जनपदीय मानक', icon: Icon(Icons.rule_outlined,          size: 14)),
+                Tab(text: 'जनपदीय ड्यूटी',icon: Icon(Icons.people_outline,        size: 14)),
+                Tab(text: 'बूथ ड्यूटी',   icon: Icon(Icons.how_to_vote_outlined,  size: 14)),
+                Tab(text: 'गोसवारा',      icon: Icon(Icons.table_chart_outlined,  size: 14)),
+                Tab(text: 'सारांश',       icon: Icon(Icons.summarize_outlined,    size: 14)),
               ],
             ),
           ),
@@ -704,29 +694,23 @@ class _PrintToolbar extends StatelessWidget {
       color: color.withOpacity(0.06),
       padding: EdgeInsets.fromLTRB(r.s(10, 14), 8, r.s(10, 12), 8),
       child: Row(children: [
-        Expanded(child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Text(title, style: TextStyle(
-              color: color, fontSize: r.s(12, 13.5),
-              fontWeight: FontWeight.w800)),
-          Text(subtitle, style: const TextStyle(
-              color: _kSubtle, fontSize: 10),
+              color: color, fontSize: r.s(12, 13.5), fontWeight: FontWeight.w800)),
+          Text(subtitle, style: const TextStyle(color: _kSubtle, fontSize: 10),
               maxLines: 1, overflow: TextOverflow.ellipsis),
         ])),
         ElevatedButton.icon(
           style: ElevatedButton.styleFrom(
             backgroundColor: color,
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-            shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(8)),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
             elevation: 0,
           ),
           onPressed: onPrint,
-          icon: const Icon(Icons.print_outlined,
-              color: Colors.white, size: 15),
+          icon: const Icon(Icons.print_outlined, color: Colors.white, size: 15),
           label: const Text('PDF', style: TextStyle(
-              color: Colors.white, fontSize: 12,
-              fontWeight: FontWeight.w800)),
+              color: Colors.white, fontSize: 12, fontWeight: FontWeight.w800)),
         ),
       ]),
     );
@@ -734,7 +718,7 @@ class _PrintToolbar extends StatelessWidget {
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 1 — पदानुक्रम (mirrors hierarchy_report_page.dart exactly)
+//  TAB 1 — पदानुक्रम (3 inner sub-tabs mirroring hierarchy_report_page.dart)
 // ══════════════════════════════════════════════════════════════════════════════
 class _HierarchyReportTab extends StatefulWidget {
   final _ElectionContext ctx;
@@ -744,16 +728,33 @@ class _HierarchyReportTab extends StatefulWidget {
 }
 
 class _HierarchyReportTabState extends State<_HierarchyReportTab>
-    with AutomaticKeepAliveClientMixin {
+    with AutomaticKeepAliveClientMixin, SingleTickerProviderStateMixin {
   @override
   bool get wantKeepAlive => true;
 
-  List   _data    = [];
-  bool   _loading = true;
+  late TabController _innerTab;
+  List  _data    = [];
+  bool  _loading = true;
   String? _error;
 
+  // Filters
+  String? _fSZ, _fZone, _fSector, _fGP;
+  int _tab3Page = 1;
+  static const _tab3PageSize = 20;
+
   @override
-  void initState() { super.initState(); _load(); }
+  void initState() {
+    super.initState();
+    _innerTab = TabController(length: 3, vsync: this);
+    _innerTab.addListener(() {
+      if (!_innerTab.indexIsChanging) return;
+      setState(() { _fSZ = _fZone = _fSector = _fGP = null; _tab3Page = 1; });
+    });
+    _load();
+  }
+
+  @override
+  void dispose() { _innerTab.dispose(); super.dispose(); }
 
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
@@ -761,19 +762,64 @@ class _HierarchyReportTabState extends State<_HierarchyReportTab>
       final token = await AuthService.getToken();
       final ep = widget.ctx.ep(
           'hierarchy-full',
-          '/admin/hierarchy/full?district=${Uri.encodeComponent(widget.ctx.district)}',
-      );
+          '/admin/hierarchy/full?district=${Uri.encodeComponent(widget.ctx.district)}');
       final res = await ApiService.get(ep, token: token);
       final d   = res['data'];
       setState(() {
         _data = d is List ? d
             : (d is Map && d['data'] is List ? d['data'] as List : []);
-        _loading = false;
+        _loading  = false;
+        _tab3Page = 1;
       });
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
     }
   }
+
+  // ── Filtered lists ────────────────────────────────────────────────────
+  List get _szList => _data;
+
+  List get _filteredSZ => _fSZ == null
+      ? _data
+      : _data.where((s) => '${s['id']}' == _fSZ).toList();
+
+  List get _allZones =>
+      _filteredSZ.expand((s) => (s['zones'] as List? ?? [])).toList();
+
+  List get _allSectors =>
+      _allZones.expand((z) => (z['sectors'] as List? ?? [])).toList();
+
+  List get _allGPs =>
+      _allSectors.expand((s) => (s['panchayats'] as List? ?? [])).toList();
+
+  List<Map> get _allTab3Items {
+    final items = <Map>[];
+    for (final sz in _filteredSZ) {
+      for (final z in (sz['zones'] as List? ?? [])) {
+        if (_fZone != null && '${z['id']}' != _fZone) continue;
+        for (final s in (z['sectors'] as List? ?? [])) {
+          if (_fSector != null && '${s['id']}' != _fSector) continue;
+          for (final gp in (s['panchayats'] as List? ?? [])) {
+            if (_fGP != null && '${gp['id']}' != _fGP) continue;
+            items.add({'sz': sz, 'z': z, 's': s, 'gp': gp});
+          }
+        }
+      }
+    }
+    return items;
+  }
+
+  List<Map> get _pagedTab3Items {
+    final all   = _allTab3Items;
+    final start = (_tab3Page - 1) * _tab3PageSize;
+    final end   = (start + _tab3PageSize).clamp(0, all.length);
+    if (start >= all.length) return [];
+    return all.sublist(start, end);
+  }
+
+  int get _tab3TotalPages =>
+      ((_allTab3Items.length + _tab3PageSize - 1) / _tab3PageSize)
+          .ceil().clamp(1, 9999);
 
   String _officerStr(List officers) {
     if (officers.isEmpty) return '—';
@@ -782,112 +828,99 @@ class _HierarchyReportTabState extends State<_HierarchyReportTab>
       final r = (o['user_rank'] ?? '').toString().trim();
       final m = (o['mobile']    ?? '').toString().trim();
       final p = (o['pno']       ?? '').toString().trim();
-      return [n, r, if (p.isNotEmpty) 'PNO:$p',
-              if (m.isNotEmpty) 'मो:$m']
+      return [n, r, if (p.isNotEmpty) 'PNO:$p', if (m.isNotEmpty) 'मो:$m']
           .where((x) => x.isNotEmpty).join(' ');
     }).join('\n');
   }
 
+  // ── PDF helpers ───────────────────────────────────────────────────────
+  pw.Widget _pdfThH(String t, pw.Font bold) => pw.Container(
+    decoration: const pw.BoxDecoration(color: PdfColors.grey200),
+    padding: const pw.EdgeInsets.all(3),
+    child: pw.Text(t, style: pw.TextStyle(font: bold, fontSize: 7),
+        textAlign: pw.TextAlign.center),
+  );
+
+  pw.Widget _pdfTdH(String t, pw.Font font, {bool center = false}) =>
+      pw.Padding(
+        padding: const pw.EdgeInsets.all(3),
+        child: pw.Text(t, style: pw.TextStyle(font: font, fontSize: 7),
+            textAlign: center ? pw.TextAlign.center : pw.TextAlign.left),
+      );
+
+  pw.Widget _pdfElectionHeader(pw.Font font, pw.Font bold) {
+    final ctx = widget.ctx;
+    return pw.Container(
+      padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+      decoration: pw.BoxDecoration(
+        color: const PdfColor.fromInt(0xFFFFF3CD),
+        border: pw.Border.all(color: const PdfColor.fromInt(0xFFFFD700), width: 0.5),
+        borderRadius: pw.BorderRadius.circular(4),
+      ),
+      child: pw.Text(
+          'चुनाव: ${ctx.electionName}  •  जनपद: ${ctx.district}'
+          '${ctx.phase.isNotEmpty ? "  •  चरण: ${ctx.phase}" : ""}',
+          style: pw.TextStyle(font: bold, fontSize: 9,
+              color: const PdfColor.fromInt(0xFF856404))),
+    );
+  }
+
   Future<void> _print() async {
-    if (_data.isEmpty) {
-      _snack(context, 'कोई डेटा नहीं', error: true);
-      return;
-    }
+    if (_data.isEmpty) { _snack(context, 'कोई डेटा नहीं', error: true); return; }
     try {
       final font = await PdfGoogleFonts.notoSansDevanagariRegular();
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final doc  = pw.Document();
-      final ctx  = widget.ctx;
+      final idx  = _innerTab.index;
 
-      for (final sz in _data) {
-        final szm   = sz as Map;
-        final zones = szm['zones'] as List? ?? [];
-        int gpTotal = 0;
-        for (final z in zones)
-          for (final s in (z['sectors'] as List? ?? []))
-            gpTotal += ((s['panchayats'] as List?)?.length ?? 0);
-
-        final rows = <List<String>>[];
-        int gSec   = 0;
-        for (int zi = 0; zi < zones.length; zi++) {
-          final z    = zones[zi] as Map;
-          final secs = z['sectors'] as List? ?? [];
-          final zOff = _officerStr(z['officers'] as List? ?? []);
-          final hq   = '${z['hq_address'] ?? '—'}';
-          if (secs.isEmpty) {
-            rows.add(['${zi + 1}', zOff, hq, '—', '—', '—', '—', '—']);
-          } else {
-            for (final s in secs) {
-              gSec++;
-              final gps   = s['panchayats'] as List? ?? [];
-              final gpNm  = gps.map((g) => '${g['name']}').join(', ');
-              final thanas = gps.map((g) => '${g['thana'] ?? ''}')
-                  .where((t) => t.isNotEmpty).toSet().join(', ');
-              rows.add([
-                '${zi + 1}', zOff, hq, '$gSec',
-                _officerStr(s['officers'] as List? ?? []),
-                '${s['hq'] ?? '—'}',
-                gpNm.isEmpty ? '—' : gpNm,
-                thanas.isEmpty ? '—' : thanas,
-              ]);
-            }
-          }
-        }
-
+      if (idx == 0) {
         doc.addPage(pw.MultiPage(
           pageFormat: PdfPageFormat.a4.landscape,
           margin: const pw.EdgeInsets.all(14),
-          header: (_) => _pdfDocHeader(font, bold,
-              '${ctx.electionName} — पदानुक्रम रिपोर्ट',
-              'जनपद: ${ctx.district}  •  चरण: ${ctx.phase}'
-              '  •  तिथि: ${ctx.electionDate}'),
-          build: (_) => [
-            pw.RichText(text: pw.TextSpan(children: [
-              pw.TextSpan(
-                  text: 'सुपर जोन–${szm['name'] ?? ''}  '
-                        'ब्लाक ${szm['block'] ?? ''}  ',
-                  style: pw.TextStyle(font: bold, fontSize: 11)),
-              pw.TextSpan(text: 'कुल ग्राम पंचायत–$gpTotal',
-                  style: pw.TextStyle(font: bold, fontSize: 11)),
-            ])),
-            pw.SizedBox(height: 6),
-            pw.Table(
-              border: pw.TableBorder.all(width: 0.5),
-              columnWidths: const {
-                0: pw.FixedColumnWidth(28),
-                1: pw.FlexColumnWidth(2.0),
-                2: pw.FlexColumnWidth(1.5),
-                3: pw.FixedColumnWidth(28),
-                4: pw.FlexColumnWidth(2.5),
-                5: pw.FlexColumnWidth(1.5),
-                6: pw.FlexColumnWidth(3.0),
-                7: pw.FlexColumnWidth(1.2),
-              },
-              children: [
-                pw.TableRow(children: [
-                  _pdfTh('सुपर\nजोन',             bold),
-                  _pdfTh('जोनल अधिकारी',           bold),
-                  _pdfTh('मुख्यालय',               bold),
-                  _pdfTh('सैक्टर',                  bold),
-                  _pdfTh('सैक्टर पुलिस अधिकारी',   bold),
-                  _pdfTh('मुख्यालय',               bold),
-                  _pdfTh('ग्राम पंचायत',            bold),
-                  _pdfTh('थाना',                    bold),
-                ]),
-                ...rows.map((rr) => pw.TableRow(children: [
-                  _pdfTd(rr[0], font, center: true),
-                  _pdfTd(rr[1], font),
-                  _pdfTd(rr[2], font),
-                  _pdfTd(rr[3], font, center: true),
-                  _pdfTd(rr[4], font),
-                  _pdfTd(rr[5], font),
-                  _pdfTd(rr[6], font),
-                  _pdfTd(rr[7], font),
-                ])),
-              ],
-            ),
-          ],
+          build: (_) {
+            final widgets = <pw.Widget>[
+              _pdfElectionHeader(font, bold),
+              pw.SizedBox(height: 6),
+            ];
+            for (final sz in _filteredSZ) {
+              widgets.addAll(_pdfTab1(sz, font, bold));
+              widgets.add(pw.SizedBox(height: 10));
+            }
+            return widgets;
+          },
         ));
+      } else if (idx == 1) {
+        for (final sz in _filteredSZ) {
+          for (final z in (sz['zones'] as List? ?? [])) {
+            if (_fZone != null && '${z['id']}' != _fZone) continue;
+            doc.addPage(pw.MultiPage(
+              pageFormat: PdfPageFormat.a4.landscape,
+              margin: const pw.EdgeInsets.all(14),
+              build: (_) => [
+                _pdfElectionHeader(font, bold),
+                pw.SizedBox(height: 4),
+                ..._pdfTab2(sz, z, font, bold),
+              ],
+            ));
+          }
+        }
+      } else {
+        for (final item in _allTab3Items) {
+          doc.addPage(pw.MultiPage(
+            pageFormat: PdfPageFormat.a4.landscape,
+            margin: const pw.EdgeInsets.all(14),
+            build: (_) => [
+              _pdfElectionHeader(font, bold),
+              pw.SizedBox(height: 4),
+              ..._pdfTab3(item['sz'] as Map, item['z'] as Map,
+                  item['s'] as Map, item['gp'] as Map, font, bold),
+            ],
+          ));
+        }
+      }
+
+      if (doc.document.pdfPageList.pages.isEmpty) {
+        _snack(context, 'प्रिंट के लिए कोई डेटा नहीं', error: true); return;
       }
       await Printing.layoutPdf(onLayout: (_) async => doc.save());
     } catch (e) {
@@ -895,14 +928,209 @@ class _HierarchyReportTabState extends State<_HierarchyReportTab>
     }
   }
 
+  List<pw.Widget> _pdfTab1(Map sz, pw.Font font, pw.Font bold) {
+    final zones = sz['zones'] as List? ?? [];
+    int globalSector = 0;
+    final rows = <List<String>>[];
+    for (int zi = 0; zi < zones.length; zi++) {
+      final z       = zones[zi] as Map;
+      final sectors = z['sectors'] as List? ?? [];
+      final zOffStr = _officerStr(z['officers'] as List? ?? []);
+      final hq      = (z['hq_address'] ?? z['hqAddress'] ?? '—').toString();
+      if (sectors.isEmpty) {
+        rows.add(['${zi + 1}', zOffStr, hq, '—', '—', '—', '—', '—']);
+      } else {
+        for (final s in sectors) {
+          globalSector++;
+          final gps     = s['panchayats'] as List? ?? [];
+          final gpNames = gps.map((g) => '${g['name']}').join(', ');
+          final thanas  = gps.map((g) => '${g['thana'] ?? ''}')
+              .where((t) => t.isNotEmpty).toSet().join(', ');
+          final sOffStr = _officerStr(s['officers'] as List? ?? []);
+          final sHq     = (s['hq'] ?? s['hq_address'] ?? '—').toString();
+          rows.add([
+            '${zi + 1}', zOffStr, hq,
+            '$globalSector', sOffStr, sHq,
+            gpNames.isEmpty ? '—' : gpNames,
+            thanas.isEmpty  ? '—' : thanas,
+          ]);
+        }
+      }
+    }
+    int gpTotal = 0;
+    for (final z in zones)
+      for (final s in (z['sectors'] as List? ?? []))
+        gpTotal += ((s['panchayats'] as List?)?.length ?? 0);
+
+    return [
+      pw.Text('सुपर जोन–${sz['name']}  ब्लाक ${sz['block'] ?? ''}  कुल ग्राम पंचायत–$gpTotal',
+          style: pw.TextStyle(font: bold, fontSize: 11)),
+      pw.SizedBox(height: 6),
+      pw.Table(
+        border: pw.TableBorder.all(width: 0.5),
+        columnWidths: const {
+          0: pw.FixedColumnWidth(28), 1: pw.FlexColumnWidth(2.0),
+          2: pw.FlexColumnWidth(1.5), 3: pw.FixedColumnWidth(28),
+          4: pw.FlexColumnWidth(2.5), 5: pw.FlexColumnWidth(1.5),
+          6: pw.FlexColumnWidth(3.0), 7: pw.FlexColumnWidth(1.2),
+        },
+        children: [
+          pw.TableRow(children: [
+            _pdfThH('सुपर\nजोन', bold), _pdfThH('जोनल अधिकारी', bold),
+            _pdfThH('मुख्यालय', bold),  _pdfThH('सैक्टर', bold),
+            _pdfThH('सैक्टर पुलिस अधिकारी का नाम', bold),
+            _pdfThH('मुख्यालय', bold),  _pdfThH('ग्राम पंचायत का नाम', bold),
+            _pdfThH('थाना', bold),
+          ]),
+          ...rows.map((r) => pw.TableRow(children: [
+            _pdfTdH(r[0], font, center: true), _pdfTdH(r[1], font),
+            _pdfTdH(r[2], font),               _pdfTdH(r[3], font, center: true),
+            _pdfTdH(r[4], font),               _pdfTdH(r[5], font),
+            _pdfTdH(r[6], font),               _pdfTdH(r[7], font),
+          ])),
+        ],
+      ),
+    ];
+  }
+
+  List<pw.Widget> _pdfTab2(Map sz, Map z, pw.Font font, pw.Font bold) {
+    final sectors = z['sectors'] as List? ?? [];
+    final rows    = <List<String>>[];
+    int sSeq      = 0;
+    for (final s in sectors) {
+      sSeq++;
+      final sOff   = (s['officers'] as List? ?? []);
+      final magStr = sOff.isNotEmpty
+          ? '${sOff[0]['name'] ?? ''} ${sOff[0]['user_rank'] ?? ''}\n${sOff[0]['mobile'] ?? ''}'
+          : '—';
+      final polStr = sOff.length > 1
+          ? '${sOff[1]['name'] ?? ''} ${sOff[1]['user_rank'] ?? ''}\n${sOff[1]['mobile'] ?? ''}'
+          : magStr;
+      final gps = s['panchayats'] as List? ?? [];
+      if (gps.isEmpty) {
+        rows.add(['$sSeq', magStr, polStr, '—', '—', '—']);
+      } else {
+        for (final gp in gps) {
+          final centers    = gp['centers'] as List? ?? [];
+          final sthalNames = centers.map((c) => '${c['name']}').join('\n');
+          final kendraStrs = centers
+              .expand((c) => (c['kendras'] as List? ?? []))
+              .map((k) => '${k['room_number']}').join(', ');
+          rows.add([
+            '$sSeq', magStr, polStr, '${gp['name']}',
+            sthalNames.isEmpty ? '—' : sthalNames,
+            kendraStrs.isEmpty ? '—' : kendraStrs,
+          ]);
+        }
+      }
+    }
+    return [
+      pw.Text('जोन: ${z['name']}  |  सुपर जोन: ${sz['name']}  |  ब्लॉक: ${sz['block'] ?? ''}',
+          style: pw.TextStyle(font: bold, fontSize: 11)),
+      pw.SizedBox(height: 4),
+      pw.Table(
+        border: pw.TableBorder.all(width: 0.5),
+        columnWidths: const {
+          0: pw.FixedColumnWidth(28), 1: pw.FlexColumnWidth(2.5),
+          2: pw.FlexColumnWidth(2.5), 3: pw.FlexColumnWidth(1.8),
+          4: pw.FlexColumnWidth(2.5), 5: pw.FlexColumnWidth(1.2),
+        },
+        children: [
+          pw.TableRow(children: [
+            _pdfThH('सैक्टर\nसं.', bold),
+            _pdfThH('सैक्टर मजिस्ट्रेट', bold),
+            _pdfThH('सैक्टर पुलिस अधिकारी', bold),
+            _pdfThH('ग्राम पंचायत', bold),
+            _pdfThH('मतदेय स्थल', bold),
+            _pdfThH('मतदान केन्द्र', bold),
+          ]),
+          ...rows.map((r) => pw.TableRow(
+              children: r.map((c) => _pdfTdH(c, font)).toList())),
+        ],
+      ),
+    ];
+  }
+
+  List<pw.Widget> _pdfTab3(Map sz, Map z, Map s, Map gp,
+      pw.Font font, pw.Font bold) {
+    final centers    = gp['centers'] as List? ?? [];
+    int totalKendra  = 0;
+    for (final c in centers) {
+      final k = (c['kendras'] as List? ?? []);
+      totalKendra += k.isEmpty ? 1 : k.length;
+    }
+    final rows  = <List<String>>[];
+    int sthalNo = 1;
+    for (final c in centers) {
+      final kendras = c['kendras'] as List? ?? [];
+      final roomNos = kendras.isEmpty ? ''
+          : kendras.map((k) => '${k['room_number']}').join(', ');
+      final nameWithRooms = roomNos.isNotEmpty
+          ? '${c['name']}\nक.नं. $roomNos' : '${c['name']}';
+      final dutyOfficers = c['duty_officers'] as List? ?? [];
+      final dutyText = dutyOfficers.isNotEmpty
+          ? dutyOfficers.map((d) =>
+              '${d['name'] ?? ''}  ${d['pno'] ?? ''}\n${d['user_rank'] ?? ''}').join('\n')
+          : '—';
+      final mobileText = dutyOfficers.isNotEmpty
+          ? dutyOfficers.map((d) => '${d['mobile'] ?? ''}')
+              .where((m) => m.isNotEmpty).join('\n') : '—';
+      rows.add([
+        '$sthalNo', '$nameWithRooms\n${c['center_type'] ?? 'C'}',
+        '$sthalNo', '${c['name']}', '${z['name']}', '${s['name']}',
+        (c['thana'] ?? gp['thana'] ?? '—').toString(),
+        dutyText, mobileText, (c['bus_no'] ?? '—').toString(),
+      ]);
+      sthalNo++;
+    }
+    return [
+      pw.Text('बूथ ड्यूटी – ब्लॉक ${sz['block'] ?? sz['name']}',
+          style: pw.TextStyle(font: bold, fontSize: 11)),
+      pw.Text('ग्राम पंचायत: ${gp['name']}  |  सैक्टर: ${s['name']}'
+          '  |  जोन: ${z['name']}  |  मतदान केन्द्र: $totalKendra'
+          '  |  मतदेय स्थल: ${centers.length}',
+          style: pw.TextStyle(font: font, fontSize: 8)),
+      pw.SizedBox(height: 4),
+      pw.Table(
+        border: pw.TableBorder.all(width: 0.5),
+        columnWidths: const {
+          0: pw.FixedColumnWidth(22), 1: pw.FlexColumnWidth(2.4),
+          2: pw.FixedColumnWidth(22), 3: pw.FlexColumnWidth(2.0),
+          4: pw.FixedColumnWidth(28), 5: pw.FixedColumnWidth(28),
+          6: pw.FlexColumnWidth(1.2), 7: pw.FlexColumnWidth(2.5),
+          8: pw.FlexColumnWidth(1.4), 9: pw.FixedColumnWidth(26),
+        },
+        children: [
+          pw.TableRow(children: [
+            _pdfThH('मतदान\nकेन्द्र\nसंख्या', bold),
+            _pdfThH('मतदान केन्द्र का नाम', bold),
+            _pdfThH('मतदेय\nसं.', bold),
+            _pdfThH('मतदान स्थल\nका नाम', bold),
+            _pdfThH('जोन\nसंख्या', bold),
+            _pdfThH('सैक्टर\nसंख्या', bold),
+            _pdfThH('थाना', bold),
+            _pdfThH('ड्यूटी पर लगाया\nपुलिस का नाम', bold),
+            _pdfThH('मोबाईल\nनम्बर', bold),
+            _pdfThH('बस\nनं.', bold),
+          ]),
+          ...rows.map((r) => pw.TableRow(children: [
+            _pdfTdH(r[0], font, center: true), _pdfTdH(r[1], font),
+            _pdfTdH(r[2], font, center: true), _pdfTdH(r[3], font),
+            _pdfTdH(r[4], font, center: true), _pdfTdH(r[5], font, center: true),
+            _pdfTdH(r[6], font), _pdfTdH(r[7], font),
+            _pdfTdH(r[8], font), _pdfTdH(r[9], font, center: true),
+          ])),
+        ],
+      ),
+    ];
+  }
+
   @override
   Widget build(BuildContext context) {
     super.build(context);
     if (_loading)
-      return const Center(
-          child: CircularProgressIndicator(color: _kPrimary));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
+      return const Center(child: CircularProgressIndicator(color: _kPrimary));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
     if (_data.isEmpty)
       return const _EmptyHint(
           icon: Icons.account_tree_outlined,
@@ -910,225 +1138,680 @@ class _HierarchyReportTabState extends State<_HierarchyReportTab>
           subtitle: 'इस चुनाव के लिए अधिकारी अभिलेख उपलब्ध नहीं हैं');
 
     return Column(children: [
-      _PrintToolbar(title: 'पदानुक्रम रिपोर्ट',
+      _PrintToolbar(
+          title: 'पदानुक्रम रिपोर्ट',
           subtitle: '${_data.length} सुपर जोन',
           color: _kPrimary, onPrint: _print),
+      Material(
+        color: _kPrimary,
+        child: TabBar(
+          controller: _innerTab, isScrollable: true,
+          indicatorColor: _kAccent, indicatorWeight: 3,
+          labelColor: Colors.white, unselectedLabelColor: Colors.white60,
+          labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
+          tabs: const [
+            Tab(text: 'सुपर जोन',  icon: Icon(Icons.layers_outlined,       size: 14)),
+            Tab(text: 'जोन/सैक्टर', icon: Icon(Icons.map_outlined,          size: 14)),
+            Tab(text: 'बूथ ड्यूटी', icon: Icon(Icons.how_to_vote_outlined,  size: 14)),
+          ],
+        ),
+      ),
+      _buildFilterBar(),
+      Expanded(child: TabBarView(controller: _innerTab, children: [
+        _buildSubTab1(), _buildSubTab2(), _buildSubTab3(),
+      ])),
+    ]);
+  }
+
+  Widget _buildFilterBar() {
+    final tabIdx = _innerTab.index;
+    return Container(
+      color: Colors.white,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          _FDrop(
+            label: 'सुपर जोन', value: _fSZ, placeholder: 'सभी सुपर जोन',
+            items: _szList.map((s) => _DI('${s['id']}', '${s['name']}')).toList(),
+            onChanged: (v) => setState(() {
+              _fSZ = v; _fZone = _fSector = _fGP = null; _tab3Page = 1;
+            }),
+          ),
+          if (tabIdx >= 1) ...[
+            const SizedBox(width: 10),
+            _FDrop(label: 'जोन', value: _fZone, placeholder: 'सभी जोन',
+              items: _allZones.map((z) => _DI('${z['id']}', '${z['name']}')).toList(),
+              onChanged: (v) => setState(() {
+                _fZone = v; _fSector = _fGP = null; _tab3Page = 1;
+              })),
+          ],
+          if (tabIdx >= 2) ...[
+            const SizedBox(width: 10),
+            _FDrop(label: 'सैक्टर', value: _fSector, placeholder: 'सभी सैक्टर',
+              items: _allSectors.map((s) => _DI('${s['id']}', '${s['name']}')).toList(),
+              onChanged: (v) => setState(() {
+                _fSector = v; _fGP = null; _tab3Page = 1;
+              })),
+            const SizedBox(width: 10),
+            _FDrop(label: 'ग्राम पंचायत', value: _fGP, placeholder: 'सभी GP',
+              items: _allGPs.map((g) => _DI('${g['id']}', '${g['name']}')).toList(),
+              onChanged: (v) => setState(() { _fGP = v; _tab3Page = 1; })),
+          ],
+        ]),
+      ),
+    );
+  }
+
+  Widget _buildSubTab1() {
+    if (_filteredSZ.isEmpty)
+      return const _EmptyHint(icon: Icons.inbox_outlined, title: 'कोई सुपर जोन नहीं मिला', subtitle: '');
+    return ListView.builder(
+      padding: const EdgeInsets.all(10),
+      itemCount: _filteredSZ.length,
+      itemBuilder: (_, i) => _HTab1Card(sz: _filteredSZ[i]),
+    );
+  }
+
+  Widget _buildSubTab2() {
+    final items = <Map>[];
+    for (final sz in _filteredSZ) {
+      for (final z in (sz['zones'] as List? ?? [])) {
+        if (_fZone != null && '${z['id']}' != _fZone) continue;
+        items.add({'sz': sz, 'z': z});
+      }
+    }
+    if (items.isEmpty)
+      return const _EmptyHint(icon: Icons.map_outlined, title: 'कोई जोन नहीं मिला', subtitle: '');
+    return ListView.builder(
+      padding: const EdgeInsets.all(10),
+      itemCount: items.length,
+      itemBuilder: (_, i) => _HTab2Card(sz: items[i]['sz'], z: items[i]['z']),
+    );
+  }
+
+  Widget _buildSubTab3() {
+    final allItems   = _allTab3Items;
+    final totalPages = _tab3TotalPages;
+    final pagedItems = _pagedTab3Items;
+
+    if (allItems.isEmpty)
+      return const _EmptyHint(icon: Icons.how_to_vote_outlined, title: 'कोई पंचायत नहीं मिली', subtitle: '');
+
+    return Column(children: [
+      if (totalPages > 1)
+        _HTab3PagBar(
+          currentPage: _tab3Page, totalPages: totalPages,
+          totalItems: allItems.length, pageSize: _tab3PageSize,
+          onPageChanged: (p) => setState(() => _tab3Page = p)),
       Expanded(child: ListView.builder(
-        padding: const EdgeInsets.all(10),
-        itemCount: _data.length,
-        itemBuilder: (_, i) => _SuperZoneCard(sz: _data[i]),
+        padding: const EdgeInsets.fromLTRB(10, 4, 10, 10),
+        itemCount: pagedItems.length,
+        itemBuilder: (_, i) {
+          final item = pagedItems[i];
+          return _HTab3Card(
+              sz: item['sz'], z: item['z'], s: item['s'], gp: item['gp']);
+        },
       )),
+      if (totalPages > 1)
+        _HTab3PagBar(
+          currentPage: _tab3Page, totalPages: totalPages,
+          totalItems: allItems.length, pageSize: _tab3PageSize,
+          onPageChanged: (p) => setState(() => _tab3Page = p),
+          compact: true),
     ]);
   }
 }
 
-// ── SuperZone card ────────────────────────────────────────────────────────────
-class _SuperZoneCard extends StatelessWidget {
-  final Map sz;
-  const _SuperZoneCard({required this.sz});
+// ── Hierarchy helpers: dropdown items ─────────────────────────────────────────
+class _DI { final String value, label; const _DI(this.value, this.label); }
+
+class _FDrop extends StatelessWidget {
+  final String label, placeholder; final String? value;
+  final List<_DI> items; final ValueChanged<String?> onChanged;
+  const _FDrop({required this.label, required this.placeholder,
+      required this.value, required this.items, required this.onChanged});
+
+  @override
+  Widget build(BuildContext context) =>
+      Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Text(label, style: const TextStyle(
+            color: _kSubtle, fontSize: 9, fontWeight: FontWeight.w700)),
+        const SizedBox(height: 3),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 10),
+          constraints: const BoxConstraints(minWidth: 110, maxWidth: 165),
+          decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(8),
+              border: Border.all(
+                  color: value != null ? _kPrimary : _kBorder, width: 1.5)),
+          child: DropdownButton<String>(
+            value: value, underline: const SizedBox(), isExpanded: true,
+            hint: Text(placeholder,
+                style: const TextStyle(color: _kSubtle, fontSize: 12),
+                overflow: TextOverflow.ellipsis),
+            style: const TextStyle(color: _kDark, fontSize: 12),
+            dropdownColor: Colors.white,
+            items: [
+              DropdownMenuItem<String>(value: null,
+                  child: Text(placeholder,
+                      style: const TextStyle(color: _kSubtle, fontSize: 12))),
+              ...items.map((i) => DropdownMenuItem<String>(
+                  value: i.value,
+                  child: Text(i.label,
+                      style: const TextStyle(color: _kDark, fontSize: 12),
+                      overflow: TextOverflow.ellipsis))),
+            ],
+            onChanged: onChanged,
+          ),
+        ),
+      ]);
+}
+
+class _MC extends StatelessWidget {
+  final String label; final Color color;
+  const _MC(this.label, this.color);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+        color: color.withOpacity(0.2), borderRadius: BorderRadius.circular(20)),
+    child: Text(label, style: TextStyle(
+        color: color, fontSize: 10, fontWeight: FontWeight.w700)),
+  );
+}
+
+class _GoldChip extends StatelessWidget {
+  final String label;
+  const _GoldChip(this.label);
+  @override
+  Widget build(BuildContext context) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+    decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.15),
+        borderRadius: BorderRadius.circular(7)),
+    child: Text(label, style: const TextStyle(
+        color: _kAccent, fontSize: 11, fontWeight: FontWeight.w700)),
+  );
+}
+
+// ── Hierarchy Tab 3 Pagination Bar ────────────────────────────────────────────
+class _HTab3PagBar extends StatelessWidget {
+  final int currentPage, totalPages, totalItems, pageSize;
+  final ValueChanged<int> onPageChanged;
+  final bool compact;
+  const _HTab3PagBar({
+    required this.currentPage, required this.totalPages,
+    required this.totalItems, required this.pageSize,
+    required this.onPageChanged, this.compact = false,
+  });
+
   @override
   Widget build(BuildContext context) {
-    final r      = _rOf(context);
-    final zones  = sz['zones'] as List? ?? [];
-    int gpTotal  = 0, sTotal = 0;
+    final start = ((currentPage - 1) * pageSize + 1).clamp(1, totalItems);
+    final end   = (currentPage * pageSize).clamp(1, totalItems);
+    final pages = <int>[];
+    if (totalPages <= 7) {
+      for (int i = 1; i <= totalPages; i++) pages.add(i);
+    } else {
+      pages.add(1);
+      if (currentPage > 3) pages.add(-1);
+      for (int i = (currentPage - 1).clamp(2, totalPages - 1);
+           i <= (currentPage + 1).clamp(2, totalPages - 1); i++) pages.add(i);
+      if (currentPage < totalPages - 2) pages.add(-1);
+      pages.add(totalPages);
+    }
+    return Container(
+      color: Colors.white,
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: compact ? 4 : 8),
+      child: compact
+          ? Row(mainAxisAlignment: MainAxisAlignment.center, children: [
+              _navBtn(Icons.first_page, currentPage > 1, () => onPageChanged(1)),
+              _navBtn(Icons.chevron_left, currentPage > 1, () => onPageChanged(currentPage - 1)),
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                child: Text('$currentPage / $totalPages',
+                    style: const TextStyle(
+                        fontSize: 12, fontWeight: FontWeight.w700, color: _kPrimary)),
+              ),
+              _navBtn(Icons.chevron_right, currentPage < totalPages, () => onPageChanged(currentPage + 1)),
+              _navBtn(Icons.last_page, currentPage < totalPages, () => onPageChanged(totalPages)),
+            ])
+          : Row(children: [
+              Expanded(child: Text(
+                'ग्राम पंचायत $start–$end / $totalItems  (पृष्ठ $currentPage/$totalPages)',
+                style: const TextStyle(fontSize: 11, color: _kSubtle),
+                overflow: TextOverflow.ellipsis,
+              )),
+              SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(children: [
+                  _navBtn(Icons.first_page, currentPage > 1, () => onPageChanged(1)),
+                  _navBtn(Icons.chevron_left, currentPage > 1, () => onPageChanged(currentPage - 1)),
+                  ...pages.map((p) => p == -1
+                      ? const Padding(
+                          padding: EdgeInsets.symmetric(horizontal: 2),
+                          child: Text('…', style: TextStyle(color: _kSubtle)))
+                      : _pageBtn(p, p == currentPage, () => onPageChanged(p))),
+                  _navBtn(Icons.chevron_right, currentPage < totalPages, () => onPageChanged(currentPage + 1)),
+                  _navBtn(Icons.last_page, currentPage < totalPages, () => onPageChanged(totalPages)),
+                ]),
+              ),
+            ]),
+    );
+  }
+
+  Widget _navBtn(IconData icon, bool enabled, VoidCallback onTap) =>
+      InkWell(
+        onTap: enabled ? onTap : null,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.all(4),
+          child: Icon(icon, size: 18, color: enabled ? _kPrimary : _kBorder)));
+
+  Widget _pageBtn(int page, bool active, VoidCallback onTap) =>
+      GestureDetector(
+        onTap: onTap,
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 150),
+          margin: const EdgeInsets.symmetric(horizontal: 2),
+          width: 30, height: 30,
+          decoration: BoxDecoration(
+            color: active ? _kPrimary : Colors.transparent,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(color: active ? _kPrimary : _kBorder),
+          ),
+          child: Center(child: Text('$page',
+              style: TextStyle(fontSize: 11, fontWeight: FontWeight.w700,
+                  color: active ? Colors.white : _kDark))),
+        ),
+      );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HIERARCHY TAB 1 CARD (Super Zone)
+// ══════════════════════════════════════════════════════════════════════════════
+class _HTab1Card extends StatelessWidget {
+  final Map sz;
+  const _HTab1Card({required this.sz});
+
+  @override
+  Widget build(BuildContext context) {
+    final zones = sz['zones'] as List? ?? [];
+    int gpTotal = 0, sTotal = 0;
     for (final z in zones) {
       final secs = z['sectors'] as List? ?? [];
       sTotal += secs.length;
-      for (final s in secs)
-        gpTotal += ((s['panchayats'] as List?)?.length ?? 0);
+      for (final s in secs) gpTotal += ((s['panchayats'] as List?)?.length ?? 0);
     }
-    final officers = sz['officers'] as List? ?? [];
-
+    final rows = <_HRow>[];
+    int globalSec = 0;
+    for (int zi = 0; zi < zones.length; zi++) {
+      final z       = zones[zi] as Map;
+      final sectors = z['sectors'] as List? ?? [];
+      final zOff    = z['officers'] as List? ?? [];
+      if (sectors.isEmpty) {
+        rows.add(_HRow(zi: zi, z: z, s: null, sGlobal: null,
+            zOff: zOff, gpNames: '—', thanas: '—'));
+      } else {
+        for (final s in sectors) {
+          globalSec++;
+          final gps = s['panchayats'] as List? ?? [];
+          rows.add(_HRow(
+            zi: zi, z: z, s: s, sGlobal: globalSec, zOff: zOff,
+            gpNames: gps.map((g) => '${g['name']}').join(', '),
+            thanas: gps.map((g) => '${g['thana'] ?? ''}')
+                .where((t) => t.isNotEmpty).toSet().join(', '),
+          ));
+        }
+      }
+    }
     return Container(
-      margin: const EdgeInsets.only(bottom: 14),
+      margin: const EdgeInsets.only(bottom: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
+        color: Colors.white, borderRadius: BorderRadius.circular(12),
         border: Border.all(color: _kBorder),
-        boxShadow: [BoxShadow(color: _kPrimary.withOpacity(0.06),
-            blurRadius: 8, offset: const Offset(0, 3))],
+        boxShadow: [BoxShadow(color: _kPrimary.withOpacity(0.07),
+            blurRadius: 10, offset: const Offset(0, 4))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header
         Container(
-          padding: const EdgeInsets.fromLTRB(14, 10, 14, 10),
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
           decoration: const BoxDecoration(
             gradient: LinearGradient(
                 colors: [Color(0xFF0F2B5B), Color(0xFF1E3F80)],
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight),
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
             borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
           ),
-          child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start, children: [
-            Text('सुपर जोन–${sz['name'] ?? ''}  '
-                'ब्लाक ${sz['block'] ?? '—'}',
-                style: TextStyle(color: Colors.white,
-                    fontSize: r.s(13, 14), fontWeight: FontWeight.w800)),
-            const SizedBox(height: 4),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('सुपर जोन–${sz['name']}  ब्लाक ${sz['block'] ?? '—'}',
+                style: const TextStyle(color: Colors.white,
+                    fontSize: 14, fontWeight: FontWeight.w800),
+                maxLines: 2, overflow: TextOverflow.ellipsis),
+            Text('जिला: ${sz['district'] ?? '—'}  |  कुल ग्राम पंचायत: $gpTotal',
+                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 6),
             Wrap(spacing: 6, runSpacing: 4, children: [
-              _MiniChip('${zones.length} जोन',  Colors.blue),
-              _MiniChip('$sTotal सैक्टर',        Colors.green),
-              _MiniChip('$gpTotal ग्राम पंचायत', Colors.orange),
+              _MC('${zones.length} जोन', Colors.blue),
+              _MC('$sTotal सैक्टर', Colors.green),
+              _MC('$gpTotal ग्राम पंचायत', Colors.orange),
             ]),
           ]),
         ),
-        // Officers
-        if (officers.isNotEmpty)
+        if ((sz['officers'] as List?)?.isNotEmpty == true)
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 14, vertical: 8),
-            color: const Color(0xFFFFF8E7),
-            child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-              const Text('क्षेत्राधिकारी:', style: TextStyle(
-                  color: _kSubtle, fontSize: 10,
-                  fontWeight: FontWeight.w700)),
-              ...officers.map((o) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+            color: _kGold,
+            child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+              const Text('सुपर जोन / क्षेत्र अधिकारी:',
+                  style: TextStyle(color: _kSubtle, fontSize: 10, fontWeight: FontWeight.w700)),
+              ...(sz['officers'] as List).map((o) => Padding(
                 padding: const EdgeInsets.only(top: 3),
-                child: Text(
-                  '• ${o['name'] ?? ''}  ${o['user_rank'] ?? ''}'
-                  '${(o['pno'] ?? '').toString().isNotEmpty ? '  PNO:${o['pno']}' : ''}'
-                  '${(o['mobile'] ?? '').toString().isNotEmpty ? '  मो:${o['mobile']}' : ''}',
-                  style: const TextStyle(color: _kDark, fontSize: 11)),
+                child: Row(children: [
+                  const Icon(Icons.person_pin_outlined, size: 12, color: _kPrimary),
+                  const SizedBox(width: 5),
+                  Expanded(child: Text(
+                    '${o['name'] ?? '—'}  ${o['user_rank'] ?? ''}'
+                    '${(o['pno'] ?? '').toString().isNotEmpty ? '  PNO: ${o['pno']}' : ''}'
+                    '${(o['mobile'] ?? '').toString().isNotEmpty ? '  मो: ${o['mobile']}' : ''}',
+                    style: const TextStyle(color: _kDark, fontSize: 11),
+                  )),
+                ]),
               )),
             ]),
           ),
-        // Table
-        Padding(
-          padding: const EdgeInsets.all(8),
-          child: _HierarchyTable(sz: sz),
-        ),
+        if (rows.isEmpty)
+          const Padding(padding: EdgeInsets.all(16),
+              child: _EmptyHint(icon: Icons.inbox_outlined,
+                  title: 'कोई जोन/सैक्टर नहीं', subtitle: ''))
+        else
+          Padding(padding: const EdgeInsets.all(8),
+              child: _HTab1Table(rows: rows, sz: sz)),
       ]),
     );
   }
 }
 
-class _MiniChip extends StatelessWidget {
-  final String label;
-  final MaterialColor color;
-  const _MiniChip(this.label, this.color);
-  @override
-  Widget build(BuildContext context) => Container(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-    decoration: BoxDecoration(
-        color: color.withOpacity(0.18),
-        borderRadius: BorderRadius.circular(6)),
-    child: Text(label, style: TextStyle(
-        color: color.shade800, fontSize: 10, fontWeight: FontWeight.w700)),
-  );
+class _HRow {
+  final int zi; final Map z; final Map? s; final int? sGlobal;
+  final List zOff; final String gpNames, thanas;
+  const _HRow({required this.zi, required this.z, required this.s,
+      required this.sGlobal, required this.zOff,
+      required this.gpNames, required this.thanas});
 }
 
-class _HierarchyTable extends StatelessWidget {
-  final Map sz;
-  const _HierarchyTable({required this.sz});
+class _HTab1Table extends StatelessWidget {
+  final List<_HRow> rows; final Map sz;
+  const _HTab1Table({required this.rows, required this.sz});
 
-  static const _ws = <double>[40, 150, 110, 44, 165, 115, 220, 90];
-  static const _hs = [
-    'जोन', 'जोनल अधिकारी', 'मुख्यालय',
-    'सैक्टर', 'सैक्टर पुलिस अधिकारी', 'मुख्यालय',
-    'ग्राम पंचायत', 'थाना',
-  ];
-
-  String _officerLines(List officers) {
-    if (officers.isEmpty) return '—';
-    return officers.map((o) {
-      final n = (o['name']      ?? '').toString().trim();
-      final r = (o['user_rank'] ?? '').toString().trim();
-      final m = (o['mobile']    ?? '').toString().trim();
-      return [n, if (r.isNotEmpty) r, if (m.isNotEmpty) 'मो:$m'].join('\n');
-    }).join('\n---\n');
-  }
+  static const _ws = <int, double>{
+    0: 54, 1: 40, 2: 155, 3: 110, 4: 44, 5: 165, 6: 115, 7: 230, 8: 88,
+  };
 
   @override
   Widget build(BuildContext context) {
-    final zones = sz['zones'] as List? ?? [];
-    if (zones.isEmpty) return const _EmptyHint(
-        icon: Icons.inbox_outlined, title: 'कोई जोन नहीं', subtitle: '');
-
-    final total = _ws.fold<double>(0, (a, b) => a + b);
-    final rows  = <_HRow>[];
-    int gSec    = 0;
-    for (int zi = 0; zi < zones.length; zi++) {
-      final z    = zones[zi] as Map;
-      final secs = z['sectors'] as List? ?? [];
-      if (secs.isEmpty) {
-        rows.add(_HRow(z: z, s: null, sNum: null, zi: zi));
-      } else {
-        for (final s in secs) {
-          gSec++;
-          rows.add(_HRow(z: z, s: s as Map, sNum: gSec, zi: zi));
-        }
-      }
-    }
-
+    final totalW = _ws.values.fold(0.0, (a, b) => a + b);
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       child: ConstrainedBox(
-        constraints: BoxConstraints(minWidth: total),
+        constraints: BoxConstraints(minWidth: totalW),
         child: Column(children: [
-          // Header
-          Container(
-            decoration: BoxDecoration(
-                color: const Color(0xFFEDE7F6),
-                border: Border.all(color: _kBorder, width: 0.7)),
-            child: Row(children: List.generate(_hs.length, (i) =>
-                Container(
-                  width: _ws[i], padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(border: Border(
-                      right: i < _hs.length - 1
-                          ? const BorderSide(color: _kBorder)
-                          : BorderSide.none)),
-                  child: Text(_hs[i], style: const TextStyle(
-                      color: _kDark, fontSize: 10,
-                      fontWeight: FontWeight.w800),
-                      textAlign: TextAlign.center),
-                ))),
+          _header(),
+          ...rows.asMap().entries.map((e) => _row(e.key, rows, sz)),
+        ]),
+      ),
+    );
+  }
+
+  Widget _header() {
+    const labels = [
+      'सुपर\nजोन', 'जोन', 'जोनल अधिकारी\n/ जोनल पुलिस\nअधिकारी',
+      'मुख्यालय', 'सैक्टर\nसं.', 'सैक्टर पुलिस\nअधिकारी का नाम',
+      'मुख्यालय', 'ग्राम पंचायत का नाम', 'थाना',
+    ];
+    return Container(
+      decoration: BoxDecoration(color: const Color(0xFFF5EAD0),
+          border: Border.all(color: _kBorder, width: 0.7)),
+      child: Row(children: List.generate(9, (i) => Container(
+        width: _ws[i], padding: const EdgeInsets.all(6),
+        decoration: _cellDec(right: i < 8, bottom: false),
+        child: Text(labels[i],
+            style: const TextStyle(color: _kDark, fontWeight: FontWeight.w800, fontSize: 10),
+            textAlign: TextAlign.center),
+      ))),
+    );
+  }
+
+  Widget _row(int i, List<_HRow> rows, Map sz) {
+    final r = rows[i];
+    final isFirstInZone = i == 0 || rows[i - 1].zi != r.zi;
+    final bg = r.zi.isOdd ? Colors.white : const Color(0xFFFFFDF7);
+    final zOffText = r.zOff.isNotEmpty
+        ? r.zOff.map((o) {
+            final name = (o['name'] ?? '').toString().trim();
+            final rank = (o['user_rank'] ?? '').toString().trim();
+            final mob  = (o['mobile'] ?? '').toString().trim();
+            return [name, if (rank.isNotEmpty) rank, if (mob.isNotEmpty) 'मो:$mob'].join('\n');
+          }).join('\n---\n')
+        : '—';
+    final sOff  = (r.s?['officers'] as List? ?? []);
+    final sText = sOff.isNotEmpty
+        ? sOff.map((o) {
+            final name = (o['name']      ?? '').toString().trim();
+            final rank = (o['user_rank'] ?? '').toString().trim();
+            final mob  = (o['mobile']    ?? '').toString().trim();
+            return [name, if (rank.isNotEmpty) rank, if (mob.isNotEmpty) 'मो:$mob'].join('\n');
+          }).join('\n---\n')
+        : '—';
+    final sHq = r.s != null
+        ? ((r.s!['hq'] ?? r.s!['hq_address'] ?? r.s!['hqAddress'] ?? '—').toString())
+        : '—';
+    return Container(
+      decoration: BoxDecoration(color: bg,
+          border: const Border(
+            left:   BorderSide(color: _kBorder, width: 0.7),
+            right:  BorderSide(color: _kBorder, width: 0.7),
+            bottom: BorderSide(color: _kBorder, width: 0.7),
+          )),
+      child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(width: _ws[0], height: 48,
+            decoration: _cellDec(right: true, bottom: false),
+            child: Center(child: i == 0
+                ? RotatedBox(quarterTurns: 3,
+                    child: Text('सुपर जोन–${sz['name']}',
+                        style: const TextStyle(color: _kPrimary,
+                            fontSize: 9, fontWeight: FontWeight.w700)))
+                : const SizedBox())),
+        Container(width: _ws[1], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: isFirstInZone
+                ? Center(child: Text('${r.zi + 1}',
+                    style: const TextStyle(color: _kPrimary,
+                        fontWeight: FontWeight.w900, fontSize: 14)))
+                : const SizedBox()),
+        Container(width: _ws[2], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: isFirstInZone
+                ? Text(zOffText, style: const TextStyle(fontSize: 11, color: _kDark))
+                : const SizedBox()),
+        Container(width: _ws[3], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: isFirstInZone
+                ? Text('${r.z['hq_address'] ?? r.z['hqAddress'] ?? '—'}',
+                    style: const TextStyle(fontSize: 11, color: _kDark))
+                : const SizedBox()),
+        Container(width: _ws[4], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: r.sGlobal != null
+                ? Center(child: Text('${r.sGlobal}',
+                    style: const TextStyle(color: _kGreen,
+                        fontWeight: FontWeight.w800, fontSize: 12)))
+                : const SizedBox()),
+        Container(width: _ws[5], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: Text(sText, style: const TextStyle(fontSize: 11, color: _kDark))),
+        Container(width: _ws[6], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: Text(sHq, style: const TextStyle(fontSize: 11, color: _kDark))),
+        Container(width: _ws[7], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: true, bottom: false),
+            child: Text(r.gpNames, style: const TextStyle(fontSize: 11, color: _kDark))),
+        Container(width: _ws[8], padding: const EdgeInsets.all(6),
+            decoration: _cellDec(right: false, bottom: false),
+            child: Text(r.thanas, style: const TextStyle(fontSize: 11, color: _kDark))),
+      ]),
+    );
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  HIERARCHY TAB 2 CARD (Zone/Sector)
+// ══════════════════════════════════════════════════════════════════════════════
+class _HTab2Card extends StatelessWidget {
+  final Map sz, z;
+  const _HTab2Card({required this.sz, required this.z});
+
+  @override
+  Widget build(BuildContext context) {
+    final sectors = z['sectors'] as List? ?? [];
+    final zOff    = z['officers'] as List? ?? [];
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _kBorder),
+        boxShadow: [BoxShadow(color: _kGreen.withOpacity(0.08),
+            blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+                colors: [Color(0xFF186A3B), Color(0xFF239B56)],
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
           ),
-          // Rows
-          ...rows.asMap().entries.map((entry) {
-            final i   = entry.key;
-            final row = entry.value;
-            final z   = row.z;
-            final s   = row.s;
-            final isFirstInZone = i == 0 || rows[i - 1].zi != row.zi;
-            final bg  = row.zi.isOdd
-                ? Colors.white : const Color(0xFFFDFAFF);
-            final gps    = s != null ? (s['panchayats'] as List? ?? []) : [];
-            final gpNames = gps.map((g) => '${g['name']}').join(', ');
-            final thanas  = gps.map((g) => '${g['thana'] ?? ''}')
-                .where((t) => t.isNotEmpty).toSet().join(', ');
-            final sHq = s != null
-                ? '${s['hq'] ?? s['hq_address'] ?? '—'}' : '—';
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('जोन: ${z['name']}',
+                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            Text('सुपर जोन: ${sz['name']}  |  ब्लॉक: ${sz['block'] ?? '—'}',
+                style: const TextStyle(color: Colors.white60, fontSize: 11),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            if (zOff.isNotEmpty) ...[
+              const SizedBox(height: 6),
+              const Divider(color: Colors.white24, height: 1),
+              const SizedBox(height: 4),
+              const Text('जोनल अधिकारी:',
+                  style: TextStyle(color: Colors.white70, fontSize: 10)),
+              ...zOff.map((o) => Text(
+                '• ${o['name'] ?? '—'}  ${o['user_rank'] ?? ''}'
+                '  PNO: ${o['pno'] ?? '—'}  मो: ${o['mobile'] ?? '—'}',
+                style: const TextStyle(color: Colors.white, fontSize: 11),
+              )),
+            ],
+          ]),
+        ),
+        Padding(padding: const EdgeInsets.all(8),
+            child: _HTab2Table(sectors: sectors)),
+      ]),
+    );
+  }
+}
+
+class _HTab2Table extends StatelessWidget {
+  final List sectors;
+  const _HTab2Table({required this.sectors});
+
+  static const _ws = <int, double>{
+    0: 40, 1: 180, 2: 180, 3: 120, 4: 180, 5: 90,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final totalW = _ws.values.fold(0.0, (a, b) => a + b);
+    final rows   = <Map>[];
+    int sSeq     = 0;
+    for (final s in sectors) {
+      sSeq++;
+      final gps    = s['panchayats'] as List? ?? [];
+      final sOff   = s['officers']   as List? ?? [];
+      final magStr = sOff.isNotEmpty
+          ? '${sOff[0]['name'] ?? ''}\n${sOff[0]['user_rank'] ?? ''}\n${sOff[0]['mobile'] ?? ''}'
+          : '—';
+      final polStr = sOff.length > 1
+          ? '${sOff[1]['name'] ?? ''}\n${sOff[1]['user_rank'] ?? ''}\n${sOff[1]['mobile'] ?? ''}'
+          : magStr;
+      if (gps.isEmpty) {
+        rows.add({'s': s, 'sSeq': sSeq, 'mag': magStr, 'pol': polStr, 'gp': null, 'first': true});
+      } else {
+        for (int gi = 0; gi < gps.length; gi++) {
+          rows.add({'s': s, 'sSeq': sSeq, 'mag': gi == 0 ? magStr : '',
+              'pol': gi == 0 ? polStr : '', 'gp': gps[gi], 'first': gi == 0});
+        }
+      }
+    }
+    if (rows.isEmpty)
+      return const _EmptyHint(icon: Icons.inbox_outlined, title: 'कोई सैक्टर नहीं', subtitle: '');
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: totalW),
+        child: Column(children: [
+          Container(
+            decoration: BoxDecoration(color: const Color(0xFFE8F5E9),
+                border: Border.all(color: _kBorder, width: 0.7)),
+            child: Row(children: [
+              _th(0, 'सैक्टर\nसं.'),
+              _th(1, 'सैक्टर मजिस्ट्रेट\n(नाम/पद/मोबाइल)'),
+              _th(2, 'सैक्टर पुलिस अधिकारी\n(नाम/पद/मोबाइल)'),
+              _th(3, 'ग्राम पंचायत'),
+              _th(4, 'मतदेय स्थल\n(केन्द्र)'),
+              _th(5, 'मतदान\nकेन्द्र', last: true),
+            ]),
+          ),
+          ...rows.asMap().entries.map((e) {
+            final i      = e.key; final r = e.value;
+            final gp     = r['gp'] as Map?;
+            final first  = r['first'] as bool;
+            final bg     = i.isEven ? Colors.white : const Color(0xFFF1F8E9);
+            final centers  = gp != null ? (gp['centers'] as List? ?? []) : <Map>[];
+            final sthalStr = centers.map((c) => '${c['name']}').join('\n');
+            final kStr = centers.map((c) {
+              final kendras = c['kendras'];
+              if (kendras is List && kendras.isNotEmpty)
+                return kendras.map((k) => '${k['room_number']}').join(', ');
+              return '1';
+            }).where((e) => e.isNotEmpty).join(' | ');
             return Container(
-              decoration: BoxDecoration(
-                color: bg,
-                border: const Border(
-                  left:   BorderSide(color: _kBorder, width: 0.7),
-                  right:  BorderSide(color: _kBorder, width: 0.7),
-                  bottom: BorderSide(color: _kBorder, width: 0.7),
-                ),
-              ),
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  _hCell(_ws[0], isFirstInZone ? '${row.zi + 1}' : '',
-                      center: true, color: _kPrimary, bold: true),
-                  _hCell(_ws[1], isFirstInZone
-                      ? _officerLines(z['officers'] as List? ?? []) : ''),
-                  _hCell(_ws[2], isFirstInZone
-                      ? '${z['hq_address'] ?? '—'}' : ''),
-                  _hCell(_ws[3],
-                      row.sNum != null ? '${row.sNum}' : '',
-                      center: true, color: _kGreen, bold: true),
-                  _hCell(_ws[4], s != null
-                      ? _officerLines(s['officers'] as List? ?? []) : '—'),
-                  _hCell(_ws[5], sHq),
-                  _hCell(_ws[6], gpNames.isEmpty ? '—' : gpNames),
-                  _hCell(_ws[7], thanas.isEmpty ? '—' : thanas),
-                ],
-              ),
+              decoration: BoxDecoration(color: bg,
+                  border: const Border(
+                    left:   BorderSide(color: _kBorder, width: 0.7),
+                    right:  BorderSide(color: _kBorder, width: 0.7),
+                    bottom: BorderSide(color: _kBorder, width: 0.7),
+                  )),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _cell(0, first
+                    ? Text('${r['sSeq']}', style: const TextStyle(
+                        color: _kGreen, fontWeight: FontWeight.w900, fontSize: 14),
+                        textAlign: TextAlign.center)
+                    : const SizedBox()),
+                _cell(1, first
+                    ? Text('${r['mag']}', style: const TextStyle(fontSize: 11, color: _kDark))
+                    : const SizedBox()),
+                _cell(2, first
+                    ? Text('${r['pol']}', style: const TextStyle(fontSize: 11, color: _kDark))
+                    : const SizedBox()),
+                _cell(3, Text('${gp?['name'] ?? '—'}',
+                    style: const TextStyle(fontSize: 11, color: _kDark))),
+                _cell(4, Text(sthalStr.isEmpty ? '—' : sthalStr,
+                    style: const TextStyle(fontSize: 11, color: _kDark))),
+                _cell(5, Text(kStr.isEmpty ? '—' : kStr,
+                    style: const TextStyle(fontSize: 11, color: _kDark)), last: true),
+              ]),
             );
           }),
         ]),
@@ -1136,29 +1819,209 @@ class _HierarchyTable extends StatelessWidget {
     );
   }
 
-  Widget _hCell(double w, String txt,
-      {bool center = false, Color? color, bool bold = false}) =>
-      Container(
-        width: w, padding: const EdgeInsets.all(6),
-        decoration: const BoxDecoration(
-            border: Border(right: BorderSide(color: _kBorder))),
-        child: Text(txt, style: TextStyle(
-            color: color ?? _kDark, fontSize: 11,
-            fontWeight: bold ? FontWeight.w800 : FontWeight.normal),
-            textAlign: center ? TextAlign.center : TextAlign.left),
-      );
-}
+  Widget _th(int i, String t, {bool last = false}) => Container(
+    width: _ws[i], padding: const EdgeInsets.all(6),
+    decoration: _cellDec(right: !last, bottom: false, bg: const Color(0xFFE8F5E9)),
+    child: Text(t, style: const TextStyle(color: Color(0xFF1B5E20),
+        fontWeight: FontWeight.w800, fontSize: 10), textAlign: TextAlign.center),
+  );
 
-class _HRow {
-  final Map z;
-  final Map? s;
-  final int? sNum;
-  final int zi;
-  _HRow({required this.z, this.s, this.sNum, required this.zi});
+  Widget _cell(int i, Widget child, {bool last = false}) => Container(
+    width: _ws[i], padding: const EdgeInsets.all(6),
+    decoration: _cellDec(right: !last, bottom: false), child: child,
+  );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 2 — बूथ मानक (mirrors manak_booth_report_page.dart EXACTLY)
+//  HIERARCHY TAB 3 CARD (Booth Duty)
+// ══════════════════════════════════════════════════════════════════════════════
+class _HTab3Card extends StatelessWidget {
+  final Map sz, z, s, gp;
+  const _HTab3Card({required this.sz, required this.z, required this.s, required this.gp});
+
+  @override
+  Widget build(BuildContext context) {
+    final centers = gp['centers'] as List? ?? [];
+    int totalKendra = 0;
+    for (final c in centers) {
+      final k = c['kendras'] as List? ?? [];
+      totalKendra += k.isEmpty ? 1 : k.length;
+    }
+    final rows  = <Map>[];
+    int sthalNo = 1;
+    for (final c in centers) {
+      final kendras = c['kendras'] as List? ?? [];
+      final roomNos = kendras.isEmpty ? ''
+          : kendras.map((k) => '${k['room_number']}').join(', ');
+      rows.add({'c': c, 'sthalNo': sthalNo, 'roomNos': roomNos});
+      sthalNo++;
+    }
+    return Container(
+      margin: const EdgeInsets.only(bottom: 16),
+      decoration: BoxDecoration(
+        color: Colors.white, borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: _kBorder),
+        boxShadow: [BoxShadow(color: _kPurple.withOpacity(0.08),
+            blurRadius: 10, offset: const Offset(0, 4))],
+      ),
+      child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+        Container(
+          padding: const EdgeInsets.fromLTRB(14, 10, 10, 10),
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+                colors: [Color(0xFF6C3483), Color(0xFF8E44AD)],
+                begin: Alignment.topLeft, end: Alignment.bottomRight),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(12)),
+          ),
+          child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Text('बूथ ड्यूटी – ब्लॉक ${sz['block'] ?? sz['name']}',
+                style: const TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.w800),
+                maxLines: 1, overflow: TextOverflow.ellipsis),
+            const SizedBox(height: 3),
+            Wrap(spacing: 12, runSpacing: 2, children: [
+              Text('ग्राम पंचायत: ${gp['name']}',
+                  style: const TextStyle(color: Colors.white70, fontSize: 11)),
+              Text('सैक्टर: ${s['name']}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 11)),
+              Text('जोन: ${z['name']}',
+                  style: const TextStyle(color: Colors.white60, fontSize: 11)),
+            ]),
+            const SizedBox(height: 4),
+            Wrap(spacing: 6, runSpacing: 4, children: [
+              _GoldChip('मतदेय स्थल: ${centers.length}'),
+              _GoldChip('मतदान केन्द्र: $totalKendra'),
+            ]),
+          ]),
+        ),
+        if (rows.isEmpty)
+          const Padding(padding: EdgeInsets.all(16),
+              child: _EmptyHint(icon: Icons.inbox_outlined,
+                  title: 'कोई मतदेय स्थल नहीं', subtitle: ''))
+        else
+          Padding(padding: const EdgeInsets.all(8),
+              child: _HTab3Table(rows: rows, z: z, s: s, gp: gp)),
+      ]),
+    );
+  }
+}
+
+class _HTab3Table extends StatelessWidget {
+  final List<Map> rows; final Map z, s, gp;
+  const _HTab3Table({required this.rows, required this.z, required this.s, required this.gp});
+
+  static const _ws = <int, double>{
+    0: 44, 1: 170, 2: 44, 3: 150, 4: 54, 5: 58, 6: 80, 7: 200, 8: 115, 9: 50,
+  };
+
+  @override
+  Widget build(BuildContext context) {
+    final totalW = _ws.values.fold(0.0, (a, b) => a + b);
+    return SingleChildScrollView(
+      scrollDirection: Axis.horizontal,
+      child: ConstrainedBox(
+        constraints: BoxConstraints(minWidth: totalW),
+        child: Column(children: [
+          Container(
+            decoration: BoxDecoration(color: const Color(0xFFF3E5F5),
+                border: Border.all(color: _kBorder, width: 0.7)),
+            child: Row(children: [
+              _th(0, 'मतदान\nकेन्द्र\nसंख्या'),
+              _th(1, 'मतदान केन्द्र\nका नाम'),
+              _th(2, 'मतदेय\nस्थल सं.'),
+              _th(3, 'मतदान स्थल\nका नाम'),
+              _th(4, 'जोन\nसंख्या'),
+              _th(5, 'सैक्टर\nसंख्या'),
+              _th(6, 'थाना'),
+              _th(7, 'ड्यूटी पर लगाया\nपुलिस का नाम'),
+              _th(8, 'मोबाईल\nनम्बर'),
+              _th(9, 'बस\nनं.', last: true),
+            ]),
+          ),
+          ...rows.asMap().entries.map((e) {
+            final i         = e.key;
+            final r         = e.value;
+            final c         = r['c'] as Map;
+            final bg        = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
+            final roomNos   = (r['roomNos'] as String? ?? '');
+            final nameWithRooms = roomNos.isNotEmpty
+                ? '${c['name']}\nक.नं. $roomNos' : '${c['name']}';
+            final typeColor = _sensitivityColor(c['center_type'] as String?);
+            final duty      = c['duty_officers'] as List? ?? [];
+            final dText = duty.isNotEmpty
+                ? duty.map((d) =>
+                    '${d['name'] ?? ''}  ${d['pno'] ?? ''}\n${d['user_rank'] ?? ''}').join('\n')
+                : '—';
+            final mText = duty.isNotEmpty
+                ? duty.map((d) => '${d['mobile'] ?? ''}')
+                    .where((m) => m.isNotEmpty).join('\n')
+                : '—';
+            return Container(
+              decoration: BoxDecoration(color: bg,
+                  border: const Border(
+                    left:   BorderSide(color: _kBorder, width: 0.7),
+                    right:  BorderSide(color: _kBorder, width: 0.7),
+                    bottom: BorderSide(color: _kBorder, width: 0.7),
+                  )),
+              child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                _cell(0, Center(child: Text('${r['sthalNo']}',
+                    style: const TextStyle(color: _kPurple,
+                        fontWeight: FontWeight.w800, fontSize: 13)))),
+                _cell(1, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text(nameWithRooms, style: const TextStyle(color: _kDark, fontSize: 11)),
+                  Container(
+                    margin: const EdgeInsets.only(top: 3),
+                    padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 2),
+                    decoration: BoxDecoration(
+                        color: typeColor.withOpacity(0.1),
+                        borderRadius: BorderRadius.circular(4),
+                        border: Border.all(color: typeColor.withOpacity(0.4))),
+                    child: Text('${c['center_type'] ?? 'C'}',
+                        style: TextStyle(color: typeColor,
+                            fontSize: 10, fontWeight: FontWeight.w800))),
+                ])),
+                _cell(2, Center(child: Text('${r['sthalNo']}',
+                    style: const TextStyle(color: _kDark,
+                        fontWeight: FontWeight.w700, fontSize: 12)))),
+                _cell(3, Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  Text('${c['name']}', style: const TextStyle(color: _kDark, fontSize: 11)),
+                  if ((c['address'] ?? '').toString().isNotEmpty)
+                    Text('${c['address']}',
+                        style: const TextStyle(color: _kSubtle, fontSize: 9)),
+                ])),
+                _cell(4, Center(child: Text('${z['name']}',
+                    style: const TextStyle(color: _kDark, fontSize: 10)))),
+                _cell(5, Center(child: Text('${s['name']}',
+                    style: const TextStyle(color: _kDark, fontSize: 10)))),
+                _cell(6, Text('${c['thana'] ?? gp['thana'] ?? '—'}',
+                    style: const TextStyle(color: _kDark, fontSize: 11))),
+                _cell(7, Text(dText, style: const TextStyle(color: _kDark, fontSize: 11))),
+                _cell(8, Text(mText, style: const TextStyle(color: _kDark, fontSize: 11, fontFamily: 'monospace'))),
+                _cell(9, Center(child: Text('${c['bus_no'] ?? '—'}',
+                    style: const TextStyle(color: _kDark,
+                        fontWeight: FontWeight.w700, fontSize: 11))), last: true),
+              ]),
+            );
+          }),
+        ]),
+      ),
+    );
+  }
+
+  Widget _th(int i, String t, {bool last = false}) => Container(
+    width: _ws[i], padding: const EdgeInsets.all(6),
+    decoration: _cellDec(right: !last, bottom: false, bg: const Color(0xFFF3E5F5)),
+    child: Text(t, style: const TextStyle(color: _kPurple,
+        fontWeight: FontWeight.w800, fontSize: 9.5), textAlign: TextAlign.center),
+  );
+
+  Widget _cell(int i, Widget child, {bool last = false}) => Container(
+    width: _ws[i], padding: const EdgeInsets.all(6),
+    decoration: _cellDec(right: !last, bottom: false), child: child,
+  );
+}
+
+// ══════════════════════════════════════════════════════════════════════════════
+//  TAB 2 — बूथ मानक
 // ══════════════════════════════════════════════════════════════════════════════
 class _BoothManakReportTab extends StatefulWidget {
   final _ElectionContext ctx;
@@ -1187,8 +2050,7 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
   void initState() {
     super.initState();
     _innerTab = TabController(length: 5, vsync: this);
-    _innerTab.addListener(() =>
-        setState(() => _activeInner = _innerTab.index));
+    _innerTab.addListener(() => setState(() => _activeInner = _innerTab.index));
     _load();
   }
 
@@ -1200,8 +2062,6 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
     try {
       final token = await AuthService.getToken();
       final ctx   = widget.ctx;
-
-      // Rules
       final rulesEp = ctx.ep('booth-manak', '/admin/booth-rules');
       final res     = await ApiService.get(rulesEp, token: token);
       final data    = res['data'] as Map<String, dynamic>? ?? {};
@@ -1209,10 +2069,7 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
         _rules[s] = (data[s] as List? ?? [])
             .map((e) => Map<String, dynamic>.from(e as Map)).toList();
       }
-
-      // Center counts
-      final ccEp = ctx.ep('booth-center-counts',
-          '/admin/booth-rules/center-counts-by-type');
+      final ccEp = ctx.ep('booth-center-counts', '/admin/booth-rules/center-counts-by-type');
       try {
         final ccRes  = await ApiService.get(ccEp, token: token);
         final ccData = ccRes['data'] as Map<String, dynamic>? ?? {};
@@ -1226,7 +2083,6 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
           _centerCounts[sens] = counts;
         }
       } catch (_) {}
-
       setState(() => _loading = false);
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
@@ -1252,21 +2108,20 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
 
   bool _hasAny(Map<String, dynamic>? r) {
     if (r == null) return false;
-    return _g(r,'siArmedCount','si_armed_count')       > 0 ||
-        _g(r,'siUnarmedCount','si_unarmed_count')      > 0 ||
-        _g(r,'hcArmedCount','hc_armed_count')          > 0 ||
-        _g(r,'hcUnarmedCount','hc_unarmed_count')      > 0 ||
-        _g(r,'constArmedCount','const_armed_count')    > 0 ||
-        _g(r,'constUnarmedCount','const_unarmed_count')> 0 ||
-        _g(r,'auxArmedCount','aux_armed_count')        > 0 ||
-        _g(r,'auxUnarmedCount','aux_unarmed_count')    > 0 ||
+    return _g(r,'siArmedCount','si_armed_count')        > 0 ||
+        _g(r,'siUnarmedCount','si_unarmed_count')       > 0 ||
+        _g(r,'hcArmedCount','hc_armed_count')           > 0 ||
+        _g(r,'hcUnarmedCount','hc_unarmed_count')       > 0 ||
+        _g(r,'constArmedCount','const_armed_count')     > 0 ||
+        _g(r,'constUnarmedCount','const_unarmed_count') > 0 ||
+        _g(r,'auxArmedCount','aux_armed_count')         > 0 ||
+        _g(r,'auxUnarmedCount','aux_unarmed_count')     > 0 ||
         _pac(r) > 0;
   }
 
   int _filledCount(String sens) {
     int c = 0;
-    for (int i = 1; i <= 15; i++)
-      if (_hasAny(_ruleFor(sens, i))) c++;
+    for (int i = 1; i <= 15; i++) if (_hasAny(_ruleFor(sens, i))) c++;
     return c;
   }
 
@@ -1279,12 +2134,10 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final doc  = pw.Document();
       final ctx  = widget.ctx;
-
       for (final s in _kSensList) {
         final sens     = s['key'] as String;
         final color    = s['color'] as Color;
         final pdfColor = PdfColor.fromInt(color.value);
-
         doc.addPage(pw.MultiPage(
           pageFormat: PdfPageFormat.a4.landscape,
           margin: const pw.EdgeInsets.all(14),
@@ -1293,23 +2146,17 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
             children: [
               pw.Text(
                 'त्रिस्तरीय पंचायत सामान्य निर्वाचन — बूथ एवं कानून व्यवस्था ड्यूटी हेतु पुलिस व्यवस्थापन का विवरण',
-                style: pw.TextStyle(font: bold, fontSize: 8,
-                    fontWeight: pw.FontWeight.bold)),
+                style: pw.TextStyle(font: bold, fontSize: 8, fontWeight: pw.FontWeight.bold)),
               pw.Text('${ctx.electionName}  •  जनपद: ${ctx.district}'
                   '  •  चरण: ${ctx.phase}  •  तिथि: ${ctx.electionDate}',
-                  style: pw.TextStyle(font: font, fontSize: 8,
-                      color: PdfColors.grey700)),
+                  style: pw.TextStyle(font: font, fontSize: 8, color: PdfColors.grey700)),
               pw.SizedBox(height: 3),
               pw.Container(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 3),
-                decoration: pw.BoxDecoration(
-                    color: pdfColor,
-                    borderRadius: pw.BorderRadius.circular(4)),
+                padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: pw.BoxDecoration(color: pdfColor, borderRadius: pw.BorderRadius.circular(4)),
                 child: pw.Text('${s['key']} — ${s['hi']} श्रेणी',
                     style: pw.TextStyle(font: bold, fontSize: 8,
-                        color: PdfColors.white,
-                        fontWeight: pw.FontWeight.bold)),
+                        color: PdfColors.white, fontWeight: pw.FontWeight.bold)),
               ),
               pw.SizedBox(height: 4),
             ],
@@ -1324,13 +2171,10 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
   }
 
   pw.Widget _buildPdfTable(String sens, pw.Font font, pw.Font bold) {
-    final tHdr = pw.TextStyle(font: bold, fontSize: 6,
-        fontWeight: pw.FontWeight.bold);
+    final tHdr = pw.TextStyle(font: bold, fontSize: 6, fontWeight: pw.FontWeight.bold);
     final tCel = pw.TextStyle(font: font, fontSize: 6.5);
-    final tBld = pw.TextStyle(font: bold, fontSize: 6.5,
-        fontWeight: pw.FontWeight.bold);
-    final tZro = pw.TextStyle(font: font, fontSize: 6.5,
-        color: PdfColors.grey500);
+    final tBld = pw.TextStyle(font: bold, fontSize: 6.5, fontWeight: pw.FontWeight.bold);
+    final tZro = pw.TextStyle(font: font, fontSize: 6.5, color: PdfColors.grey500);
 
     pw.Widget ph(String t, pw.TextStyle st, {bool left = false}) =>
         pw.Padding(
@@ -1339,45 +2183,41 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
               textAlign: left ? pw.TextAlign.left : pw.TextAlign.center),
         );
 
-    int tCnt=0, tSI_A=0, tHC_A=0, tHC_U=0,
-        tC_A=0,  tC_U=0, tAx_A=0, tAx_U=0;
+    int tCnt=0,tSI_A=0,tHC_A=0,tHC_U=0,tC_A=0,tC_U=0,tAx_A=0,tAx_U=0;
     double tPAC = 0;
 
     final rows = <pw.TableRow>[
       pw.TableRow(
-        decoration: pw.BoxDecoration(
-            color: PdfColor.fromHex('#EDE0C4')),
+        decoration: pw.BoxDecoration(color: PdfColor.fromHex('#EDE0C4')),
         children: [
-          ph('क्र.स.', tHdr),
-          ph('मतदान केन्द्र का प्रकार', tHdr, left: true),
+          ph('क्र.स.', tHdr), ph('मतदान केन्द्र का प्रकार', tHdr, left: true),
           ph('पोलिंग\nसेन्टर\nसंख्या', tHdr),
-          ph('SI', tHdr), ph('HC', tHdr),
-          ph('Const.', tHdr), ph('Aux.\nForce', tHdr), ph('PAC\n(section)', tHdr),
-          ph('SI\nसश°', tHdr), ph('HC', tHdr),
-          ph('HC\nसश°', tHdr), ph('HC\nनिः°', tHdr),
-          ph('Const.', tHdr), ph('Const.\nसश°', tHdr), ph('Const.\nनिः°', tHdr),
+          ph('SI', tHdr), ph('HC', tHdr), ph('Const.', tHdr),
+          ph('Aux.\nForce', tHdr), ph('PAC\n(section)', tHdr),
+          ph('SI\nसश°', tHdr), ph('HC', tHdr), ph('HC\nसश°', tHdr),
+          ph('HC\nनिः°', tHdr), ph('Const.', tHdr),
+          ph('Const.\nसश°', tHdr), ph('Const.\nनिः°', tHdr),
           ph('Aux.\nForce', tHdr), ph('PAC\n(section)', tHdr),
         ],
       ),
     ];
-
     for (int i = 1; i <= 15; i++) {
       final r       = _ruleFor(sens, i);
       final centers = _centerCounts[sens]?[i] ?? 0;
-      final si_a = _g(r,'siArmedCount','si_armed_count');
-      final si_u = _g(r,'siUnarmedCount','si_unarmed_count');
-      final hc_a = _g(r,'hcArmedCount','hc_armed_count');
-      final hc_u = _g(r,'hcUnarmedCount','hc_unarmed_count');
-      final c_a  = _g(r,'constArmedCount','const_armed_count');
-      final c_u  = _g(r,'constUnarmedCount','const_unarmed_count');
-      final ax_a = _g(r,'auxArmedCount','aux_armed_count');
-      final ax_u = _g(r,'auxUnarmedCount','aux_unarmed_count');
-      final pac  = _pac(r);
-      final M_si_a = centers * si_a;
-      final M_hc_a = centers * hc_a; final M_hc_u = centers * hc_u;
-      final M_c_a  = centers * c_a;  final M_c_u  = centers * c_u;
-      final M_ax_a = centers * ax_a; final M_ax_u = centers * ax_u;
-      final M_pac  = centers * pac;
+      final si_a    = _g(r,'siArmedCount','si_armed_count');
+      final si_u    = _g(r,'siUnarmedCount','si_unarmed_count');
+      final hc_a    = _g(r,'hcArmedCount','hc_armed_count');
+      final hc_u    = _g(r,'hcUnarmedCount','hc_unarmed_count');
+      final c_a     = _g(r,'constArmedCount','const_armed_count');
+      final c_u     = _g(r,'constUnarmedCount','const_unarmed_count');
+      final ax_a    = _g(r,'auxArmedCount','aux_armed_count');
+      final ax_u    = _g(r,'auxUnarmedCount','aux_unarmed_count');
+      final pac     = _pac(r);
+      final M_si_a  = centers * si_a;
+      final M_hc_a  = centers * hc_a; final M_hc_u = centers * hc_u;
+      final M_c_a   = centers * c_a;  final M_c_u  = centers * c_u;
+      final M_ax_a  = centers * ax_a; final M_ax_u = centers * ax_u;
+      final M_pac   = centers * pac;
       tCnt += centers; tSI_A += M_si_a;
       tHC_A += M_hc_a; tHC_U += M_hc_u;
       tC_A  += M_c_a;  tC_U  += M_c_u;
@@ -1386,65 +2226,49 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
       pw.TextStyle st(num v) => v > 0 ? tBld : tZro;
       rows.add(pw.TableRow(
         decoration: i % 2 == 0
-            ? const pw.BoxDecoration(
-                color: PdfColor.fromInt(0xFFFAF5EB)) : null,
+            ? const pw.BoxDecoration(color: PdfColor.fromInt(0xFFFAF5EB)) : null,
         children: [
-          ph('$i', tCel),
-          ph(_kBoothTiers[i - 1]['label'], tCel, left: true),
+          ph('$i', tCel), ph(_kBoothTiers[i - 1]['label'], tCel, left: true),
           ph(centers > 0 ? '$centers' : '—', st(centers)),
-          ph('${si_a+si_u}', st(si_a+si_u)),
-          ph('${hc_a+hc_u}', st(hc_a+hc_u)),
-          ph('${c_a+c_u}',   st(c_a+c_u)),
-          ph('${ax_a+ax_u}', st(ax_a+ax_u)),
-          ph(_fmtPac(pac),   st((pac*10).toInt())),
-          ph('$M_si_a',           st(M_si_a)),
+          ph('${si_a+si_u}', st(si_a+si_u)), ph('${hc_a+hc_u}', st(hc_a+hc_u)),
+          ph('${c_a+c_u}', st(c_a+c_u)),     ph('${ax_a+ax_u}', st(ax_a+ax_u)),
+          ph(_fmtPac(pac), st((pac*10).toInt())),
+          ph('$M_si_a', st(M_si_a)),
           ph('${M_hc_a+M_hc_u}', st(M_hc_a+M_hc_u)),
-          ph('$M_hc_a',           st(M_hc_a)),
-          ph('$M_hc_u',           st(M_hc_u)),
-          ph('${M_c_a+M_c_u}',   st(M_c_a+M_c_u)),
-          ph('$M_c_a',            st(M_c_a)),
-          ph('$M_c_u',            st(M_c_u)),
+          ph('$M_hc_a', st(M_hc_a)), ph('$M_hc_u', st(M_hc_u)),
+          ph('${M_c_a+M_c_u}', st(M_c_a+M_c_u)),
+          ph('$M_c_a', st(M_c_a)), ph('$M_c_u', st(M_c_u)),
           ph('${M_ax_a+M_ax_u}', st(M_ax_a+M_ax_u)),
           ph(_fmtPac(M_pac), st((M_pac*10).toInt())),
         ],
       ));
     }
     rows.add(pw.TableRow(
-      decoration: pw.BoxDecoration(
-          color: PdfColor.fromHex('#D5F5E3')),
+      decoration: pw.BoxDecoration(color: PdfColor.fromHex('#D5F5E3')),
       children: [
-        ph('', tHdr), ph('योग', tHdr, left: true),
-        ph('$tCnt', tHdr),
-        ph('', tHdr), ph('', tHdr),
-        ph('', tHdr), ph('', tHdr), ph('', tHdr),
-        ph('$tSI_A',          tHdr),
-        ph('${tHC_A+tHC_U}',  tHdr),
-        ph('$tHC_A',           tHdr), ph('$tHC_U',           tHdr),
-        ph('${tC_A+tC_U}',    tHdr),
-        ph('$tC_A',            tHdr), ph('$tC_U',            tHdr),
-        ph('${tAx_A+tAx_U}',  tHdr),
-        ph(_fmtPac(tPAC),     tHdr),
+        ph('', tHdr), ph('योग', tHdr, left: true), ph('$tCnt', tHdr),
+        ph('', tHdr), ph('', tHdr), ph('', tHdr), ph('', tHdr), ph('', tHdr),
+        ph('$tSI_A', tHdr),
+        ph('${tHC_A+tHC_U}', tHdr), ph('$tHC_A', tHdr), ph('$tHC_U', tHdr),
+        ph('${tC_A+tC_U}', tHdr), ph('$tC_A', tHdr), ph('$tC_U', tHdr),
+        ph('${tAx_A+tAx_U}', tHdr), ph(_fmtPac(tPAC), tHdr),
       ],
     ));
-
     return pw.Table(
       columnWidths: const {
-        0: pw.FixedColumnWidth(18),   1: pw.FixedColumnWidth(60),
-        2: pw.FixedColumnWidth(26),
-        3: pw.FixedColumnWidth(22),   4: pw.FixedColumnWidth(22),
-        5: pw.FixedColumnWidth(24),   6: pw.FixedColumnWidth(26),
-        7: pw.FixedColumnWidth(28),
-        8:  pw.FixedColumnWidth(24),  9:  pw.FixedColumnWidth(24),
-        10: pw.FixedColumnWidth(26),  11: pw.FixedColumnWidth(26),
-        12: pw.FixedColumnWidth(26),  13: pw.FixedColumnWidth(28),
-        14: pw.FixedColumnWidth(28),  15: pw.FixedColumnWidth(28),
+        0: pw.FixedColumnWidth(18),  1: pw.FixedColumnWidth(60),
+        2: pw.FixedColumnWidth(26),  3: pw.FixedColumnWidth(22),
+        4: pw.FixedColumnWidth(22),  5: pw.FixedColumnWidth(24),
+        6: pw.FixedColumnWidth(26),  7: pw.FixedColumnWidth(28),
+        8: pw.FixedColumnWidth(24),  9: pw.FixedColumnWidth(24),
+        10: pw.FixedColumnWidth(26), 11: pw.FixedColumnWidth(26),
+        12: pw.FixedColumnWidth(26), 13: pw.FixedColumnWidth(28),
+        14: pw.FixedColumnWidth(28), 15: pw.FixedColumnWidth(28),
         16: pw.FixedColumnWidth(28),
       },
       border: const pw.TableBorder(
-        horizontalInside:
-            pw.BorderSide(width: 0.3, color: PdfColors.grey400),
-        verticalInside:
-            pw.BorderSide(width: 0.3, color: PdfColors.grey400),
+        horizontalInside: pw.BorderSide(width: 0.3, color: PdfColors.grey400),
+        verticalInside:   pw.BorderSide(width: 0.3, color: PdfColors.grey400),
         left:   pw.BorderSide(width: 0.5, color: PdfColors.grey600),
         right:  pw.BorderSide(width: 0.5, color: PdfColors.grey600),
         top:    pw.BorderSide(width: 0.5, color: PdfColors.grey600),
@@ -1458,11 +2282,8 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
   Widget build(BuildContext context) {
     super.build(context);
     if (_loading)
-      return const Center(
-          child: CircularProgressIndicator(color: _kManakPrim));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
-
+      return const Center(child: CircularProgressIndicator(color: _kManakPrim));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
     return Container(
       color: _kManakBg,
       child: Column(children: [
@@ -1474,21 +2295,15 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
           child: TabBar(
             controller: _innerTab, isScrollable: true,
             indicatorColor: Colors.white, indicatorWeight: 3,
-            labelColor: Colors.white,
-            unselectedLabelColor: Colors.white60,
-            labelStyle: const TextStyle(
-                fontSize: 11, fontWeight: FontWeight.w700),
+            labelColor: Colors.white, unselectedLabelColor: Colors.white60,
+            labelStyle: const TextStyle(fontSize: 11, fontWeight: FontWeight.w700),
             tabs: const [
-              Tab(text: 'सभी'),
-              Tab(text: 'A++'),
-              Tab(text: 'A'),
-              Tab(text: 'B'),
-              Tab(text: 'C'),
+              Tab(text: 'सभी'), Tab(text: 'A++'), Tab(text: 'A'),
+              Tab(text: 'B'),   Tab(text: 'C'),
             ],
           ),
         ),
         Expanded(child: TabBarView(controller: _innerTab, children: [
-          // All
           ListView.builder(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 30),
             itemCount: _kSensList.length,
@@ -1497,7 +2312,6 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
               child: _sensBlock(_kSensList[i]),
             ),
           ),
-          // Per-sensitivity
           ..._kSensList.map((s) => ListView(
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 30),
             children: [_sensBlock(s)],
@@ -1511,24 +2325,18 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
     final sk    = s['key'] as String;
     final color = s['color'] as Color;
     final isSet = _filledCount(sk) > 0;
-
-    int tCnt=0, tSI=0, tHC=0, tC=0, tAx=0;
+    int tCnt=0,tSI=0,tHC=0,tC=0,tAx=0;
     double tPAC = 0;
     for (int i = 1; i <= 15; i++) {
       final r = _ruleFor(sk, i);
       final c = _centerCounts[sk]?[i] ?? 0;
       tCnt += c;
-      tSI += c * (_g(r,'siArmedCount','si_armed_count') +
-          _g(r,'siUnarmedCount','si_unarmed_count'));
-      tHC += c * (_g(r,'hcArmedCount','hc_armed_count') +
-          _g(r,'hcUnarmedCount','hc_unarmed_count'));
-      tC  += c * (_g(r,'constArmedCount','const_armed_count') +
-          _g(r,'constUnarmedCount','const_unarmed_count'));
-      tAx += c * (_g(r,'auxArmedCount','aux_armed_count') +
-          _g(r,'auxUnarmedCount','aux_unarmed_count'));
+      tSI += c * (_g(r,'siArmedCount','si_armed_count') + _g(r,'siUnarmedCount','si_unarmed_count'));
+      tHC += c * (_g(r,'hcArmedCount','hc_armed_count') + _g(r,'hcUnarmedCount','hc_unarmed_count'));
+      tC  += c * (_g(r,'constArmedCount','const_armed_count') + _g(r,'constUnarmedCount','const_unarmed_count'));
+      tAx += c * (_g(r,'auxArmedCount','aux_armed_count') + _g(r,'auxUnarmedCount','aux_unarmed_count'));
       tPAC += c * _pac(r);
     }
-
     return Container(
       decoration: BoxDecoration(
         color: Colors.white,
@@ -1538,81 +2346,60 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
             blurRadius: 12, offset: const Offset(0, 4))],
       ),
       child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-        // Header
         Container(
           padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
           decoration: BoxDecoration(
             color: _kManakSurf.withOpacity(0.7),
-            borderRadius: const BorderRadius.vertical(
-                top: Radius.circular(14)),
-            border: Border(bottom: BorderSide(
-                color: _kManakBorder.withOpacity(0.3))),
+            borderRadius: const BorderRadius.vertical(top: Radius.circular(14)),
+            border: Border(bottom: BorderSide(color: _kManakBorder.withOpacity(0.3))),
           ),
           child: Row(children: [
             Container(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 10, vertical: 4),
-              decoration: BoxDecoration(
-                  color: color,
-                  borderRadius: BorderRadius.circular(8)),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+              decoration: BoxDecoration(color: color, borderRadius: BorderRadius.circular(8)),
               child: Text(sk, style: const TextStyle(
-                  color: Colors.white, fontSize: 13,
-                  fontWeight: FontWeight.w900)),
+                  color: Colors.white, fontSize: 13, fontWeight: FontWeight.w900)),
             ),
             const SizedBox(width: 10),
-            Expanded(child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start, children: [
+            Expanded(child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
               Text('${s['hi']} श्रेणी', style: const TextStyle(
-                  color: _kManakDark, fontSize: 13,
-                  fontWeight: FontWeight.w800)),
+                  color: _kManakDark, fontSize: 13, fontWeight: FontWeight.w800)),
               Text('${_filledCount(sk)}/15 मानक • $tCnt केन्द्र',
-                  style: TextStyle(color: color, fontSize: 10,
-                      fontWeight: FontWeight.w700)),
+                  style: TextStyle(color: color, fontSize: 10, fontWeight: FontWeight.w700)),
             ])),
             if (isSet)
               Container(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                     color: _kGreen.withOpacity(0.1),
                     borderRadius: BorderRadius.circular(20)),
                 child: const Text('सेट', style: TextStyle(
-                    color: _kGreen, fontSize: 10,
-                    fontWeight: FontWeight.w700)),
+                    color: _kGreen, fontSize: 10, fontWeight: FontWeight.w700)),
               ),
           ]),
         ),
-        // Summary chips
         if (isSet)
           Container(
-            padding: const EdgeInsets.symmetric(
-                horizontal: 12, vertical: 8),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             color: color.withOpacity(0.04),
             child: SingleChildScrollView(
               scrollDirection: Axis.horizontal,
               child: Row(children: [
-                _sumChip('केन्द्र', '$tCnt',
-                    const Color(0xFF555555)),
+                _sumChip('केन्द्र', '$tCnt', const Color(0xFF555555)),
                 _sumChip('SI', '$tSI', color),
                 _sumChip('HC', '$tHC', color),
                 _sumChip('Const.', '$tC', color),
-                _sumChip('Aux.', '$tAx',
-                    const Color(0xFFE65100)),
-                if (tPAC > 0)
-                  _sumChip('PAC', _fmtPac(tPAC),
-                      const Color(0xFF00695C)),
+                _sumChip('Aux.', '$tAx', const Color(0xFFE65100)),
+                if (tPAC > 0) _sumChip('PAC', _fmtPac(tPAC), const Color(0xFF00695C)),
                 _sumChip('कुल बल', '${tSI+tHC+tC+tAx}', _kGreen),
               ]),
             ),
           ),
-        // Empty state
         if (!isSet)
           Padding(
             padding: const EdgeInsets.all(24),
-            child: Center(child: Column(
-                mainAxisSize: MainAxisSize.min, children: [
-              Icon(Icons.table_chart_outlined, size: 36,
-                  color: color.withOpacity(0.3)),
+            child: Center(child: Column(mainAxisSize: MainAxisSize.min, children: [
+              Icon(Icons.table_chart_outlined, size: 36, color: color.withOpacity(0.3)),
               const SizedBox(height: 10),
               Text('${s['hi']} ($sk) के लिए कोई मानक सेट नहीं है',
                   style: const TextStyle(color: _kManakSubtle,
@@ -1621,37 +2408,31 @@ class _BoothManakReportTabState extends State<_BoothManakReportTab>
           )
         else
           _BoothManakTable(
-            sensKey: sk,
-            color: color,
+            sensKey: sk, color: color,
             centerCounts: _centerCounts[sk] ?? {},
             ruleFor: (bc) => _ruleFor(sk, bc),
-            g: _g,
-            pac: _pac,
-            fmtPac: _fmtPac,
+            g: _g, pac: _pac, fmtPac: _fmtPac,
           ),
       ]),
     );
   }
 
-  Widget _sumChip(String label, String value, Color color) =>
-      Container(
-        margin: const EdgeInsets.only(right: 6),
-        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-        decoration: BoxDecoration(
-            color: color.withOpacity(0.08),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: color.withOpacity(0.3))),
-        child: Row(mainAxisSize: MainAxisSize.min, children: [
-          Text('$label: ', style: TextStyle(
-              color: color.withOpacity(0.8), fontSize: 10,
-              fontWeight: FontWeight.w600)),
-          Text(value, style: TextStyle(
-              color: color, fontSize: 11, fontWeight: FontWeight.w900)),
-        ]),
-      );
+  Widget _sumChip(String label, String value, Color color) => Container(
+    margin: const EdgeInsets.only(right: 6),
+    padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
+    decoration: BoxDecoration(
+        color: color.withOpacity(0.08),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: color.withOpacity(0.3))),
+    child: Row(mainAxisSize: MainAxisSize.min, children: [
+      Text('$label: ', style: TextStyle(
+          color: color.withOpacity(0.8), fontSize: 10, fontWeight: FontWeight.w600)),
+      Text(value, style: TextStyle(
+          color: color, fontSize: 11, fontWeight: FontWeight.w900)),
+    ]),
+  );
 }
 
-// ── Booth manak table (same format as manak_booth_report_page.dart _ReportTable) ──
 class _BoothManakTable extends StatelessWidget {
   final String sensKey;
   final Color  color;
@@ -1660,7 +2441,6 @@ class _BoothManakTable extends StatelessWidget {
   final int Function(Map<String, dynamic>?, String, [String?]) g;
   final double Function(Map<String, dynamic>?) pac;
   final String Function(double) fmtPac;
-
   const _BoothManakTable({
     required this.sensKey, required this.color,
     required this.centerCounts, required this.ruleFor,
@@ -1674,11 +2454,10 @@ class _BoothManakTable extends StatelessWidget {
     double mPAC=0;
     int tSI_A=0,tHC_A=0,tHC_U=0,tC_A=0,tC_U=0,tAx_A=0,tAx_U=0;
     double tPAC=0;
-
     final dataRows = <_BRow>[];
     for (int i = 1; i <= 15; i++) {
-      final r  = ruleFor(i);
-      final c  = centerCounts[i] ?? 0;
+      final r    = ruleFor(i);
+      final c    = centerCounts[i] ?? 0;
       final si_a = g(r,'siArmedCount','si_armed_count');
       final si_u = g(r,'siUnarmedCount','si_unarmed_count');
       final hc_a = g(r,'hcArmedCount','hc_armed_count');
@@ -1689,38 +2468,25 @@ class _BoothManakTable extends StatelessWidget {
       final ax_u = g(r,'auxUnarmedCount','aux_unarmed_count');
       final p    = pac(r);
       tCenters += c;
-      mSI_A += si_a; mSI_U += si_u;
-      mHC_A += hc_a; mHC_U += hc_u;
-      mC_A  += c_a;  mC_U  += c_u;
-      mAx_A += ax_a; mAx_U += ax_u;
+      mSI_A += si_a; mSI_U += si_u; mHC_A += hc_a; mHC_U += hc_u;
+      mC_A  += c_a;  mC_U  += c_u;  mAx_A += ax_a;  mAx_U += ax_u;
       mPAC  += p;
-      tSI_A += c*si_a;
-      tHC_A += c*hc_a; tHC_U += c*hc_u;
-      tC_A  += c*c_a;  tC_U  += c*c_u;
-      tAx_A += c*ax_a; tAx_U += c*ax_u;
+      tSI_A += c*si_a; tHC_A += c*hc_a; tHC_U += c*hc_u;
+      tC_A  += c*c_a;  tC_U  += c*c_u;  tAx_A += c*ax_a; tAx_U += c*ax_u;
       tPAC  += c*p;
-      dataRows.add(_BRow(
-        boothNo: i, label: _kBoothTiers[i-1]['label'],
-        centers: c, si_a: si_a, si_u: si_u,
-        hc_a: hc_a, hc_u: hc_u,
-        c_a: c_a,   c_u: c_u,
-        ax_a: ax_a, ax_u: ax_u, p: p,
+      dataRows.add(_BRow(boothNo: i, label: _kBoothTiers[i-1]['label'],
+        centers: c, si_a: si_a, si_u: si_u, hc_a: hc_a, hc_u: hc_u,
+        c_a: c_a, c_u: c_u, ax_a: ax_a, ax_u: ax_u, p: p,
       ));
     }
-
     const colWidths = <int, TableColumnWidth>{
-      0: FixedColumnWidth(28),   1: FixedColumnWidth(90),
-      2: FixedColumnWidth(42),
-      3: FixedColumnWidth(30),   4: FixedColumnWidth(30),
-      5: FixedColumnWidth(34),   6: FixedColumnWidth(36),
-      7: FixedColumnWidth(34),
-      8:  FixedColumnWidth(32),  9:  FixedColumnWidth(34),
-      10: FixedColumnWidth(34),  11: FixedColumnWidth(34),
-      12: FixedColumnWidth(34),  13: FixedColumnWidth(36),
-      14: FixedColumnWidth(36),  15: FixedColumnWidth(38),
-      16: FixedColumnWidth(34),
+      0: FixedColumnWidth(28),  1: FixedColumnWidth(90),  2: FixedColumnWidth(42),
+      3: FixedColumnWidth(30),  4: FixedColumnWidth(30),  5: FixedColumnWidth(34),
+      6: FixedColumnWidth(36),  7: FixedColumnWidth(34),  8: FixedColumnWidth(32),
+      9: FixedColumnWidth(34),  10: FixedColumnWidth(34), 11: FixedColumnWidth(34),
+      12: FixedColumnWidth(34), 13: FixedColumnWidth(36), 14: FixedColumnWidth(36),
+      15: FixedColumnWidth(38), 16: FixedColumnWidth(34),
     };
-
     return SingleChildScrollView(
       scrollDirection: Axis.horizontal,
       physics: const BouncingScrollPhysics(),
@@ -1728,64 +2494,46 @@ class _BoothManakTable extends StatelessWidget {
         constraints: const BoxConstraints(minWidth: 780),
         child: Table(
           columnWidths: colWidths,
-          border: TableBorder.all(
-              color: _kManakBorder.withOpacity(0.25), width: 0.5),
+          border: TableBorder.all(color: _kManakBorder.withOpacity(0.25), width: 0.5),
           children: [
-            // Group header
             TableRow(
-              decoration:
-                  BoxDecoration(color: color.withOpacity(0.10)),
+              decoration: BoxDecoration(color: color.withOpacity(0.10)),
               children: [
                 _th2(''), _th2('', left: true), _th2(''),
                 _th2('Scale', color: color, bold: true),
                 _th2(''), _th2(''), _th2(''), _th2(''),
-                _th2('मानक के अनुसार व्यवस्थापित पुलिस बल (कुल)',
-                    color: color, bold: true),
-                _th2(''), _th2(''), _th2(''),
-                _th2(''), _th2(''), _th2(''), _th2(''), _th2(''),
+                _th2('मानक के अनुसार व्यवस्थापित पुलिस बल (कुल)', color: color, bold: true),
+                _th2(''), _th2(''), _th2(''), _th2(''), _th2(''), _th2(''), _th2(''), _th2(''),
               ],
             ),
-            // Column headers
             TableRow(
-              decoration: BoxDecoration(
-                  color: _kManakSurf),
+              decoration: BoxDecoration(color: _kManakSurf),
               children: [
-                _th('क्र.\nस.'),
-                _th('मतदान\nकेन्द्र का प्रकार', left: true),
+                _th('क्र.\nस.'), _th('मतदान\nकेन्द्र का प्रकार', left: true),
                 _th('पोलिंग\nसेन्टर\nसंख्या'),
-                _th('SI'), _th('HC'),
-                _th('Const.'), _th('Aux.\nForce'),
-                _th('PAC\n(sec.)'),
-                _th('SI\nसश°'), _th('HC'),
-                _th('HC\nसश°'), _th('HC\nनिः°'),
+                _th('SI'), _th('HC'), _th('Const.'), _th('Aux.\nForce'), _th('PAC\n(sec.)'),
+                _th('SI\nसश°'), _th('HC'), _th('HC\nसश°'), _th('HC\nनिः°'),
                 _th('Const.'), _th('Const.\nसश°'), _th('Const.\nनिः°'),
                 _th('Aux.\nForce'), _th('PAC\n(sec.)'),
               ],
             ),
-            // Data rows
             ...dataRows.asMap().entries.map((e) {
               final row    = e.value;
               final isEven = e.key % 2 == 1;
-              final bg     = isEven
-                  ? _kManakBg.withOpacity(0.4) : Colors.white;
+              final bg     = isEven ? _kManakBg.withOpacity(0.4) : Colors.white;
               final hC     = row.centers > 0;
               return TableRow(
                 decoration: BoxDecoration(color: bg),
                 children: [
-                  _td('${row.boothNo < 15 ? row.boothNo : "15+"}',
-                      center: true),
+                  _td('${row.boothNo < 15 ? row.boothNo : "15+"}', center: true),
                   _td(row.label, left: true),
-                  _tdc(row.centers > 0 ? '${row.centers}' : '—',
-                      center: true,
-                      color: hC ? color : _kSubtle.withOpacity(0.4),
-                      bold: hC),
-                  // Scale
+                  _tdc(row.centers > 0 ? '${row.centers}' : '—', center: true,
+                      color: hC ? color : _kSubtle.withOpacity(0.4), bold: hC),
                   _td('${row.si_a+row.si_u}', center: true),
                   _td('${row.hc_a+row.hc_u}', center: true),
                   _td('${row.c_a+row.c_u}',   center: true),
-                  _td('${row.ax_a+row.ax_u}',  center: true),
-                  _td(fmtPac(row.p),            center: true),
-                  // Deployed
+                  _td('${row.ax_a+row.ax_u}', center: true),
+                  _td(fmtPac(row.p),           center: true),
                   _tdn(row.centers * row.si_a),
                   _tdn(row.centers * (row.hc_a+row.hc_u)),
                   _tdn(row.centers * row.hc_a),
@@ -1794,18 +2542,14 @@ class _BoothManakTable extends StatelessWidget {
                   _tdn(row.centers * row.c_a),
                   _tdn(row.centers * row.c_u),
                   _tdn(row.centers * (row.ax_a+row.ax_u)),
-                  _td(fmtPac(row.centers * row.p), center: true,
-                      bold: row.centers * row.p > 0),
+                  _td(fmtPac(row.centers * row.p), center: true, bold: row.centers * row.p > 0),
                 ],
               );
             }),
-            // Total row
             TableRow(
-              decoration:
-                  BoxDecoration(color: color.withOpacity(0.09)),
+              decoration: BoxDecoration(color: color.withOpacity(0.09)),
               children: [
-                _td('', center: true),
-                _td('योग', left: true, bold: true),
+                _td('', center: true), _td('योग', left: true, bold: true),
                 _tdc('$tCenters', center: true, color: color, bold: true),
                 _td('${mSI_A+mSI_U}', center: true, bold: true),
                 _td('${mHC_A+mHC_U}', center: true, bold: true),
@@ -1834,43 +2578,37 @@ class _BoothManakTable extends StatelessWidget {
     child: Container(
       padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
       child: Text(t, textAlign: left ? TextAlign.left : TextAlign.center,
-          style: const TextStyle(fontSize: 9.5,
-              fontWeight: FontWeight.w700, color: _kManakDark, height: 1.2)),
+          style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700,
+              color: _kManakDark, height: 1.2)),
     ),
   );
 
-  Widget _th2(String t,
-      {Color? color, bool bold = false, bool left = false}) =>
-      TableCell(
-        verticalAlignment: TableCellVerticalAlignment.middle,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
-          child: Text(t,
-              textAlign: left ? TextAlign.left : TextAlign.center,
-              maxLines: 2, overflow: TextOverflow.ellipsis,
-              style: TextStyle(fontSize: 8,
-                  fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
-                  color: color ?? _kManakDark, height: 1.2)),
-        ),
-      );
+  Widget _th2(String t, {Color? color, bool bold = false, bool left = false}) => TableCell(
+    verticalAlignment: TableCellVerticalAlignment.middle,
+    child: Container(
+      padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+      child: Text(t, textAlign: left ? TextAlign.left : TextAlign.center,
+          maxLines: 2, overflow: TextOverflow.ellipsis,
+          style: TextStyle(fontSize: 8,
+              fontWeight: bold ? FontWeight.w800 : FontWeight.w600,
+              color: color ?? _kManakDark, height: 1.2)),
+    ),
+  );
 
-  Widget _td(String t,
-      {bool center = false, bool bold = false, bool left = false}) =>
+  Widget _td(String t, {bool center = false, bool bold = false, bool left = false}) =>
       TableCell(
         verticalAlignment: TableCellVerticalAlignment.middle,
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
           child: Text(t,
-              textAlign: center ? TextAlign.center
-                  : (left ? TextAlign.left : TextAlign.center),
+              textAlign: center ? TextAlign.center : (left ? TextAlign.left : TextAlign.center),
               style: TextStyle(fontSize: 11, height: 1.2,
                   fontWeight: bold ? FontWeight.w700 : FontWeight.w400,
                   color: _kManakDark)),
         ),
       );
 
-  Widget _tdc(String t,
-      {bool center = false, Color? color, bool bold = false}) =>
+  Widget _tdc(String t, {bool center = false, Color? color, bool bold = false}) =>
       TableCell(
         verticalAlignment: TableCellVerticalAlignment.middle,
         child: Container(
@@ -1899,33 +2637,27 @@ class _BRow {
   final int boothNo, centers, si_a, si_u, hc_a, hc_u, c_a, c_u, ax_a, ax_u;
   final double p;
   final String label;
-  const _BRow({
-    required this.boothNo, required this.label, required this.centers,
-    required this.si_a, required this.si_u,
-    required this.hc_a, required this.hc_u,
-    required this.c_a,  required this.c_u,
-    required this.ax_a, required this.ax_u,
-    required this.p,
+  const _BRow({required this.boothNo, required this.label, required this.centers,
+    required this.si_a, required this.si_u, required this.hc_a, required this.hc_u,
+    required this.c_a, required this.c_u, required this.ax_a, required this.ax_u, required this.p,
   });
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 3 — जनपदीय मानक (mirrors manak_district_page.dart Manak tab)
+//  TAB 3 — जनपदीय मानक
 // ══════════════════════════════════════════════════════════════════════════════
 class _DistrictManakReportTab extends StatefulWidget {
   final _ElectionContext ctx;
   const _DistrictManakReportTab({required this.ctx});
   @override
-  State<_DistrictManakReportTab> createState() =>
-      _DistrictManakReportTabState();
+  State<_DistrictManakReportTab> createState() => _DistrictManakReportTabState();
 }
 
 class _DistrictManakReportTabState extends State<_DistrictManakReportTab>
     with AutomaticKeepAliveClientMixin {
   @override
   bool get wantKeepAlive => true;
-
-  List<Map<String, dynamic>> _rules   = [];
+  List<Map<String, dynamic>> _rules = [];
   bool   _loading = true;
   String? _error;
 
@@ -1936,8 +2668,7 @@ class _DistrictManakReportTabState extends State<_DistrictManakReportTab>
     setState(() { _loading = true; _error = null; });
     try {
       final token = await AuthService.getToken();
-      final ep    = widget.ctx.ep(
-          'district-rules-full', '/admin/district-rules');
+      final ep    = widget.ctx.ep('district-rules-full', '/admin/district-rules');
       final res   = await ApiService.get(ep, token: token);
       final d     = res['data'];
       setState(() {
@@ -1958,49 +2689,32 @@ class _DistrictManakReportTabState extends State<_DistrictManakReportTab>
     int t = 0;
     for (final k in ['siArmedCount','siUnarmedCount','hcArmedCount',
         'hcUnarmedCount','constArmedCount','constUnarmedCount',
-        'auxArmedCount','auxUnarmedCount'])
-      t += _toInt(r[k]);
+        'auxArmedCount','auxUnarmedCount']) t += _toInt(r[k]);
     return t;
   }
 
   Future<void> _print() async {
-    if (_rules.isEmpty) {
-      _snack(context, 'कोई डेटा नहीं', error: true);
-      return;
-    }
+    if (_rules.isEmpty) { _snack(context, 'कोई डेटा नहीं', error: true); return; }
     try {
       final font = await PdfGoogleFonts.notoSansDevanagariRegular();
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final doc  = pw.Document();
       final ctx  = widget.ctx;
-
       doc.addPage(pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(14),
         header: (_) => _pdfDocHeader(font, bold,
             '${ctx.electionName} — जनपदीय मानक रिपोर्ट',
-            'जनपद: ${ctx.district}  •  चरण: ${ctx.phase}'
-            '  •  तिथि: ${ctx.electionDate}'),
+            'जनपद: ${ctx.district}  •  चरण: ${ctx.phase}  •  तिथि: ${ctx.electionDate}'),
         build: (_) {
-          final colW = const <int, pw.FlexColumnWidth>{
-            0: pw.FlexColumnWidth(0.4),
-            1: pw.FlexColumnWidth(1.4),
-            2: pw.FlexColumnWidth(1.4),
-            3: pw.FlexColumnWidth(0.5),
-            4: pw.FlexColumnWidth(0.5), 5: pw.FlexColumnWidth(0.5),
-            6: pw.FlexColumnWidth(0.5), 7: pw.FlexColumnWidth(0.5),
-            8: pw.FlexColumnWidth(0.5), 9: pw.FlexColumnWidth(0.5),
-            10: pw.FlexColumnWidth(0.5), 11: pw.FlexColumnWidth(0.4),
-            12: pw.FlexColumnWidth(0.5),
-          };
           final rows = <pw.TableRow>[
             pw.TableRow(children: [
-              _pdfTh('क्र.',            bold), _pdfTh('ड्यूटी प्रकार', bold),
-              _pdfTh('लेबल', bold),           _pdfTh('संख्या', bold),
-              _pdfTh('SI\nस.',         bold), _pdfTh('SI\nनि.',  bold),
-              _pdfTh('HC\nस.',         bold), _pdfTh('HC\nनि.',  bold),
-              _pdfTh('Con\nस.',        bold), _pdfTh('Con\nनि.', bold),
-              _pdfTh('Aux\nस.',        bold), _pdfTh('Aux\nनि.', bold),
+              _pdfTh('क्र.',  bold), _pdfTh('ड्यूटी प्रकार', bold),
+              _pdfTh('लेबल', bold), _pdfTh('संख्या', bold),
+              _pdfTh('SI\nस.', bold), _pdfTh('SI\nनि.', bold),
+              _pdfTh('HC\nस.', bold), _pdfTh('HC\nनि.', bold),
+              _pdfTh('Con\nस.', bold), _pdfTh('Con\nनि.', bold),
+              _pdfTh('Aux\nस.', bold), _pdfTh('Aux\nनि.', bold),
               _pdfTh('कुल', bold),
             ]),
           ];
@@ -2020,20 +2734,26 @@ class _DistrictManakReportTabState extends State<_DistrictManakReportTab>
                 _pdfTd('${_n(r,'hcArmedCount')}',    font, center: true),
                 _pdfTd('${_n(r,'hcUnarmedCount')}',  font, center: true),
                 _pdfTd('${_n(r,'constArmedCount')}', font, center: true),
-                _pdfTd('${_n(r,'constUnarmedCount')}',font,center:true),
+                _pdfTd('${_n(r,'constUnarmedCount')}', font, center: true),
                 _pdfTd('${_n(r,'auxArmedCount')}',   font, center: true),
                 _pdfTd('${_n(r,'auxUnarmedCount')}', font, center: true),
                 _pdfTd('${_total(r)}',               font, center: true),
               ],
             ));
           }
-          return [
-            pw.Table(
-              border: pw.TableBorder.all(width: 0.5),
-              columnWidths: colW,
-              children: rows,
-            )
-          ];
+          return [pw.Table(
+            border: pw.TableBorder.all(width: 0.5),
+            columnWidths: const {
+              0: pw.FlexColumnWidth(0.4), 1: pw.FlexColumnWidth(1.4),
+              2: pw.FlexColumnWidth(1.4), 3: pw.FlexColumnWidth(0.5),
+              4: pw.FlexColumnWidth(0.5), 5: pw.FlexColumnWidth(0.5),
+              6: pw.FlexColumnWidth(0.5), 7: pw.FlexColumnWidth(0.5),
+              8: pw.FlexColumnWidth(0.5), 9: pw.FlexColumnWidth(0.5),
+              10: pw.FlexColumnWidth(0.5), 11: pw.FlexColumnWidth(0.5),
+              12: pw.FlexColumnWidth(0.5),
+            },
+            children: rows,
+          )];
         },
       ));
       await Printing.layoutPdf(onLayout: (_) async => doc.save());
@@ -2045,17 +2765,12 @@ class _DistrictManakReportTabState extends State<_DistrictManakReportTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (_loading)
-      return const Center(
-          child: CircularProgressIndicator(color: _kDistrictColor));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
+    if (_loading) return const Center(child: CircularProgressIndicator(color: _kDistrictColor));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
     if (_rules.isEmpty)
-      return const _EmptyHint(
-          icon: Icons.rule_outlined,
+      return const _EmptyHint(icon: Icons.rule_outlined,
           title: 'कोई जनपदीय मानक नहीं',
           subtitle: 'इस चुनाव के लिए मानक उपलब्ध नहीं');
-
     return Column(children: [
       _PrintToolbar(title: 'जनपदीय मानक रिपोर्ट',
           subtitle: '${_rules.length} ड्यूटी प्रकार',
@@ -2068,27 +2783,21 @@ class _DistrictManakReportTabState extends State<_DistrictManakReportTab>
   }
 }
 
-// ── District Manak Table ──────────────────────────────────────────────────────
 class _DistrictManakTable extends StatelessWidget {
   final List<Map<String, dynamic>> rules;
   const _DistrictManakTable({required this.rules});
 
-  static const _ws = <double>[
-    36, 110, 140, 55, 50, 50, 50, 50, 55, 55, 50, 50, 52
-  ];
-  static const _hs = [
-    '#', 'ड्यूटी', 'लेबल', 'संख्या',
+  static const _ws = <double>[36, 110, 140, 55, 50, 50, 50, 50, 55, 55, 50, 50, 52];
+  static const _hs = ['#', 'ड्यूटी', 'लेबल', 'संख्या',
     'SI स.', 'SI नि.', 'HC स.', 'HC नि.',
-    'Con स.', 'Con नि.', 'Aux स.', 'Aux नि.', 'कुल'
-  ];
+    'Con स.', 'Con नि.', 'Aux स.', 'Aux नि.', 'कुल'];
 
   int _n(Map<String, dynamic> r, String k) => _toInt(r[k]);
   int _total(Map<String, dynamic> r) {
     int t = 0;
     for (final k in ['siArmedCount','siUnarmedCount','hcArmedCount',
         'hcUnarmedCount','constArmedCount','constUnarmedCount',
-        'auxArmedCount','auxUnarmedCount'])
-      t += _toInt(r[k]);
+        'auxArmedCount','auxUnarmedCount']) t += _toInt(r[k]);
     return t;
   }
 
@@ -2101,32 +2810,24 @@ class _DistrictManakTable extends StatelessWidget {
         constraints: BoxConstraints(minWidth: total),
         child: Column(children: [
           Container(
-            decoration: BoxDecoration(
-                color: const Color(0xFFEDE3F8),
+            decoration: BoxDecoration(color: const Color(0xFFEDE3F8),
                 border: Border.all(color: _kBorder, width: 0.7)),
-            child: Row(children: List.generate(_hs.length, (i) =>
-                Container(
-                  width: _ws[i],
-                  padding: const EdgeInsets.all(6),
-                  decoration: BoxDecoration(border: Border(
-                      right: i < _hs.length - 1
-                          ? const BorderSide(color: _kBorder)
-                          : BorderSide.none)),
-                  child: Text(_hs[i], style: const TextStyle(
-                      color: _kDistrictColor, fontSize: 9.5,
-                      fontWeight: FontWeight.w800),
-                      textAlign: TextAlign.center),
-                ))),
+            child: Row(children: List.generate(_hs.length, (i) => Container(
+              width: _ws[i], padding: const EdgeInsets.all(6),
+              decoration: BoxDecoration(border: Border(
+                  right: i < _hs.length - 1
+                      ? const BorderSide(color: _kBorder) : BorderSide.none)),
+              child: Text(_hs[i], style: const TextStyle(color: _kDistrictColor,
+                  fontSize: 9.5, fontWeight: FontWeight.w800),
+                  textAlign: TextAlign.center),
+            ))),
           ),
           ...rules.asMap().entries.map((e) {
-            final i   = e.key;
-            final r   = e.value;
-            final bg  = i.isEven ? Colors.white
-                : const Color(0xFFFAF8F0);
+            final i   = e.key; final r = e.value;
+            final bg  = i.isEven ? Colors.white : const Color(0xFFFAF8F0);
             final tot = _total(r);
             return Container(
-              decoration: BoxDecoration(
-                  color: bg,
+              decoration: BoxDecoration(color: bg,
                   border: const Border(
                     left:   BorderSide(color: _kBorder, width: 0.7),
                     right:  BorderSide(color: _kBorder, width: 0.7),
@@ -2162,22 +2863,20 @@ class _DistrictManakTable extends StatelessWidget {
         width: w, padding: const EdgeInsets.all(6),
         decoration: const BoxDecoration(
             border: Border(right: BorderSide(color: _kBorder))),
-        child: Text(t, style: TextStyle(
-            fontSize: 11, color: color ?? _kDark,
+        child: Text(t, style: TextStyle(fontSize: 11, color: color ?? _kDark,
             fontWeight: bold ? FontWeight.w800 : FontWeight.normal),
             textAlign: center ? TextAlign.center : TextAlign.left),
       );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 4 — जनपदीय ड्यूटी (mirrors manak_district_page.dart Duty tab)
+//  TAB 4 — जनपदीय ड्यूटी (Full detailed PDF + pagination)
 // ══════════════════════════════════════════════════════════════════════════════
 class _DistrictDutyReportTab extends StatefulWidget {
   final _ElectionContext ctx;
   const _DistrictDutyReportTab({required this.ctx});
   @override
-  State<_DistrictDutyReportTab> createState() =>
-      _DistrictDutyReportTabState();
+  State<_DistrictDutyReportTab> createState() => _DistrictDutyReportTabState();
 }
 
 class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
@@ -2186,10 +2885,23 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
   bool get wantKeepAlive => true;
 
   List<Map<String, dynamic>> _summary = [];
+  List<Map<String, dynamic>> _rules   = [];
   final Map<String, List<Map<String, dynamic>>> _batchCache = {};
-  bool   _loading   = true;
+  bool   _loading       = true;
   String? _error;
   String? _expandedType;
+  int    _page          = 1;
+  static const _pageSize = 10;
+
+  int get _totalPages =>
+      ((_summary.length + _pageSize - 1) / _pageSize).ceil().clamp(1, 9999);
+
+  List<Map<String, dynamic>> get _pagedSummary {
+    final start = (_page - 1) * _pageSize;
+    final end   = (start + _pageSize).clamp(0, _summary.length);
+    if (start >= _summary.length) return [];
+    return _summary.sublist(start, end);
+  }
 
   @override
   void initState() { super.initState(); _load(); }
@@ -2199,22 +2911,31 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
     try {
       final token = await AuthService.getToken();
       final ctx   = widget.ctx;
-      final ep    = ctx.ep('district-duty-summary',
-          '/admin/district-duty/summary');
+      final ep    = ctx.ep('district-duty-summary', '/admin/district-duty/summary');
       final res   = await ApiService.get(ep, token: token);
       final d     = res['data'];
       List<Map<String, dynamic>> items = [];
       if (d is Map) {
         d.forEach((k, v) {
-          if (v is Map) {
-            items.add(Map<String, dynamic>.from(v)..['dutyType'] = k);
-          }
+          if (v is Map) items.add(Map<String, dynamic>.from(v)..['dutyType'] = k);
         });
       } else if (d is List) {
-        items = d.map((e) =>
-            Map<String, dynamic>.from(e as Map)).toList();
+        items = d.map((e) => Map<String, dynamic>.from(e as Map)).toList();
       }
-      setState(() { _summary = items; _loading = false; });
+      List<Map<String, dynamic>> rules = [];
+      try {
+        final rulesEp  = ctx.ep('district-rules-full', '/admin/district-rules');
+        final rulesRes = await ApiService.get(rulesEp, token: token);
+        final rd       = rulesRes['data'];
+        rules = (rd is List ? rd : [])
+            .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+      } catch (_) {}
+      setState(() {
+        _summary = items;
+        _rules   = rules;
+        _loading = false;
+        _page    = 1;
+      });
     } catch (e) {
       setState(() { _loading = false; _error = e.toString(); });
     }
@@ -2224,11 +2945,9 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
     if (_batchCache.containsKey(dutyType)) return;
     try {
       final token = await AuthService.getToken();
-      final ctx   = widget.ctx;
-      final ep    = ctx.ep(
+      final ep    = widget.ctx.ep(
           'district-duty/$dutyType/batches',
-          '/admin/district-duty/$dutyType/batches',
-      );
+          '/admin/district-duty/$dutyType/batches');
       final res   = await ApiService.get(ep, token: token);
       final d     = res['data'];
       final batches = (d is List ? d : [])
@@ -2239,82 +2958,408 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
     }
   }
 
-  Future<void> _print() async {
-    if (_summary.isEmpty) {
-      _snack(context, 'कोई डेटा नहीं', error: true);
-      return;
+  Future<Map<String, List<Map<String, dynamic>>>> _fetchAllBatches() async {
+    final result = <String, List<Map<String, dynamic>>>{};
+    final token  = await AuthService.getToken();
+    final ctx    = widget.ctx;
+    for (final s in _summary) {
+      final dutyType = '${s['dutyType'] ?? ''}';
+      if (dutyType.isEmpty) continue;
+      if (_batchCache.containsKey(dutyType)) {
+        result[dutyType] = _batchCache[dutyType] ?? [];
+        continue;
+      }
+      try {
+        final ep = ctx.ep('district-duty/$dutyType/batches',
+            '/admin/district-duty/$dutyType/batches');
+        final res    = await ApiService.get(ep, token: token);
+        final d      = res['data'];
+        final batches = (d is List ? d : [])
+            .map((e) => Map<String, dynamic>.from(e as Map)).toList();
+        _batchCache[dutyType] = batches;
+        result[dutyType]      = batches;
+      } catch (_) {
+        result[dutyType] = [];
+      }
     }
+    return result;
+  }
+
+  String _buildRuleStr(Map<String, dynamic> r) {
+    final parts = <String>[];
+    final siA = _toInt(r['siArmedCount']);
+    final siU = _toInt(r['siUnarmedCount']);
+    final hcA = _toInt(r['hcArmedCount']);
+    final hcU = _toInt(r['hcUnarmedCount']);
+    final cA  = _toInt(r['constArmedCount']);
+    final cU  = _toInt(r['constUnarmedCount']);
+    final aA  = _toInt(r['auxArmedCount']);
+    final aU  = _toInt(r['auxUnarmedCount']);
+    final pac = ((r['pacCount'] ?? r['pac_count'] ?? 0) as num).toInt();
+    if (siA > 0) parts.add('SI स. $siA');
+    if (siU > 0) parts.add('SI नि. $siU');
+    if (hcA > 0) parts.add('HC स. $hcA');
+    if (hcU > 0) parts.add('HC नि. $hcU');
+    if (cA  > 0) parts.add('Con स. $cA');
+    if (cU  > 0) parts.add('Con नि. $cU');
+    if (aA  > 0) parts.add('Aux स. $aA');
+    if (aU  > 0) parts.add('Aux नि. $aU');
+    if (pac > 0) parts.add('PAC $pac');
+    return parts.join('  |  ');
+  }
+
+  Future<void> _print() async {
+    if (_summary.isEmpty) { _snack(context, 'कोई डेटा नहीं', error: true); return; }
+    showDialog(
+      context: context, barrierDismissible: false,
+      builder: (_) => const Center(child: CircularProgressIndicator(color: _kDistrictColor)),
+    );
     try {
+      final allBatches = await _fetchAllBatches();
+      final ruleByType = <String, Map<String, dynamic>>{};
+      for (final r in _rules) {
+        final t = '${r['dutyType'] ?? ''}';
+        if (t.isNotEmpty) ruleByType[t] = r;
+      }
       final font = await PdfGoogleFonts.notoSansDevanagariRegular();
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final doc  = pw.Document();
       final ctx  = widget.ctx;
 
-      doc.addPage(pw.MultiPage(
-        pageFormat: PdfPageFormat.a4,
-        margin: const pw.EdgeInsets.all(14),
-        header: (_) => _pdfDocHeader(font, bold,
-            '${ctx.electionName} — जनपदीय ड्यूटी सारांश',
-            'जनपद: ${ctx.district}  •  चरण: ${ctx.phase}'
-            '  •  तिथि: ${ctx.electionDate}'),
-        build: (_) {
-          final rows = <pw.TableRow>[
-            pw.TableRow(children: [
-              _pdfTh('क्र.',           bold), _pdfTh('ड्यूटी प्रकार', bold),
-              _pdfTh('लेबल',           bold), _pdfTh('आवश्यक',  bold),
-              _pdfTh('Assigned', bold), _pdfTh('Batches', bold),
-              _pdfTh('Armed',    bold), _pdfTh('Unarmed', bold),
-              _pdfTh('स्थिति',   bold),
+      final tBase = pw.TextStyle(font: font, fontSize: 8);
+      final tBold = pw.TextStyle(font: bold, fontSize: 8, fontWeight: pw.FontWeight.bold);
+      final tSm   = pw.TextStyle(font: font, fontSize: 7);
+
+      pw.Widget thCell(String t, {double? w}) => pw.Container(
+        width: w,
+        padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+        decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF1A1A2E)),
+        child: pw.Text(t, style: pw.TextStyle(font: bold, fontSize: 7.5,
+            color: PdfColors.white, fontWeight: pw.FontWeight.bold),
+            textAlign: pw.TextAlign.center),
+      );
+      pw.Widget tdCell(String t, {double? w, bool left = false,
+          pw.TextStyle? style, PdfColor? bg}) => pw.Container(
+        width: w,
+        padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 4),
+        decoration: pw.BoxDecoration(color: bg),
+        child: pw.Text(t, style: style ?? tBase,
+            textAlign: left ? pw.TextAlign.left : pw.TextAlign.center, maxLines: 2),
+      );
+      pw.Widget secBar(String t) => pw.Container(
+        width: double.infinity,
+        padding: const pw.EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+        decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFF3A3A5C)),
+        child: pw.Text(t, style: pw.TextStyle(font: bold, fontSize: 9,
+            color: PdfColors.white, fontWeight: pw.FontWeight.bold)),
+      );
+      pw.Widget statBox(String label, String value) => pw.Container(
+        margin: const pw.EdgeInsets.only(right: 12),
+        padding: const pw.EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        decoration: pw.BoxDecoration(
+          border: pw.Border.all(color: PdfColors.grey500, width: 0.6),
+          borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
+          color: const PdfColor.fromInt(0xFFF8F8FF),
+        ),
+        child: pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.center, children: [
+          pw.Text(value, style: pw.TextStyle(font: bold, fontSize: 14, fontWeight: pw.FontWeight.bold)),
+          pw.Text(label, style: tSm),
+        ]),
+      );
+
+      final now     = DateTime.now();
+      final dateStr = '${now.day.toString().padLeft(2, '0')}/'
+          '${now.month.toString().padLeft(2, '0')}/${now.year}'
+          '  ${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+
+      pw.Widget docHeader(String title, {String? subtitle}) => pw.Column(
+        crossAxisAlignment: pw.CrossAxisAlignment.start,
+        children: [
+          pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+              pw.Text('जनपदीय कानून व्यवस्था — ड्यूटी विवरण',
+                  style: pw.TextStyle(font: bold, fontSize: 12, fontWeight: pw.FontWeight.bold)),
+              pw.Text(title, style: pw.TextStyle(font: bold, fontSize: 10,
+                  fontWeight: pw.FontWeight.bold, color: const PdfColor.fromInt(0xFF3A3A5C))),
+              pw.Text('चुनाव: ${ctx.electionName}  •  जनपद: ${ctx.district}', style: tSm),
+              if (subtitle != null) pw.Text(subtitle, style: tSm),
             ]),
-          ];
-          int srl = 0;
-          for (final s in _summary) {
-            srl++;
-            final asgn  = _toInt(s['totalAssigned']);
-            final req   = _toInt(s['sankhya']);
-            final batch = _toInt(s['batchCount']);
-            String status;
-            if (req == 0)        status = 'मानक नहीं';
-            else if (asgn >= req) status = 'पूर्ण';
-            else if (asgn == 0)  status = 'खाली';
-            else                 status = 'आंशिक';
-            rows.add(pw.TableRow(
-              decoration: srl % 2 == 0 ? const pw.BoxDecoration(
-                  color: PdfColor.fromInt(0xFFFAF5EB)) : null,
-              children: [
-                _pdfTd('$srl',                         font, center: true),
-                _pdfTd('${s['dutyType'] ?? ''}',       font),
-                _pdfTd('${s['dutyLabelHi'] ?? ''}',    font),
-                _pdfTd('${req > 0 ? req : '-'}',        font, center: true),
-                _pdfTd('$asgn',                        font, center: true),
-                _pdfTd('$batch',                       font, center: true),
-                _pdfTd('${_toInt(s['armedCount'])}',   font, center: true),
-                _pdfTd('${_toInt(s['unarmedCount'])}', font, center: true),
-                _pdfTd(status,                         font, center: true),
-              ],
-            ));
+            pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
+              pw.Text('दिनांक: $dateStr', style: tSm),
+              pw.Text('गोपनीय', style: tBold),
+            ]),
+          ]),
+          pw.SizedBox(height: 4),
+          pw.Container(height: 2, color: PdfColors.black),
+          pw.SizedBox(height: 1),
+          pw.Container(height: 0.5, color: PdfColors.grey600),
+          pw.SizedBox(height: 8),
+        ],
+      );
+
+      pw.Widget footer(pw.Context c) => pw.Container(
+        padding: const pw.EdgeInsets.only(top: 4),
+        decoration: const pw.BoxDecoration(
+            border: pw.Border(top: pw.BorderSide(color: PdfColors.grey400, width: 0.5))),
+        child: pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+          pw.Text('जनपदीय कानून व्यवस्था — गोपनीय', style: tSm),
+          pw.Text('पृष्ठ ${c.pageNumber} / ${c.pagesCount}', style: tSm),
+        ]),
+      );
+
+      final stripe1  = PdfColors.white;
+      final stripe2  = const PdfColor.fromInt(0xFFF6F3FF);
+      final footerBg = const PdfColor.fromInt(0xFFE8E0F5);
+      final batchBg  = const PdfColor.fromInt(0xFFEDE3F8);
+
+      int totSan = 0, totAsgn = 0, totBatch = 0;
+      for (final s in _summary) {
+        totSan   += _toInt(s['sankhya']);
+        totAsgn  += _toInt(s['totalAssigned']);
+        totBatch += _toInt(s['batchCount']);
+      }
+
+      // Page 1: Manak
+      if (_rules.isNotEmpty) {
+        final rows = <pw.TableRow>[
+          pw.TableRow(children: [
+            thCell('क्र.', w: 22), thCell('ड्यूटी प्रकार', w: 115),
+            thCell('संख्या', w: 36),
+            thCell('SI\nस.', w: 26), thCell('SI\nनि.', w: 26),
+            thCell('HC\nस.', w: 26), thCell('HC\nनि.', w: 26),
+            thCell('Con\nस.', w: 28), thCell('Con\nनि.', w: 28),
+            thCell('Aux\nस.', w: 26), thCell('Aux\nनि.', w: 26),
+            thCell('PAC', w: 26), thCell('कुल', w: 30),
+          ]),
+        ];
+        int srl = 0;
+        for (final r in _rules) {
+          srl++;
+          final san = _toInt(r['sankhya']);
+          final pac = ((r['pacCount'] ?? r['pac_count'] ?? 0) as num).toDouble();
+          final bg  = srl % 2 == 0 ? stripe2 : stripe1;
+          int tot   = 0;
+          for (final k in ['siArmedCount','siUnarmedCount','hcArmedCount',
+              'hcUnarmedCount','constArmedCount','constUnarmedCount',
+              'auxArmedCount','auxUnarmedCount']) tot += _toInt(r[k]);
+          rows.add(pw.TableRow(children: [
+            tdCell('$srl', w: 22, bg: bg),
+            tdCell('${r['dutyLabelHi'] ?? r['dutyType'] ?? ''}', w: 115, left: true, bg: bg),
+            tdCell(san > 0 ? '$san' : '-', w: 36, style: san > 0 ? tBold : tBase, bg: bg),
+            tdCell(_toInt(r['siArmedCount'])    > 0 ? '${_toInt(r['siArmedCount'])}' : '-',    w: 26, bg: bg),
+            tdCell(_toInt(r['siUnarmedCount'])  > 0 ? '${_toInt(r['siUnarmedCount'])}' : '-',  w: 26, bg: bg),
+            tdCell(_toInt(r['hcArmedCount'])    > 0 ? '${_toInt(r['hcArmedCount'])}' : '-',    w: 26, bg: bg),
+            tdCell(_toInt(r['hcUnarmedCount'])  > 0 ? '${_toInt(r['hcUnarmedCount'])}' : '-',  w: 26, bg: bg),
+            tdCell(_toInt(r['constArmedCount']) > 0 ? '${_toInt(r['constArmedCount'])}' : '-', w: 28, bg: bg),
+            tdCell(_toInt(r['constUnarmedCount']) > 0 ? '${_toInt(r['constUnarmedCount'])}' : '-', w: 28, bg: bg),
+            tdCell(_toInt(r['auxArmedCount'])   > 0 ? '${_toInt(r['auxArmedCount'])}' : '-',   w: 26, bg: bg),
+            tdCell(_toInt(r['auxUnarmedCount']) > 0 ? '${_toInt(r['auxUnarmedCount'])}' : '-', w: 26, bg: bg),
+            tdCell(pac == 0 ? '-' : '${pac.toInt()}', w: 26, bg: bg),
+            tdCell('$tot', w: 30, style: tBold, bg: bg),
+          ]));
+        }
+        doc.addPage(pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.fromLTRB(18, 18, 18, 24),
+          footer: footer,
+          build: (_) => [
+            docHeader('मानक विवरण — पृष्ठ १',
+                subtitle: 'चरण: ${ctx.phase}  •  तिथि: ${ctx.electionDate}'),
+            pw.Row(children: [
+              statBox('कुल ड्यूटी', '${_rules.length}'),
+              statBox('संख्या योग', '$totSan'),
+            ]),
+            pw.SizedBox(height: 10),
+            secBar('ड्यूटी प्रकारवार पुलिस बल मानक'),
+            pw.SizedBox(height: 4),
+            pw.Table(border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.4),
+                children: rows),
+          ],
+        ));
+      }
+
+      // Page 2: Assignment summary
+      {
+        final rows = <pw.TableRow>[
+          pw.TableRow(children: [
+            thCell('क्र.', w: 22), thCell('ड्यूटी प्रकार', w: 135),
+            thCell('आवश्यक', w: 50), thCell('Assigned', w: 55),
+            thCell('Batches', w: 50), thCell('शेष', w: 44),
+            thCell('स्थिति', w: 60),
+          ]),
+        ];
+        int srl = 0;
+        for (final s in _summary) {
+          srl++;
+          final asgn  = _toInt(s['totalAssigned']);
+          final batch = _toInt(s['batchCount']);
+          final req   = _toInt(s['sankhya']);
+          final rem   = (req - asgn).clamp(0, 999999);
+          final bg    = srl % 2 == 0 ? stripe2 : stripe1;
+          String status;
+          if (req == 0)         status = 'मानक नहीं';
+          else if (asgn > req)  status = 'अधिक';
+          else if (asgn >= req) status = 'पूर्ण ✓';
+          else if (asgn == 0)   status = 'खाली';
+          else                  status = 'आंशिक';
+          rows.add(pw.TableRow(children: [
+            tdCell('$srl', w: 22, bg: bg),
+            tdCell('${s['dutyLabelHi'] ?? s['dutyType'] ?? ''}', w: 135, left: true, bg: bg),
+            tdCell(req > 0 ? '$req' : '-', w: 50, bg: bg),
+            tdCell('$asgn', w: 55, style: asgn > 0 ? tBold : tBase, bg: bg),
+            tdCell('$batch', w: 50, bg: bg),
+            tdCell(req > 0 ? '$rem' : '-', w: 44, bg: bg),
+            tdCell(status, w: 60, bg: bg),
+          ]));
+        }
+        rows.add(pw.TableRow(children: [
+          tdCell('', w: 22, bg: footerBg, style: tBold),
+          tdCell('योग', w: 135, bg: footerBg, left: true, style: tBold),
+          tdCell('$totSan', w: 50, bg: footerBg, style: tBold),
+          tdCell('$totAsgn', w: 55, bg: footerBg, style: tBold),
+          tdCell('$totBatch', w: 50, bg: footerBg, style: tBold),
+          tdCell('${(totSan - totAsgn).clamp(0, 999999)}', w: 44, bg: footerBg, style: tBold),
+          tdCell('', w: 60, bg: footerBg, style: tBold),
+        ]));
+        doc.addPage(pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.fromLTRB(18, 18, 18, 24),
+          footer: footer,
+          build: (_) => [
+            docHeader('असाइनमेंट सारांश — पृष्ठ २'),
+            pw.Row(children: [
+              statBox('आवश्यक', '$totSan'),
+              statBox('Assigned', '$totAsgn'),
+              statBox('Batches', '$totBatch'),
+              statBox('शेष', '${(totSan - totAsgn).clamp(0, 999999)}'),
+            ]),
+            pw.SizedBox(height: 10),
+            secBar('ड्यूटी असाइनमेंट स्थिति'),
+            pw.SizedBox(height: 4),
+            pw.Table(border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.4),
+                children: rows),
+          ],
+        ));
+      }
+
+      // Pages 3+: Per-duty batch detail
+      for (final s in _summary) {
+        final dutyType  = '${s['dutyType'] ?? ''}';
+        final dutyLabel = '${s['dutyLabelHi'] ?? dutyType}';
+        final batches   = allBatches[dutyType] ?? [];
+        if (batches.isEmpty) continue;
+        final total   = batches.fold<int>(0, (acc, b) => acc + _toInt(b['staffCount']));
+        final sankhya = _toInt(s['sankhya']);
+        final rule    = ruleByType[dutyType];
+        final rStr    = rule != null ? _buildRuleStr(rule) : '';
+
+        final staffRows = <pw.TableRow>[
+          pw.TableRow(children: [
+            thCell('क्र.', w: 24), thCell('नाम', w: 100),
+            thCell('PNO', w: 56), thCell('पद', w: 64),
+            thCell('थाना', w: 72), thCell('मोबाइल', w: 70),
+            thCell('Armed', w: 36), thCell('बस', w: 36),
+          ]),
+        ];
+        int globalSrl = 0;
+        for (int bi = 0; bi < batches.length; bi++) {
+          final b     = batches[bi];
+          final bNo   = _toInt(b['batchNo']);
+          final staff = (b['staff'] as List?)?.cast<Map<String, dynamic>>() ?? [];
+          final busNo = b['busNo'] as String? ?? '';
+          final note  = b['note'] as String? ?? '';
+          staffRows.add(pw.TableRow(
+            decoration: pw.BoxDecoration(color: batchBg),
+            children: [
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFEDE3F8)),
+                child: pw.Text('B$bNo', style: pw.TextStyle(font: bold, fontSize: 8,
+                    fontWeight: pw.FontWeight.bold,
+                    color: const PdfColor.fromInt(0xFF6C3483)),
+                    textAlign: pw.TextAlign.center),
+              ),
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 5),
+                decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFEDE3F8)),
+                child: pw.Text(
+                    'Batch $bNo  •  ${staff.length} staff'
+                    '${busNo.isNotEmpty ? "  •  Bus: $busNo" : ""}'
+                    '${note.isNotEmpty ? "  •  $note" : ""}',
+                    style: pw.TextStyle(font: bold, fontSize: 7.5,
+                        fontWeight: pw.FontWeight.bold,
+                        color: const PdfColor.fromInt(0xFF4A2A6A))),
+              ),
+              for (int i = 0; i < 6; i++)
+                pw.Container(
+                  padding: const pw.EdgeInsets.symmetric(horizontal: 3, vertical: 5),
+                  decoration: const pw.BoxDecoration(color: PdfColor.fromInt(0xFFEDE3F8)),
+                  child: pw.Text(''),
+                ),
+            ],
+          ));
+          for (final st in staff) {
+            globalSrl++;
+            final isArmed = (st['isArmed'] as bool?) == true;
+            final bg = globalSrl % 2 == 0 ? stripe2 : stripe1;
+            staffRows.add(pw.TableRow(children: [
+              tdCell('$globalSrl', w: 24, bg: bg),
+              tdCell(st['name'] as String? ?? '-', w: 100, left: true, bg: bg),
+              tdCell(st['pno']  as String? ?? '-', w: 56, bg: bg),
+              tdCell(st['rank'] as String? ?? '-', w: 64, bg: bg),
+              tdCell(st['thana'] as String? ?? '-', w: 72, left: true, bg: bg),
+              tdCell(st['mobile'] as String? ?? '-', w: 70, bg: bg),
+              tdCell(isArmed ? 'हाँ' : 'नहीं', w: 36, bg: bg),
+              tdCell(busNo.isEmpty ? '-' : busNo, w: 36, bg: bg),
+            ]));
           }
-          return [
-            pw.Table(
-              border: pw.TableBorder.all(width: 0.5),
-              columnWidths: const {
-                0: pw.FlexColumnWidth(0.4),
-                1: pw.FlexColumnWidth(1.2),
-                2: pw.FlexColumnWidth(1.4),
-                3: pw.FlexColumnWidth(0.6),
-                4: pw.FlexColumnWidth(0.7),
-                5: pw.FlexColumnWidth(0.6),
-                6: pw.FlexColumnWidth(0.6),
-                7: pw.FlexColumnWidth(0.6),
-                8: pw.FlexColumnWidth(0.7),
-              },
-              children: rows,
-            )
-          ];
-        },
-      ));
-      await Printing.layoutPdf(onLayout: (_) async => doc.save());
+        }
+        doc.addPage(pw.MultiPage(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.fromLTRB(18, 18, 18, 24),
+          footer: footer,
+          build: (_) => [
+            docHeader(dutyLabel,
+                subtitle: '${batches.length} Batches  •  $total Assigned  •  संख्या: $sankhya'),
+            pw.Row(children: [
+              statBox('संख्या', '$sankhya'),
+              statBox('Assigned', '$total'),
+              statBox('Batches', '${batches.length}'),
+              statBox('स्थिति', total >= sankhya && sankhya > 0 ? 'पूर्ण ✓' : 'आंशिक'),
+            ]),
+            if (rStr.isNotEmpty) ...[
+              pw.SizedBox(height: 6),
+              pw.Container(
+                padding: const pw.EdgeInsets.all(6),
+                decoration: pw.BoxDecoration(
+                  border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                  borderRadius: const pw.BorderRadius.all(pw.Radius.circular(3)),
+                  color: const PdfColor.fromInt(0xFFF8F8FF),
+                ),
+                child: pw.Text('पुलिस बल मानक: $rStr', style: tSm)),
+            ],
+            pw.SizedBox(height: 8),
+            secBar('$dutyLabel — Batch-wise Staff विवरण'),
+            pw.SizedBox(height: 4),
+            pw.Table(border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.4),
+                children: staffRows),
+          ],
+        ));
+      }
+
+      if (doc.document.pdfPageList.pages.isEmpty) {
+        doc.addPage(pw.Page(build: (_) => pw.Center(
+            child: pw.Text('कोई डेटा नहीं',
+                style: pw.TextStyle(font: bold, fontSize: 14)))));
+      }
+      if (mounted) Navigator.pop(context);
+      await Printing.layoutPdf(
+        onLayout: (_) async => doc.save(),
+        name: 'जनपदीय_ड्यूटी_विवरण',
+        format: PdfPageFormat.a4,
+      );
     } catch (e) {
+      if (mounted) Navigator.pop(context);
       _snack(context, 'PDF विफल: $e', error: true);
     }
   }
@@ -2322,14 +3367,10 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (_loading)
-      return const Center(
-          child: CircularProgressIndicator(color: _kDistrictColor));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
+    if (_loading) return const Center(child: CircularProgressIndicator(color: _kDistrictColor));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
     if (_summary.isEmpty)
-      return const _EmptyHint(
-          icon: Icons.people_outline,
+      return const _EmptyHint(icon: Icons.people_outline,
           title: 'कोई जनपदीय ड्यूटी नहीं',
           subtitle: 'इस चुनाव के लिए ड्यूटी उपलब्ध नहीं');
 
@@ -2337,11 +3378,13 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
       _PrintToolbar(title: 'जनपदीय ड्यूटी रिपोर्ट',
           subtitle: '${_summary.length} ड्यूटी प्रकार',
           color: _kDistrictColor, onPrint: _print),
+      _PagBar(page: _page, total: _summary.length, totalPages: _totalPages,
+          color: _kDistrictColor, onPage: (p) => setState(() => _page = p), top: true),
       Expanded(child: ListView.builder(
         padding: const EdgeInsets.fromLTRB(10, 10, 10, 20),
-        itemCount: _summary.length,
+        itemCount: _pagedSummary.length,
         itemBuilder: (_, i) {
-          final s          = _summary[i];
+          final s          = _pagedSummary[i];
           final dutyType   = '${s['dutyType'] ?? ''}';
           final label      = '${s['dutyLabelHi'] ?? s['label'] ?? dutyType}';
           final asgn       = _toInt(s['totalAssigned']);
@@ -2349,29 +3392,22 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
           final batch      = _toInt(s['batchCount']);
           final isExpanded = _expandedType == dutyType;
           final isDone     = req > 0 && asgn >= req;
-          final pct        = req > 0
-              ? (asgn / req).clamp(0.0, 1.0) : 0.0;
-          final barColor   = isDone ? _kGreen
-              : (pct > 0.5 ? _kOrange : _kDistrictColor);
+          final pct        = req > 0 ? (asgn / req).clamp(0.0, 1.0) : 0.0;
+          final barColor   = isDone ? _kGreen : (pct > 0.5 ? _kOrange : _kDistrictColor);
           final batches    = _batchCache[dutyType];
 
           return Container(
             margin: const EdgeInsets.only(bottom: 10),
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
+              color: Colors.white, borderRadius: BorderRadius.circular(12),
               border: Border.all(color: _kBorder.withOpacity(0.5)),
-              boxShadow: [BoxShadow(
-                  color: _kDistrictColor.withOpacity(0.05),
+              boxShadow: [BoxShadow(color: _kDistrictColor.withOpacity(0.05),
                   blurRadius: 6, offset: const Offset(0, 2))],
             ),
             child: Column(children: [
               InkWell(
                 onTap: () {
-                  setState(() {
-                    _expandedType =
-                        isExpanded ? null : dutyType;
-                  });
+                  setState(() { _expandedType = isExpanded ? null : dutyType; });
                   if (!isExpanded) _loadBatches(dutyType);
                 },
                 borderRadius: BorderRadius.circular(12),
@@ -2388,43 +3424,29 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
                             color: _kDistrictColor, size: 18)),
                       const SizedBox(width: 10),
                       Expanded(child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
+                          crossAxisAlignment: CrossAxisAlignment.start, children: [
                         Text(label, style: const TextStyle(
-                            color: _kDark, fontSize: 13,
-                            fontWeight: FontWeight.w700),
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis),
+                            color: _kDark, fontSize: 13, fontWeight: FontWeight.w700),
+                            maxLines: 1, overflow: TextOverflow.ellipsis),
                         const SizedBox(height: 2),
                         Wrap(spacing: 8, runSpacing: 2, children: [
                           if (req > 0)
-                            Text('$asgn/$req',
-                                style: TextStyle(
-                                    color: barColor, fontSize: 11,
-                                    fontWeight: FontWeight.w800)),
+                            Text('$asgn/$req', style: TextStyle(
+                                color: barColor, fontSize: 11, fontWeight: FontWeight.w800)),
                           if (batch > 0)
                             Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 5, vertical: 1),
+                              padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
                               decoration: BoxDecoration(
-                                  color: _kDistrictColor
-                                      .withOpacity(0.1),
-                                  borderRadius:
-                                      BorderRadius.circular(5)),
-                              child: Text('$batch batches',
-                                  style: const TextStyle(
-                                      color: _kDistrictColor,
-                                      fontSize: 9,
-                                      fontWeight: FontWeight.w700))),
+                                  color: _kDistrictColor.withOpacity(0.1),
+                                  borderRadius: BorderRadius.circular(5)),
+                              child: Text('$batch batches', style: const TextStyle(
+                                  color: _kDistrictColor, fontSize: 9,
+                                  fontWeight: FontWeight.w700))),
                         ]),
                       ])),
-                      if (isDone)
-                        const Icon(Icons.check_circle_rounded,
-                            color: _kGreen, size: 18),
+                      if (isDone) const Icon(Icons.check_circle_rounded, color: _kGreen, size: 18),
                       const SizedBox(width: 4),
-                      Icon(isExpanded
-                          ? Icons.keyboard_arrow_up
-                          : Icons.keyboard_arrow_down,
+                      Icon(isExpanded ? Icons.keyboard_arrow_up : Icons.keyboard_arrow_down,
                           color: _kDistrictColor, size: 20),
                     ]),
                     if (req > 0) ...[
@@ -2432,29 +3454,23 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
                       ClipRRect(borderRadius: BorderRadius.circular(4),
                         child: LinearProgressIndicator(
                             value: pct,
-                            backgroundColor:
-                                barColor.withOpacity(0.12),
+                            backgroundColor: barColor.withOpacity(0.12),
                             valueColor: AlwaysStoppedAnimation(barColor),
                             minHeight: 5)),
                     ],
                   ]),
                 ),
               ),
-              // Expanded batches
               if (isExpanded) ...[
                 const Divider(height: 1, color: _kBorder),
                 if (batches == null)
-                  const Padding(
-                    padding: EdgeInsets.all(16),
-                    child: Center(child: CircularProgressIndicator(
-                        color: _kDistrictColor, strokeWidth: 2)),
-                  )
+                  const Padding(padding: EdgeInsets.all(16),
+                      child: Center(child: CircularProgressIndicator(
+                          color: _kDistrictColor, strokeWidth: 2)))
                 else if (batches.isEmpty)
-                  const Padding(
-                    padding: EdgeInsets.all(14),
-                    child: Text('कोई batch नहीं',
-                        style: TextStyle(color: _kSubtle, fontSize: 12)),
-                  )
+                  const Padding(padding: EdgeInsets.all(14),
+                      child: Text('कोई batch नहीं',
+                          style: TextStyle(color: _kSubtle, fontSize: 12)))
                 else
                   ListView.builder(
                     shrinkWrap: true,
@@ -2466,46 +3482,30 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
                       final bNo   = _toInt(b['batchNo']);
                       final sc    = _toInt(b['staffCount']);
                       final bus   = '${b['busNo'] ?? ''}';
-                      final staff = (b['staff'] as List? ?? [])
-                          .cast<Map<String, dynamic>>();
+                      final staff = (b['staff'] as List? ?? []).cast<Map<String, dynamic>>();
                       return Container(
                         margin: const EdgeInsets.only(bottom: 8),
                         padding: const EdgeInsets.all(10),
                         decoration: BoxDecoration(
                             color: const Color(0xFFF8F4FF),
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: _kDistrictColor
-                                    .withOpacity(0.2))),
-                        child: Column(
-                            crossAxisAlignment:
-                                CrossAxisAlignment.start,
-                            children: [
+                            border: Border.all(color: _kDistrictColor.withOpacity(0.2))),
+                        child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
                           Row(children: [
                             Container(
                               width: 28, height: 28,
-                              decoration: BoxDecoration(
-                                  color: _kDistrictColor,
-                                  shape: BoxShape.circle),
-                              child: Center(
-                                child: Text('$bNo',
-                                    style: const TextStyle(
-                                        color: Colors.white,
-                                        fontWeight: FontWeight.w900,
-                                        fontSize: 12)),
-                              ),
+                              decoration: BoxDecoration(color: _kDistrictColor, shape: BoxShape.circle),
+                              child: Center(child: Text('$bNo',
+                                  style: const TextStyle(color: Colors.white,
+                                      fontWeight: FontWeight.w900, fontSize: 12))),
                             ),
                             const SizedBox(width: 8),
                             Text('Batch $bNo  •  $sc staff',
-                                style: const TextStyle(
-                                    color: _kDistrictColor,
-                                    fontWeight: FontWeight.w700,
-                                    fontSize: 12)),
+                                style: const TextStyle(color: _kDistrictColor,
+                                    fontWeight: FontWeight.w700, fontSize: 12)),
                             if (bus.isNotEmpty) ...[
                               const SizedBox(width: 8),
-                              Text('Bus: $bus',
-                                  style: const TextStyle(
-                                      color: _kSubtle, fontSize: 10)),
+                              Text('Bus: $bus', style: const TextStyle(color: _kSubtle, fontSize: 10)),
                             ],
                           ]),
                           if (staff.isNotEmpty) ...[
@@ -2515,26 +3515,18 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
                                 final rank = '${m['rank'] ?? ''}';
                                 final rc   = _rankColor(rank);
                                 return Container(
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 7, vertical: 3),
+                                  padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 3),
                                   decoration: BoxDecoration(
                                       color: rc.withOpacity(0.1),
-                                      borderRadius:
-                                          BorderRadius.circular(6),
-                                      border: Border.all(
-                                          color: rc.withOpacity(0.3))),
-                                  child: Text(
-                                      '${m['name'] ?? ''}'
-                                      ' (${m['rank'] ?? ''})',
-                                      style: TextStyle(
-                                          color: rc, fontSize: 10,
-                                          fontWeight:
-                                              FontWeight.w600)),
+                                      borderRadius: BorderRadius.circular(6),
+                                      border: Border.all(color: rc.withOpacity(0.3))),
+                                  child: Text('${m['name'] ?? ''} (${m['rank'] ?? ''})',
+                                      style: TextStyle(color: rc, fontSize: 10,
+                                          fontWeight: FontWeight.w600)),
                                 );
                               }).followedBy(staff.length > 6
                                   ? [Text('+${staff.length-6} और',
-                                      style: const TextStyle(
-                                          color: _kSubtle, fontSize: 10))]
+                                      style: const TextStyle(color: _kSubtle, fontSize: 10))]
                                   : []).toList(),
                             ),
                           ],
@@ -2547,19 +3539,21 @@ class _DistrictDutyReportTabState extends State<_DistrictDutyReportTab>
           );
         },
       )),
+      if (_totalPages > 1)
+        _PagBar(page: _page, total: _summary.length, totalPages: _totalPages,
+            color: _kDistrictColor, onPage: (p) => setState(() => _page = p), top: false),
     ]);
   }
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 5 — बूथ ड्यूटी (paginated list with search)
+//  TAB 5 — बूथ ड्यूटी
 // ══════════════════════════════════════════════════════════════════════════════
 class _BoothDutyReportTab extends StatefulWidget {
   final _ElectionContext ctx;
   const _BoothDutyReportTab({required this.ctx});
   @override
-  State<_BoothDutyReportTab> createState() =>
-      _BoothDutyReportTabState();
+  State<_BoothDutyReportTab> createState() => _BoothDutyReportTabState();
 }
 
 class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
@@ -2567,8 +3561,8 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
   @override
   bool get wantKeepAlive => true;
 
-  List   _rows      = [];
-  bool   _loading   = false;
+  List   _rows       = [];
+  bool   _loading    = false;
   String? _error;
   int    _page       = 1;
   int    _total      = 0;
@@ -2576,7 +3570,7 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
   String _q          = '';
   String _typeFilter = '';
   Timer? _debounce;
-  final _searchCtrl = TextEditingController();
+  final _searchCtrl  = TextEditingController();
 
   @override
   void initState() {
@@ -2586,20 +3580,13 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
   }
 
   @override
-  void dispose() {
-    _debounce?.cancel();
-    _searchCtrl.dispose();
-    super.dispose();
-  }
+  void dispose() { _debounce?.cancel(); _searchCtrl.dispose(); super.dispose(); }
 
   void _onSearch() {
     _debounce?.cancel();
     _debounce = Timer(const Duration(milliseconds: 350), () {
       final q = _searchCtrl.text.trim();
-      if (q != _q) {
-        setState(() { _q = q; _page = 1; });
-        _load();
-      }
+      if (q != _q) { setState(() { _q = q; _page = 1; }); _load(); }
     });
   }
 
@@ -2608,36 +3595,26 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
     try {
       final token = await AuthService.getToken();
       final ctx   = widget.ctx;
-      var ep      = ctx.ep(
-          'booth-assignments',
-          '/admin/duties/list',
-      );
+      var ep      = ctx.ep('booth-assignments', '/admin/duties/list');
       ep += ep.contains('?') ? '&' : '?';
       ep += 'page=$_page&limit=$_kPageSize';
       if (ctx.district.isNotEmpty)
         ep += '&district=${Uri.encodeComponent(ctx.district)}';
-      if (!ctx.isActive)
-        ep += '&election_id=${ctx.electionId}';
-      if (_q.isNotEmpty)
-        ep += '&q=${Uri.encodeComponent(_q)}';
-      if (_typeFilter.isNotEmpty)
-        ep += '&centerType=${Uri.encodeComponent(_typeFilter)}';
-
+      if (!ctx.isActive) ep += '&election_id=${ctx.electionId}';
+      if (_q.isNotEmpty) ep += '&q=${Uri.encodeComponent(_q)}';
+      if (_typeFilter.isNotEmpty) ep += '&centerType=${Uri.encodeComponent(_typeFilter)}';
       final res     = await ApiService.get(ep, token: token);
       final wrapper = res['data'];
       List items;
       int total = 0, totalPages = 1;
       if (wrapper is Map) {
-        items      = wrapper['data'] as List? ??
-                     wrapper['items'] as List? ?? [];
+        items      = wrapper['data'] as List? ?? wrapper['items'] as List? ?? [];
         total      = _toInt(wrapper['total']);
         totalPages = _toInt(wrapper['totalPages']);
         if (totalPages == 0) totalPages = 1;
       } else if (wrapper is List) {
         items = wrapper; total = items.length;
-      } else {
-        items = [];
-      }
+      } else { items = []; }
       setState(() {
         _rows       = items;
         _total      = total;
@@ -2650,16 +3627,12 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
   }
 
   Future<void> _print() async {
-    if (_rows.isEmpty) {
-      _snack(context, 'कोई डेटा नहीं', error: true);
-      return;
-    }
+    if (_rows.isEmpty) { _snack(context, 'कोई डेटा नहीं', error: true); return; }
     try {
       final font = await PdfGoogleFonts.notoSansDevanagariRegular();
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final doc  = pw.Document();
       final ctx  = widget.ctx;
-
       doc.addPage(pw.MultiPage(
         pageFormat: PdfPageFormat.a4.landscape,
         margin: const pw.EdgeInsets.all(14),
@@ -2670,16 +3643,10 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
         build: (_) {
           final rows = <pw.TableRow>[
             pw.TableRow(children: [
-              _pdfTh('क्र.',          bold),
-              _pdfTh('नाम',           bold),
-              _pdfTh('PNO',           bold),
-              _pdfTh('पद',            bold),
-              _pdfTh('थाना',          bold),
-              _pdfTh('जिला',          bold),
-              _pdfTh('मतदेय स्थल',    bold),
-              _pdfTh('केंद्र प्रकार', bold),
-              _pdfTh('बस नं.',         bold),
-              _pdfTh('तिथि',          bold),
+              _pdfTh('क्र.', bold), _pdfTh('नाम', bold), _pdfTh('PNO', bold),
+              _pdfTh('पद', bold), _pdfTh('थाना', bold), _pdfTh('जिला', bold),
+              _pdfTh('मतदेय स्थल', bold), _pdfTh('केंद्र प्रकार', bold),
+              _pdfTh('बस नं.', bold), _pdfTh('तिथि', bold),
             ]),
           ];
           int srl = 0;
@@ -2689,7 +3656,7 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
               decoration: srl % 2 == 0 ? const pw.BoxDecoration(
                   color: PdfColor.fromInt(0xFFFDF4FF)) : null,
               children: [
-                _pdfTd('$srl',                                   font, center: true),
+                _pdfTd('$srl',                                       font, center: true),
                 _pdfTd('${r['staffName'] ?? r['staff_name'] ?? ''}', font),
                 _pdfTd('${r['staffPno']  ?? r['staff_pno']  ?? ''}', font),
                 _pdfTd('${r['staffRank'] ?? r['staff_rank'] ?? ''}', font),
@@ -2697,7 +3664,7 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
                 _pdfTd('${r['staffDistrict'] ?? r['staff_district'] ?? ''}', font),
                 _pdfTd('${r['centerName'] ?? r['center_name'] ?? ''}', font),
                 _pdfTd('${r['centerType'] ?? r['center_type'] ?? ''}', font, center: true),
-                _pdfTd('${r['busNo'] ?? r['bus_no'] ?? ''}',     font, center: true),
+                _pdfTd('${r['busNo'] ?? r['bus_no'] ?? ''}', font, center: true),
                 _pdfTd('${r['electionDate'] ?? r['election_date'] ?? ''}', font),
               ],
             ));
@@ -2705,16 +3672,11 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
           return [pw.Table(
             border: pw.TableBorder.all(width: 0.5),
             columnWidths: const {
-              0: pw.FixedColumnWidth(22),
-              1: pw.FlexColumnWidth(1.8),
-              2: pw.FixedColumnWidth(56),
-              3: pw.FlexColumnWidth(0.9),
-              4: pw.FlexColumnWidth(1.0),
-              5: pw.FlexColumnWidth(0.9),
-              6: pw.FlexColumnWidth(2.0),
-              7: pw.FixedColumnWidth(52),
-              8: pw.FixedColumnWidth(44),
-              9: pw.FixedColumnWidth(64),
+              0: pw.FixedColumnWidth(22), 1: pw.FlexColumnWidth(1.8),
+              2: pw.FixedColumnWidth(56), 3: pw.FlexColumnWidth(0.9),
+              4: pw.FlexColumnWidth(1.0), 5: pw.FlexColumnWidth(0.9),
+              6: pw.FlexColumnWidth(2.0), 7: pw.FixedColumnWidth(52),
+              8: pw.FixedColumnWidth(44), 9: pw.FixedColumnWidth(64),
             },
             children: rows,
           )];
@@ -2736,9 +3698,7 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    final r = _rOf(context);
     return Column(children: [
-      // Toolbar
       Container(
         color: Colors.white,
         padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
@@ -2750,28 +3710,22 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
               hintStyle: const TextStyle(color: _kSubtle, fontSize: 12),
               prefixIcon: const Icon(Icons.search, size: 16, color: _kSubtle),
               isDense: true, fillColor: _kBg, filled: true,
-              border: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
                   borderSide: const BorderSide(color: _kBorder)),
-              enabledBorder: OutlineInputBorder(
-                  borderRadius: BorderRadius.circular(8),
+              enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(8),
                   borderSide: const BorderSide(color: _kBorder)),
-              contentPadding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               suffixIcon: _q.isNotEmpty
                   ? IconButton(
-                      icon: const Icon(Icons.clear,
-                          size: 15, color: _kSubtle),
+                      icon: const Icon(Icons.clear, size: 15, color: _kSubtle),
                       onPressed: () {
                         _searchCtrl.clear();
                         setState(() { _q = ''; _page = 1; });
                         _load();
-                      })
-                  : null,
+                      }) : null,
             ),
           )),
           const SizedBox(width: 6),
-          // Type filter
           DropdownButtonHideUnderline(
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 8),
@@ -2780,18 +3734,12 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
                   borderRadius: BorderRadius.circular(8)),
               child: DropdownButton<String>(
                 value: _typeFilter.isEmpty ? null : _typeFilter,
-                hint: const Text('सभी', style: TextStyle(
-                    color: _kSubtle, fontSize: 11)),
-                style: const TextStyle(
-                    color: _kDark, fontSize: 11),
-                items: ['A++','A','B','C']
-                    .map((t) => DropdownMenuItem(value: t,
-                        child: Text(t))).toList(),
+                hint: const Text('सभी', style: TextStyle(color: _kSubtle, fontSize: 11)),
+                style: const TextStyle(color: _kDark, fontSize: 11),
+                items: ['A++','A','B','C'].map((t) =>
+                    DropdownMenuItem(value: t, child: Text(t))).toList(),
                 onChanged: (v) {
-                  setState(() {
-                    _typeFilter = v ?? '';
-                    _page = 1;
-                  });
+                  setState(() { _typeFilter = v ?? ''; _page = 1; });
                   _load();
                 },
               ),
@@ -2801,24 +3749,17 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
           ElevatedButton.icon(
             style: ElevatedButton.styleFrom(
                 backgroundColor: _kPurple,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 10, vertical: 8),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8)),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+                shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
                 elevation: 0),
             onPressed: _print,
-            icon: const Icon(Icons.print_outlined,
-                color: Colors.white, size: 15),
+            icon: const Icon(Icons.print_outlined, color: Colors.white, size: 15),
             label: const Text('PDF', style: TextStyle(
-                color: Colors.white, fontSize: 11,
-                fontWeight: FontWeight.w700)),
+                color: Colors.white, fontSize: 11, fontWeight: FontWeight.w700)),
           ),
         ]),
       ),
-      if (_loading)
-        const LinearProgressIndicator(
-            color: _kPurple, minHeight: 2),
-      // Pagination top
+      if (_loading) const LinearProgressIndicator(color: _kPurple, minHeight: 2),
       _PagBar(page: _page, total: _total, totalPages: _totalPages,
           color: _kPurple, onPage: _changePage, top: true),
       Expanded(child: _buildList()),
@@ -2827,20 +3768,21 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
     ]);
   }
 
+  static const List<double> _ws = [36, 130, 80, 90, 90, 90, 150, 70, 60, 80];
+  static const List<String> _hs = [
+    '#', 'नाम', 'PNO', 'पद', 'थाना', 'जिला', 'मतदेय स्थल', 'केंद्र प्रकार', 'बस नं.', 'तिथि'
+  ];
+
   Widget _buildList() {
     if (_loading && _rows.isEmpty)
-      return const Center(
-          child: CircularProgressIndicator(color: _kPurple));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
+      return const Center(child: CircularProgressIndicator(color: _kPurple));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
     if (_rows.isEmpty)
-      return _EmptyHint(
-          icon: Icons.how_to_vote_outlined,
+      return _EmptyHint(icon: Icons.how_to_vote_outlined,
           title: 'कोई बूथ ड्यूटी नहीं',
           subtitle: _q.isNotEmpty
               ? '"$_q" के लिए कोई परिणाम नहीं'
               : 'इस चुनाव में बूथ ड्यूटी उपलब्ध नहीं');
-
     final total = _ws.fold(0.0, (a, b) => a + b);
     return SingleChildScrollView(
       padding: const EdgeInsets.all(10),
@@ -2849,58 +3791,42 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
         child: ConstrainedBox(
           constraints: BoxConstraints(minWidth: total),
           child: Column(children: [
-            // Header
             Container(
-              decoration: BoxDecoration(
-                  color: const Color(0xFFEDE7F6),
+              decoration: BoxDecoration(color: const Color(0xFFEDE7F6),
                   border: Border.all(color: _kBorder, width: 0.7)),
-              child: Row(children: List.generate(_hs.length, (i) =>
-                  Container(
-                    width: _ws[i],
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(border: Border(
-                        right: i < _hs.length - 1
-                            ? const BorderSide(color: _kBorder)
-                            : BorderSide.none)),
-                    child: Text(_hs[i], style: const TextStyle(
-                        color: _kPurple, fontSize: 9.5,
-                        fontWeight: FontWeight.w800),
-                        textAlign: TextAlign.center),
-                  ))),
+              child: Row(children: List.generate(_hs.length, (i) => Container(
+                width: _ws[i], padding: const EdgeInsets.all(6),
+                decoration: BoxDecoration(border: Border(
+                    right: i < _hs.length - 1
+                        ? const BorderSide(color: _kBorder) : BorderSide.none)),
+                child: Text(_hs[i], style: const TextStyle(
+                    color: _kPurple, fontSize: 9.5, fontWeight: FontWeight.w800),
+                    textAlign: TextAlign.center),
+              ))),
             ),
-            // Rows
             ..._rows.asMap().entries.map((e) {
-              final i = e.key;
-              final r = e.value as Map;
-              final bg = i.isEven
-                  ? Colors.white : const Color(0xFFFDF4FF);
+              final i  = e.key;
+              final r  = e.value as Map;
+              final bg = i.isEven ? Colors.white : const Color(0xFFFDF4FF);
               return Container(
-                decoration: BoxDecoration(
-                    color: bg,
+                decoration: BoxDecoration(color: bg,
                     border: const Border(
                       left:   BorderSide(color: _kBorder, width: 0.7),
                       right:  BorderSide(color: _kBorder, width: 0.7),
                       bottom: BorderSide(color: _kBorder, width: 0.7),
                     )),
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _dc(_ws[0], '${(_page-1)*_kPageSize+i+1}',
-                        center: true),
-                    _dc(_ws[1], '${r['staffName'] ?? r['staff_name'] ?? ''}'),
-                    _dc(_ws[2], '${r['staffPno']  ?? r['staff_pno']  ?? ''}'),
-                    _dc(_ws[3], '${r['staffRank'] ?? r['staff_rank'] ?? ''}'),
-                    _dc(_ws[4], '${r['staffThana'] ?? r['staff_thana'] ?? ''}'),
-                    _dc(_ws[5], '${r['staffDistrict'] ?? r['staff_district'] ?? ''}'),
-                    _dc(_ws[6], '${r['centerName'] ?? r['center_name'] ?? ''}'),
-                    _dc(_ws[7], '${r['centerType'] ?? r['center_type'] ?? ''}',
-                        center: true),
-                    _dc(_ws[8], '${r['busNo'] ?? r['bus_no'] ?? ''}',
-                        center: true),
-                    _dc(_ws[9], '${r['electionDate'] ?? r['election_date'] ?? ''}',
-                        last: true),
-                  ],
-                ),
+                child: Row(crossAxisAlignment: CrossAxisAlignment.start, children: [
+                  _dc(_ws[0], '${(_page-1)*_kPageSize+i+1}', center: true),
+                  _dc(_ws[1], '${r['staffName'] ?? r['staff_name'] ?? ''}'),
+                  _dc(_ws[2], '${r['staffPno']  ?? r['staff_pno']  ?? ''}'),
+                  _dc(_ws[3], '${r['staffRank'] ?? r['staff_rank'] ?? ''}'),
+                  _dc(_ws[4], '${r['staffThana'] ?? r['staff_thana'] ?? ''}'),
+                  _dc(_ws[5], '${r['staffDistrict'] ?? r['staff_district'] ?? ''}'),
+                  _dc(_ws[6], '${r['centerName'] ?? r['center_name'] ?? ''}'),
+                  _dc(_ws[7], '${r['centerType'] ?? r['center_type'] ?? ''}', center: true),
+                  _dc(_ws[8], '${r['busNo'] ?? r['bus_no'] ?? ''}', center: true),
+                  _dc(_ws[9], '${r['electionDate'] ?? r['election_date'] ?? ''}', last: true),
+                ]),
               );
             }),
           ]),
@@ -2909,29 +3835,19 @@ class _BoothDutyReportTabState extends State<_BoothDutyReportTab>
     );
   }
 
-  static const List<double> _ws = [
-    36, 130, 80, 90, 90, 90, 150, 70, 60, 80
-  ];
-  static const List<String> _hs = [
-    '#', 'नाम', 'PNO', 'पद', 'थाना', 'जिला',
-    'मतदेय स्थल', 'केंद्र प्रकार', 'बस नं.', 'तिथि'
-  ];
-
   Widget _dc(double w, String t,
       {bool center = false, bool last = false}) =>
       Container(
         width: w, padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(border: Border(
-            right: last ? BorderSide.none
-                : const BorderSide(color: _kBorder))),
-        child: Text(t, style: const TextStyle(
-            fontSize: 11, color: _kDark),
+            right: last ? BorderSide.none : const BorderSide(color: _kBorder))),
+        child: Text(t, style: const TextStyle(fontSize: 11, color: _kDark),
             textAlign: center ? TextAlign.center : TextAlign.left,
             maxLines: 2, overflow: TextOverflow.ellipsis),
       );
 }
 
-// ── Pagination bar ─────────────────────────────────────────────────────────
+// ── Pagination bar ─────────────────────────────────────────────────────────────
 class _PagBar extends StatelessWidget {
   final int page, total, totalPages;
   final Color color;
@@ -2946,19 +3862,20 @@ class _PagBar extends StatelessWidget {
     if (totalPages <= 1 && total == 0) return const SizedBox.shrink();
     return Container(
       color: Colors.white,
-      padding: EdgeInsets.symmetric(
-          horizontal: 12, vertical: top ? 6 : 4),
-      child: Row(children: [
-        Expanded(child: Text('कुल: $total  |  पृष्ठ: $page / $totalPages',
-            style: const TextStyle(fontSize: 11, color: _kSubtle))),
-        _navBtn(Icons.first_page, page > 1, () => onPage(1)),
-        _navBtn(Icons.chevron_left, page > 1, () => onPage(page - 1)),
-        ..._pageNums(),
-        _navBtn(Icons.chevron_right, page < totalPages,
-            () => onPage(page + 1)),
-        _navBtn(Icons.last_page, page < totalPages,
-            () => onPage(totalPages)),
-      ]),
+      padding: EdgeInsets.symmetric(horizontal: 12, vertical: top ? 6 : 4),
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Row(children: [
+          Text('कुल: $total  |  पृष्ठ: $page / $totalPages',
+              style: const TextStyle(fontSize: 11, color: _kSubtle)),
+          const SizedBox(width: 8),
+          _navBtn(Icons.first_page, page > 1, () => onPage(1)),
+          _navBtn(Icons.chevron_left, page > 1, () => onPage(page - 1)),
+          ..._pageNums(),
+          _navBtn(Icons.chevron_right, page < totalPages, () => onPage(page + 1)),
+          _navBtn(Icons.last_page, page < totalPages, () => onPage(totalPages)),
+        ]),
+      ),
     );
   }
 
@@ -2983,8 +3900,7 @@ class _PagBar extends StatelessWidget {
           decoration: BoxDecoration(
               color: active ? color : Colors.transparent,
               borderRadius: BorderRadius.circular(5),
-              border: Border.all(
-                  color: active ? color : _kBorder)),
+              border: Border.all(color: active ? color : _kBorder)),
           child: Center(child: Text('$p', style: TextStyle(
               fontSize: 10, fontWeight: FontWeight.w700,
               color: active ? Colors.white : _kDark))),
@@ -2999,14 +3915,13 @@ class _PagBar extends StatelessWidget {
         borderRadius: BorderRadius.circular(5),
         child: Padding(
           padding: const EdgeInsets.all(3),
-          child: Icon(icon, size: 17,
-              color: enabled ? color : _kBorder),
+          child: Icon(icon, size: 17, color: enabled ? color : _kBorder),
         ),
       );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 6 — गोसवारा (mirrors goswara_page.dart EXACTLY)
+//  TAB 6 — गोसवारा
 // ══════════════════════════════════════════════════════════════════════════════
 class _GoswaraReportTab extends StatefulWidget {
   final _ElectionContext ctx;
@@ -3032,15 +3947,15 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
   Future<void> _load() async {
     setState(() { _loading = true; _error = null; });
     try {
-      final token = await AuthService.getToken();
-      final ctx   = widget.ctx;
-      final ep    = ctx.ep('goswara', '/admin/goswara');
-      final res   = await ApiService.get(ep, token: token);
+      final token   = await AuthService.getToken();
+      final ctx     = widget.ctx;
+      final ep      = ctx.ep('goswara', '/admin/goswara');
+      final res     = await ApiService.get(ep, token: token);
       final rawData = res['data'] ?? res;
       final rows    = rawData is Map
           ? (rawData['data'] as List? ?? [])
           : (rawData is List ? rawData : []);
-      final parsed = (rows as List).map<Map<String, dynamic>>((r) {
+      final parsed  = (rows as List).map<Map<String, dynamic>>((r) {
         final m = Map<String, dynamic>.from(r as Map);
         return {
           'block_name':           '${m['block_name'] ?? ''}',
@@ -3061,42 +3976,30 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
     }
   }
 
-  int _sum(String key) =>
-      _data.fold(0, (s, r) => s + _toInt(r[key]));
+  int _sum(String key) => _data.fold(0, (s, r) => s + _toInt(r[key]));
 
   Future<void> _print() async {
-    if (_data.isEmpty) {
-      _snack(context, 'कोई डेटा नहीं', error: true);
-      return;
-    }
+    if (_data.isEmpty) { _snack(context, 'कोई डेटा नहीं', error: true); return; }
     try {
       final font = await PdfGoogleFonts.notoSansDevanagariRegular();
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final ctx  = widget.ctx;
       final doc  = pw.Document();
-
-      final base    = pw.TextStyle(font: font, fontSize: 9);
-      final bld     = pw.TextStyle(font: bold,  fontSize: 9,
-          fontWeight: pw.FontWeight.bold);
+      final base = pw.TextStyle(font: font, fontSize: 9);
+      final bld  = pw.TextStyle(font: bold,  fontSize: 9, fontWeight: pw.FontWeight.bold);
       const headerBg = PdfColor(0.910, 0.929, 0.961);
       const totalBg  = PdfColor(0.867, 0.902, 0.961);
 
-      pw.Widget cell(String text,
-          {bool isBold = false, PdfColor? bg, PdfColor? textColor,
-           bool center = true}) =>
-          pw.Container(
-            color: bg,
-            padding: const pw.EdgeInsets.symmetric(
-                horizontal: 5, vertical: 5),
-            child: pw.Text(text,
-                textAlign: center
-                    ? pw.TextAlign.center : pw.TextAlign.left,
-                style: (isBold ? bld : base).copyWith(
-                    color: textColor)),
-          );
+      pw.Widget cell(String text, {bool isBold = false, PdfColor? bg,
+          PdfColor? textColor, bool center = true}) => pw.Container(
+        color: bg,
+        padding: const pw.EdgeInsets.symmetric(horizontal: 5, vertical: 5),
+        child: pw.Text(text,
+            textAlign: center ? pw.TextAlign.center : pw.TextAlign.left,
+            style: (isBold ? bld : base).copyWith(color: textColor)),
+      );
 
-      final nyayTotal = _data.fold<int>(
-          0, (s, r) => s + _toInt(r['nyay_panchayat_count']));
+      final nyayTotal = _data.fold<int>(0, (s, r) => s + _toInt(r['nyay_panchayat_count']));
 
       doc.addPage(pw.Page(
         pageFormat: PdfPageFormat.a4.landscape,
@@ -3104,51 +4007,31 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
         build: (_) => pw.Column(
           crossAxisAlignment: pw.CrossAxisAlignment.stretch,
           children: [
-            pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
-              pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.start,
-                  children: [
-                pw.Text('गोसवारा',
-                    style: pw.TextStyle(font: bold, fontSize: 16,
-                        fontWeight: pw.FontWeight.bold)),
+            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
+              pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.start, children: [
+                pw.Text('गोसवारा', style: pw.TextStyle(font: bold, fontSize: 16, fontWeight: pw.FontWeight.bold)),
                 pw.SizedBox(height: 3),
-                pw.Text(
-                  'विकास खण्डवार जोनल एवं सेक्टर, न्याय पंचायत'
-                  ' एवं ग्राम पंचायतों का विवरण',
-                  style: pw.TextStyle(font: font, fontSize: 8.5)),
-                pw.Text('${ctx.electionName}  •  जनपद: ${ctx.district}',
-                    style: bld),
+                pw.Text('विकास खण्डवार जोनल एवं सेक्टर, न्याय पंचायत एवं ग्राम पंचायतों का विवरण',
+                    style: pw.TextStyle(font: font, fontSize: 8.5)),
+                pw.Text('${ctx.electionName}  •  जनपद: ${ctx.district}', style: bld),
               ]),
-              pw.Column(
-                  crossAxisAlignment: pw.CrossAxisAlignment.end,
-                  children: [
-                if (_phase.isNotEmpty)
-                  pw.Text('चरण: $_phase', style: bld),
+              pw.Column(crossAxisAlignment: pw.CrossAxisAlignment.end, children: [
+                if (_phase.isNotEmpty) pw.Text('चरण: $_phase', style: bld),
                 if (_electionDate.isNotEmpty)
-                  pw.Text(_electionDate,
-                      style: pw.TextStyle(font: font, fontSize: 8.5)),
+                  pw.Text(_electionDate, style: pw.TextStyle(font: font, fontSize: 8.5)),
               ]),
             ]),
             pw.SizedBox(height: 3),
-            pw.Divider(color: const PdfColor(0.7, 0.7, 0.8),
-                thickness: 0.8),
+            pw.Divider(color: const PdfColor(0.7, 0.7, 0.8), thickness: 0.8),
             pw.SizedBox(height: 10),
             pw.Table(
-              border: pw.TableBorder.all(width: 0.6,
-                  color: const PdfColor(0.75, 0.78, 0.85)),
-              defaultVerticalAlignment:
-                  pw.TableCellVerticalAlignment.middle,
+              border: pw.TableBorder.all(width: 0.6, color: const PdfColor(0.75, 0.78, 0.85)),
+              defaultVerticalAlignment: pw.TableCellVerticalAlignment.middle,
               columnWidths: const {
-                0: pw.FixedColumnWidth(28),
-                1: pw.FixedColumnWidth(115),
-                2: pw.FixedColumnWidth(60),
-                3: pw.FixedColumnWidth(85),
-                4: pw.FixedColumnWidth(115),
-                5: pw.FixedColumnWidth(95),
-                6: pw.FixedColumnWidth(90),
-                7: pw.FixedColumnWidth(90),
+                0: pw.FixedColumnWidth(28), 1: pw.FixedColumnWidth(115),
+                2: pw.FixedColumnWidth(60), 3: pw.FixedColumnWidth(85),
+                4: pw.FixedColumnWidth(115), 5: pw.FixedColumnWidth(95),
+                6: pw.FixedColumnWidth(90), 7: pw.FixedColumnWidth(90),
               },
               children: [
                 pw.TableRow(children: [
@@ -3162,16 +4045,14 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
                   cell('ग्राम\nपंचायत',                     isBold: true, bg: headerBg),
                 ]),
                 ..._data.asMap().entries.map((e) {
-                  final i = e.key;
-                  final r = e.value;
-                  final bg = i.isEven ? PdfColors.white
-                      : const PdfColor(0.972, 0.976, 0.996);
+                  final i  = e.key; final r = e.value;
+                  final bg = i.isEven ? PdfColors.white : const PdfColor(0.972, 0.976, 0.996);
                   return pw.TableRow(children: [
                     cell('${i+1}', bg: bg),
                     cell('${r['block_name']}', bg: bg, center: false),
                     cell(i == 0 ? _phase : '', bg: bg),
                     cell(i == 0 ? _electionDate : '', bg: bg),
-                    cell('${_toInt(r['zonal_count'])}', bg: bg,
+                    cell('${_toInt(r['zonal_count'])}',  bg: bg,
                         textColor: const PdfColor(0.086, 0.337, 0.690)),
                     cell('${_toInt(r['sector_count'])}', bg: bg,
                         textColor: const PdfColor(0.094, 0.416, 0.231)),
@@ -3182,30 +4063,24 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
                   ]);
                 }),
                 pw.TableRow(children: [
-                  cell('',                              bg: totalBg),
-                  cell('योग', isBold: true,             bg: totalBg, center: false),
-                  cell('',                              bg: totalBg),
-                  cell('',                              bg: totalBg),
-                  cell('${_sum("zonal_count")}',        bg: totalBg, isBold: true),
-                  cell('${_sum("sector_count")}',       bg: totalBg, isBold: true),
-                  cell('$nyayTotal',                    bg: totalBg, isBold: true),
-                  cell('${_sum("gram_panchayat_count")}',bg: totalBg, isBold: true),
+                  cell('', bg: totalBg),
+                  cell('योग', isBold: true, bg: totalBg, center: false),
+                  cell('', bg: totalBg), cell('', bg: totalBg),
+                  cell('${_sum("zonal_count")}',          bg: totalBg, isBold: true),
+                  cell('${_sum("sector_count")}',         bg: totalBg, isBold: true),
+                  cell('$nyayTotal',                      bg: totalBg, isBold: true),
+                  cell('${_sum("gram_panchayat_count")}', bg: totalBg, isBold: true),
                 ]),
               ],
             ),
             pw.Spacer(),
-            pw.Row(
-                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
-                children: [
+            pw.Row(mainAxisAlignment: pw.MainAxisAlignment.spaceBetween, children: [
               pw.Text('गोसवारा — जनपदीय चुनाव विवरण',
-                  style: pw.TextStyle(font: font, fontSize: 7,
-                      color: PdfColors.grey600)),
+                  style: pw.TextStyle(font: font, fontSize: 7, color: PdfColors.grey600)),
               pw.Text(
                 'मुद्रण तिथि: ${DateTime.now().day.toString().padLeft(2,'0')}/'
-                '${DateTime.now().month.toString().padLeft(2,'0')}/'
-                '${DateTime.now().year}',
-                style: pw.TextStyle(font: font, fontSize: 7,
-                    color: PdfColors.grey600)),
+                '${DateTime.now().month.toString().padLeft(2,'0')}/${DateTime.now().year}',
+                style: pw.TextStyle(font: font, fontSize: 7, color: PdfColors.grey600)),
             ]),
           ],
         ),
@@ -3219,15 +4094,9 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
   @override
   Widget build(BuildContext context) {
     super.build(context);
-    if (_loading)
-      return const Center(
-          child: CircularProgressIndicator(color: _kGosPrimary));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
-
-    final nyayTotal = _data.fold<int>(
-        0, (s, r) => s + _toInt(r['nyay_panchayat_count']));
-
+    if (_loading) return const Center(child: CircularProgressIndicator(color: _kGosPrimary));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
+    final nyayTotal = _data.fold<int>(0, (s, r) => s + _toInt(r['nyay_panchayat_count']));
     return Column(children: [
       _PrintToolbar(title: 'गोसवारा रिपोर्ट',
           subtitle: '${_data.length} विकास खण्ड'
@@ -3237,176 +4106,126 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
         physics: const AlwaysScrollableScrollPhysics(),
         padding: const EdgeInsets.fromLTRB(12, 12, 12, 30),
         child: Column(children: [
-          // Stats row
           if (_data.isNotEmpty)
             GridView.count(
-              crossAxisCount: 4,
-              shrinkWrap: true,
+              crossAxisCount: 4, shrinkWrap: true,
               physics: const NeverScrollableScrollPhysics(),
-              crossAxisSpacing: 8, mainAxisSpacing: 8,
-              childAspectRatio: 1.15,
+              crossAxisSpacing: 8, mainAxisSpacing: 8, childAspectRatio: 1.15,
               children: [
-                (_sum('zonal_count'),          'जोनल',       Icons.account_tree_outlined, const Color(0xFF1565C0)),
-                (_sum('sector_count'),         'सेक्टर',     Icons.grid_view_outlined,     _kGosAccent),
-                (nyayTotal,                    'न्याय पं.',  Icons.balance_outlined,        const Color(0xFF6A1B9A)),
-                (_sum('gram_panchayat_count'), 'ग्राम पं.',  Icons.villa_outlined,          _kGosGold),
+                (_sum('zonal_count'),          'जोनल',      Icons.account_tree_outlined, const Color(0xFF1565C0)),
+                (_sum('sector_count'),         'सेक्टर',    Icons.grid_view_outlined,    _kGosAccent),
+                (nyayTotal,                    'न्याय पं.', Icons.balance_outlined,       const Color(0xFF6A1B9A)),
+                (_sum('gram_panchayat_count'), 'ग्राम पं.', Icons.villa_outlined,         _kGosGold),
               ].map((item) {
                 final (val, label, icon, color) = item;
                 return Container(
                   decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(12),
+                      color: Colors.white, borderRadius: BorderRadius.circular(12),
                       border: Border.all(color: color.withOpacity(0.2)),
-                      boxShadow: [BoxShadow(
-                          color: color.withOpacity(0.08),
+                      boxShadow: [BoxShadow(color: color.withOpacity(0.08),
                           blurRadius: 8, offset: const Offset(0, 3))]),
-                  child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
+                  child: Column(mainAxisAlignment: MainAxisAlignment.center, children: [
                     Container(
                       padding: const EdgeInsets.all(7),
                       decoration: BoxDecoration(
-                          color: color.withOpacity(0.1),
-                          shape: BoxShape.circle),
+                          color: color.withOpacity(0.1), shape: BoxShape.circle),
                       child: Icon(icon, size: 16, color: color)),
                     const SizedBox(height: 6),
                     Text('$val', style: TextStyle(
-                        color: color, fontWeight: FontWeight.w900,
-                        fontSize: 20)),
+                        color: color, fontWeight: FontWeight.w900, fontSize: 20)),
                     const SizedBox(height: 2),
-                    Text(label, style: const TextStyle(
-                        color: _kSubtle, fontSize: 9),
-                        textAlign: TextAlign.center,
-                        maxLines: 1, overflow: TextOverflow.ellipsis),
+                    Text(label, style: const TextStyle(color: _kSubtle, fontSize: 9),
+                        textAlign: TextAlign.center, maxLines: 1, overflow: TextOverflow.ellipsis),
                   ]),
                 );
               }).toList(),
             ),
           const SizedBox(height: 14),
-          // Table
           if (_data.isEmpty)
             Container(
               padding: const EdgeInsets.all(32),
-              decoration: BoxDecoration(
-                  color: Colors.white,
+              decoration: BoxDecoration(color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: _kBorder)),
-              child: const _EmptyHint(
-                  icon: Icons.table_chart_outlined,
-                  title: 'कोई डेटा उपलब्ध नहीं',
-                  subtitle: ''),
-            )
+              child: const _EmptyHint(icon: Icons.table_chart_outlined,
+                  title: 'कोई डेटा उपलब्ध नहीं', subtitle: ''))
           else
             Container(
               decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
+                  color: Colors.white, borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: _kBorder),
-                  boxShadow: [BoxShadow(
-                      color: _kGosPrimary.withOpacity(0.06),
+                  boxShadow: [BoxShadow(color: _kGosPrimary.withOpacity(0.06),
                       blurRadius: 10, offset: const Offset(0, 4))]),
               child: Column(children: [
                 Container(
                   padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                   decoration: BoxDecoration(
                       color: _kGosPrimary.withOpacity(0.04),
-                      borderRadius: const BorderRadius.vertical(
-                          top: Radius.circular(12)),
-                      border: Border(bottom: BorderSide(
-                          color: _kBorder))),
+                      borderRadius: const BorderRadius.vertical(top: Radius.circular(12)),
+                      border: Border(bottom: BorderSide(color: _kBorder))),
                   child: Row(children: [
-                    const Icon(Icons.table_chart_outlined,
-                        size: 16, color: _kGosPrimary),
+                    const Icon(Icons.table_chart_outlined, size: 16, color: _kGosPrimary),
                     const SizedBox(width: 8),
-                    const Text('विस्तृत विवरण',
-                        style: TextStyle(color: _kGosPrimary,
-                            fontWeight: FontWeight.w800, fontSize: 13)),
+                    const Text('विस्तृत विवरण', style: TextStyle(
+                        color: _kGosPrimary, fontWeight: FontWeight.w800, fontSize: 13)),
                     const Spacer(),
                     Text('${_data.length} विकास खण्ड',
-                        style: const TextStyle(
-                            color: _kSubtle, fontSize: 11)),
+                        style: const TextStyle(color: _kSubtle, fontSize: 11)),
                   ]),
                 ),
                 SingleChildScrollView(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.all(12),
                   child: Table(
-                    border: TableBorder.all(
-                        color: _kBorder, width: 0.7),
-                    defaultVerticalAlignment:
-                        TableCellVerticalAlignment.middle,
+                    border: TableBorder.all(color: _kBorder, width: 0.7),
+                    defaultVerticalAlignment: TableCellVerticalAlignment.middle,
                     columnWidths: const {
-                      0: FixedColumnWidth(44),
-                      1: FixedColumnWidth(140),
-                      2: FixedColumnWidth(85),
-                      3: FixedColumnWidth(120),
-                      4: FixedColumnWidth(110),
-                      5: FixedColumnWidth(110),
-                      6: FixedColumnWidth(110),
-                      7: FixedColumnWidth(110),
+                      0: FixedColumnWidth(44),  1: FixedColumnWidth(140),
+                      2: FixedColumnWidth(85),  3: FixedColumnWidth(120),
+                      4: FixedColumnWidth(110), 5: FixedColumnWidth(110),
+                      6: FixedColumnWidth(110), 7: FixedColumnWidth(110),
                     },
                     children: [
                       TableRow(
-                        decoration: const BoxDecoration(
-                            color: _kGosHdrBg),
+                        decoration: const BoxDecoration(color: _kGosHdrBg),
                         children: [
                           _gh('क्र०सं०'), _gh('विकास खण्ड'),
                           _gh('चरण'), _gh('मतदान तिथि'),
                           _gh('जोनल मजिस्ट्रेट /\nपुलिस अधिकारी'),
                           _gh('सेक्टर\nमजिस्ट्रेट'),
-                          _gh('न्याय\nपंचायत'),
-                          _gh('ग्राम\nपंचायत'),
+                          _gh('न्याय\nपंचायत'), _gh('ग्राम\nपंचायत'),
                         ],
                       ),
                       ..._data.asMap().entries.map((e) {
-                        final i = e.key;
-                        final r = e.value;
+                        final i = e.key; final r = e.value;
                         return TableRow(
-                          decoration: BoxDecoration(
-                              color: i.isEven
-                                  ? Colors.white
-                                  : const Color(0xFFF8FAFF)),
+                          decoration: BoxDecoration(color: i.isEven
+                              ? Colors.white : const Color(0xFFF8FAFF)),
                           children: [
                             _gd('${i+1}', center: true),
                             _gd('${r['block_name']}', bold: true),
                             _gd(i == 0 ? _phase : '', center: true),
-                            _gd(i == 0 ? _electionDate : '',
-                                center: true, color: _kGosGold),
-                            _gd('${_toInt(r['zonal_count'])}',
-                                center: true,
+                            _gd(i == 0 ? _electionDate : '', center: true, color: _kGosGold),
+                            _gd('${_toInt(r['zonal_count'])}',  center: true,
                                 color: const Color(0xFF1565C0)),
-                            _gd('${_toInt(r['sector_count'])}',
-                                center: true, color: _kGosAccent),
-                            _gd('${_toInt(r['nyay_panchayat_count'])}',
-                                center: true,
+                            _gd('${_toInt(r['sector_count'])}', center: true, color: _kGosAccent),
+                            _gd('${_toInt(r['nyay_panchayat_count'])}', center: true,
                                 color: const Color(0xFF6A1B9A)),
-                            _gd('${_toInt(r['gram_panchayat_count'])}',
-                                center: true,
+                            _gd('${_toInt(r['gram_panchayat_count'])}', center: true,
                                 color: const Color(0xFF8B6914)),
                           ],
                         );
                       }),
                       TableRow(
-                        decoration: const BoxDecoration(
-                            color: _kGosTotalBg),
+                        decoration: const BoxDecoration(color: _kGosTotalBg),
                         children: [
                           _gd('', center: true),
-                          _gd('योग', bold: true,
-                              color: _kGosPrimary),
-                          _gd('', center: true),
-                          _gd('', center: true),
-                          _gd('${_sum("zonal_count")}',
-                              center: true, bold: true,
-                              color: _kGosPrimary),
-                          _gd('${_sum("sector_count")}',
-                              center: true, bold: true,
-                              color: _kGosPrimary),
-                          _gd('$nyayTotal',
-                              center: true, bold: true,
-                              color: _kGosPrimary),
-                          _gd('${_sum("gram_panchayat_count")}',
-                              center: true, bold: true,
-                              color: _kGosPrimary),
+                          _gd('योग', bold: true, color: _kGosPrimary),
+                          _gd('', center: true), _gd('', center: true),
+                          _gd('${_sum("zonal_count")}',          center: true, bold: true, color: _kGosPrimary),
+                          _gd('${_sum("sector_count")}',         center: true, bold: true, color: _kGosPrimary),
+                          _gd('$nyayTotal',                      center: true, bold: true, color: _kGosPrimary),
+                          _gd('${_sum("gram_panchayat_count")}', center: true, bold: true, color: _kGosPrimary),
                         ],
                       ),
                     ],
@@ -3422,22 +4241,21 @@ class _GoswaraReportTabState extends State<_GoswaraReportTab>
   Widget _gh(String t) => Padding(
     padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
     child: Text(t, textAlign: TextAlign.center,
-        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800,
-            color: _kGosPrimary)),
+        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: _kGosPrimary)),
   );
-  Widget _gd(String t, {bool center = false, bool bold = false,
-      Color? color}) => Padding(
-    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
-    child: Text(t,
-        textAlign: center ? TextAlign.center : TextAlign.left,
-        style: TextStyle(fontSize: 12,
-            fontWeight: bold ? FontWeight.w800 : FontWeight.normal,
-            color: color ?? _kDark)),
-  );
+  Widget _gd(String t, {bool center = false, bool bold = false, Color? color}) =>
+      Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+        child: Text(t,
+            textAlign: center ? TextAlign.center : TextAlign.left,
+            style: TextStyle(fontSize: 12,
+                fontWeight: bold ? FontWeight.w800 : FontWeight.normal,
+                color: color ?? _kDark)),
+      );
 }
 
 // ══════════════════════════════════════════════════════════════════════════════
-//  TAB 7 — सारांश (overall stats for this election)
+//  TAB 7 — सारांश
 // ══════════════════════════════════════════════════════════════════════════════
 class _SummaryReportTab extends StatefulWidget {
   final _ElectionContext ctx;
@@ -3451,8 +4269,8 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
   @override
   bool get wantKeepAlive => true;
 
-  Map<String, dynamic>?  _booths;
-  Map<String, dynamic>?  _officers;
+  Map<String, dynamic>? _booths;
+  Map<String, dynamic>? _officers;
   bool   _loading = true;
   String? _error;
 
@@ -3465,12 +4283,10 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
       final token = await AuthService.getToken();
       final ctx   = widget.ctx;
       final futures = await Future.wait([
-        ApiService.get(ctx.ep(
-            'booth-assignments-summary',
-            '/admin/duties/summary'), token: token).catchError((_) => <String, dynamic>{}),
-        ApiService.get(ctx.ep(
-            'hierarchy-overview',
-            '/admin/hierarchy/overview'), token: token).catchError((_) => <String, dynamic>{}),
+        ApiService.get(ctx.ep('booth-assignments-summary', '/admin/duties/summary'),
+            token: token).catchError((_) => <String, dynamic>{}),
+        ApiService.get(ctx.ep('hierarchy-overview', '/admin/hierarchy/overview'),
+            token: token).catchError((_) => <String, dynamic>{}),
       ]);
       setState(() {
         _booths   = futures[0]['data'] is Map
@@ -3490,21 +4306,18 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
       final bold = await PdfGoogleFonts.notoSansDevanagariBold();
       final doc  = pw.Document();
       final ctx  = widget.ctx;
-
       doc.addPage(pw.MultiPage(
         pageFormat: PdfPageFormat.a4,
         margin: const pw.EdgeInsets.all(18),
         header: (_) => _pdfDocHeader(font, bold,
             '${ctx.electionName} — सारांश रिपोर्ट',
-            'जनपद: ${ctx.district}  •  चरण: ${ctx.phase}'
-            '  •  तिथि: ${ctx.electionDate}'),
+            'जनपद: ${ctx.district}  •  चरण: ${ctx.phase}  •  तिथि: ${ctx.electionDate}'),
         build: (_) {
           final List<pw.Widget> widgets = [];
           final tot = _booths?['totals'] as Map<String, dynamic>?;
           if (tot != null) {
             widgets.add(pw.Text('बूथ ड्यूटी सारांश',
-                style: pw.TextStyle(font: bold, fontSize: 11,
-                    fontWeight: pw.FontWeight.bold)));
+                style: pw.TextStyle(font: bold, fontSize: 11, fontWeight: pw.FontWeight.bold)));
             widgets.add(pw.SizedBox(height: 6));
             widgets.add(pw.Row(children: [
               for (final entry in [
@@ -3518,34 +4331,27 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
                   margin: const pw.EdgeInsets.only(right: 8),
                   padding: const pw.EdgeInsets.all(8),
                   decoration: pw.BoxDecoration(
-                    border: pw.Border.all(
-                        color: PdfColors.grey400, width: 0.5),
-                    borderRadius:
-                        const pw.BorderRadius.all(pw.Radius.circular(4)),
+                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
                   ),
                   child: pw.Column(children: [
-                    pw.Text(entry.$2,
-                        style: pw.TextStyle(font: bold, fontSize: 13,
-                            fontWeight: pw.FontWeight.bold)),
-                    pw.Text(entry.$1,
-                        style: pw.TextStyle(font: font, fontSize: 7)),
+                    pw.Text(entry.$2, style: pw.TextStyle(font: bold, fontSize: 13,
+                        fontWeight: pw.FontWeight.bold)),
+                    pw.Text(entry.$1, style: pw.TextStyle(font: font, fontSize: 7)),
                   ]),
                 )),
             ]));
             widgets.add(pw.SizedBox(height: 14));
-
-            // By type
             final byType = _booths?['byType'] as List?;
             if (byType != null && byType.isNotEmpty) {
               widgets.add(pw.Text('केंद्र प्रकार अनुसार',
-                  style: pw.TextStyle(font: bold, fontSize: 10,
-                      fontWeight: pw.FontWeight.bold)));
+                  style: pw.TextStyle(font: bold, fontSize: 10, fontWeight: pw.FontWeight.bold)));
               widgets.add(pw.SizedBox(height: 4));
               final trows = <pw.TableRow>[
                 pw.TableRow(children: [
                   _pdfTh('प्रकार', bold), _pdfTh('Staff', bold),
                   _pdfTh('केन्द्र', bold), _pdfTh('Attended', bold),
-                  _pdfTh('Armed', bold),   _pdfTh('Unarmed', bold),
+                  _pdfTh('Armed', bold), _pdfTh('Unarmed', bold),
                 ]),
               ];
               for (final t in byType) {
@@ -3585,10 +4391,8 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
                   margin: const pw.EdgeInsets.only(right: 6),
                   padding: const pw.EdgeInsets.all(8),
                   decoration: pw.BoxDecoration(
-                    border: pw.Border.all(
-                        color: PdfColors.grey400, width: 0.5),
-                    borderRadius:
-                        const pw.BorderRadius.all(pw.Radius.circular(4)),
+                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(4)),
                   ),
                   child: pw.Column(children: [
                     pw.Text(entry.$2,
@@ -3617,20 +4421,17 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
     super.build(context);
     final r = _rOf(context);
     if (_loading)
-      return const Center(
-          child: CircularProgressIndicator(color: _kPrimary));
-    if (_error != null)
-      return _ErrorCard(error: _error!, onRetry: _load);
+      return const Center(child: CircularProgressIndicator(color: _kPrimary));
+    if (_error != null) return _ErrorCard(error: _error!, onRetry: _load);
 
     return Column(children: [
-      _PrintToolbar(title: 'सारांश रिपोर्ट',
+      _PrintToolbar(
+          title: 'सारांश रिपोर्ट',
           subtitle: 'चुनाव ${widget.ctx.electionName}',
           color: _kPrimary, onPrint: _print),
       Expanded(child: SingleChildScrollView(
-        padding: EdgeInsets.fromLTRB(
-            r.s(10, 14), 12, r.s(10, 14), 30),
+        padding: EdgeInsets.fromLTRB(r.s(10, 14), 12, r.s(10, 14), 30),
         child: Column(children: [
-          // Booth summary
           if (_booths != null) ...[
             _sectionTitle('बूथ ड्यूटी सारांश',
                 Icons.how_to_vote_outlined, _kPurple),
@@ -3643,7 +4444,6 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
             if ((_booths!['byRank'] as List?)?.isNotEmpty == true)
               _byRankTable(_booths!['byRank'] as List),
           ],
-          // Officer summary
           if (_officers != null) ...[
             const SizedBox(height: 16),
             _sectionTitle('अधिकारी सारांश',
@@ -3674,14 +4474,14 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
       ]);
 
   Widget _boothTotals(Map<String, dynamic> booths) {
-    final r = _rOf(context);
+    final r   = _rOf(context);
     final tot = booths['totals'] as Map<String, dynamic>? ?? {};
     final items = [
-      ('कुल Assigned', '${tot['total'] ?? 0}',     _kPurple),
-      ('Attended',      '${tot['attended'] ?? 0}',  _kGreen),
-      ('केन्द्र',        '${tot['centers'] ?? 0}',   _kOrange),
-      ('Armed',         '${tot['armed'] ?? 0}',      _kRed),
-      ('Unarmed',       '${tot['unarmed'] ?? 0}',    _kTeal),
+      ('कुल Assigned', '${tot['total']    ?? 0}', _kPurple),
+      ('Attended',      '${tot['attended'] ?? 0}', _kGreen),
+      ('केन्द्र',        '${tot['centers']  ?? 0}', _kOrange),
+      ('Armed',         '${tot['armed']    ?? 0}', _kRed),
+      ('Unarmed',       '${tot['unarmed']  ?? 0}', _kTeal),
     ];
     return Wrap(
       spacing: 8, runSpacing: 8,
@@ -3690,8 +4490,7 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
         return Container(
           width: (MediaQuery.of(context).size.width -
               r.s(20, 28) * 2 - 8 * 2) / 3 - 2,
-          padding: const EdgeInsets.symmetric(
-              horizontal: 10, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: BoxDecoration(
             color: color.withOpacity(0.07),
             borderRadius: BorderRadius.circular(10),
@@ -3731,34 +4530,31 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
                 ws.map((w) => FixedColumnWidth(w))),
             children: [
               TableRow(
-                decoration: const BoxDecoration(
-                    color: Color(0xFFEDE7F6)),
+                decoration: const BoxDecoration(color: Color(0xFFEDE7F6)),
                 children: hs.map((h) => Padding(
                   padding: const EdgeInsets.all(6),
                   child: Text(h, textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: _kPurple)),
+                          fontWeight: FontWeight.w800, color: _kPurple)),
                 )).toList()),
               ...byType.asMap().entries.map((e) {
                 final i = e.key;
                 final t = e.value as Map;
                 return TableRow(
                   decoration: BoxDecoration(
-                      color: i.isEven
-                          ? Colors.white : const Color(0xFFFDF4FF)),
+                      color: i.isEven ? Colors.white
+                          : const Color(0xFFFDF4FF)),
                   children: [
-                    '${t['centerType'] ?? ''}',
-                    '${t['totalStaff'] ?? 0}',
+                    '${t['centerType']     ?? ''}',
+                    '${t['totalStaff']     ?? 0}',
                     '${t['centersCovered'] ?? 0}',
-                    '${t['attended'] ?? 0}',
-                    '${t['armed'] ?? 0}',
-                    '${t['unarmed'] ?? 0}',
+                    '${t['attended']       ?? 0}',
+                    '${t['armed']          ?? 0}',
+                    '${t['unarmed']        ?? 0}',
                   ].map((v) => Padding(
                     padding: const EdgeInsets.all(6),
                     child: Text(v, textAlign: TextAlign.center,
-                        style: const TextStyle(fontSize: 11,
-                            color: _kDark)),
+                        style: const TextStyle(fontSize: 11, color: _kDark)),
                   )).toList());
               }),
             ],
@@ -3787,49 +4583,43 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
                 ws.map((w) => FixedColumnWidth(w))),
             children: [
               TableRow(
-                decoration: const BoxDecoration(
-                    color: Color(0xFFE8F5E9)),
+                decoration: const BoxDecoration(color: Color(0xFFE8F5E9)),
                 children: hs.map((h) => Padding(
                   padding: const EdgeInsets.all(6),
                   child: Text(h, textAlign: TextAlign.center,
                       style: const TextStyle(fontSize: 10,
-                          fontWeight: FontWeight.w800,
-                          color: _kGreen)),
+                          fontWeight: FontWeight.w800, color: _kGreen)),
                 )).toList()),
               ...byRank.asMap().entries.map((e) {
-                final i = e.key;
-                final t = e.value as Map;
+                final i    = e.key;
+                final t    = e.value as Map;
                 final rank = '${t['rank'] ?? ''}';
                 final rc   = _rankColor(rank);
                 return TableRow(
                   decoration: BoxDecoration(
-                      color: i.isEven
-                          ? Colors.white : const Color(0xFFF1F8E9)),
+                      color: i.isEven ? Colors.white
+                          : const Color(0xFFF1F8E9)),
                   children: [
                     Padding(padding: const EdgeInsets.all(6),
-                        child: Text(rank,
-                            style: TextStyle(color: rc, fontSize: 11,
-                                fontWeight: FontWeight.w700))),
+                        child: Text(rank, style: TextStyle(
+                            color: rc, fontSize: 11,
+                            fontWeight: FontWeight.w700))),
                     Padding(padding: const EdgeInsets.all(6),
-                        child: Text('${t['total'] ?? 0}',
+                        child: Text('${t['total']    ?? 0}',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 11,
-                                color: _kDark))),
+                            style: const TextStyle(fontSize: 11, color: _kDark))),
                     Padding(padding: const EdgeInsets.all(6),
-                        child: Text('${t['armed'] ?? 0}',
+                        child: Text('${t['armed']    ?? 0}',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 11,
-                                color: _kDark))),
+                            style: const TextStyle(fontSize: 11, color: _kDark))),
                     Padding(padding: const EdgeInsets.all(6),
-                        child: Text('${t['unarmed'] ?? 0}',
+                        child: Text('${t['unarmed']  ?? 0}',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 11,
-                                color: _kDark))),
+                            style: const TextStyle(fontSize: 11, color: _kDark))),
                     Padding(padding: const EdgeInsets.all(6),
                         child: Text('${t['attended'] ?? 0}',
                             textAlign: TextAlign.center,
-                            style: const TextStyle(fontSize: 11,
-                                color: _kDark))),
+                            style: const TextStyle(fontSize: 11, color: _kDark))),
                   ]);
               }),
             ],
@@ -3843,12 +4633,12 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
     final r = _rOf(context);
     final s = officers['summary'] as Map<String, dynamic>? ?? {};
     final items = [
-      ('सुपर जोन',         '${s['superZoneCount'] ?? 0}',   _kPrimary),
-      ('जोन',              '${s['zoneCount'] ?? 0}',         _kTeal),
-      ('सैक्टर',           '${s['sectorCount'] ?? 0}',       _kGreen),
-      ('क्षेत्र अधिकारी',  '${s['kshetraOfficers'] ?? 0}',   _kOrange),
-      ('जोनल अधिकारी',    '${s['zonalOfficers'] ?? 0}',      _kPrimary),
-      ('सेक्टर अधिकारी',  '${s['sectorOfficers'] ?? 0}',     _kDistrictColor),
+      ('सुपर जोन',        '${s['superZoneCount']   ?? 0}', _kPrimary),
+      ('जोन',             '${s['zoneCount'] ?? 0}', _kTeal),
+      ('सैक्टर',          '${s['sectorCount']       ?? 0}', _kGreen),
+      ('क्षेत्र अधिकारी', '${s['kshetraOfficers']   ?? 0}', _kOrange),
+      ('जोनल अधिकारी',   '${s['zonalOfficers']     ?? 0}', _kPrimary),
+      ('सेक्टर अधिकारी', '${s['sectorOfficers']    ?? 0}', _kDistrictColor),
     ];
     return Wrap(
       spacing: 8, runSpacing: 8,
@@ -3857,8 +4647,7 @@ class _SummaryReportTabState extends State<_SummaryReportTab>
         return Container(
           width: (MediaQuery.of(context).size.width -
               r.s(20, 28) * 2 - 8 * 2) / 3 - 2,
-          padding: const EdgeInsets.symmetric(
-              horizontal: 10, vertical: 10),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
           decoration: BoxDecoration(
             color: color.withOpacity(0.07),
             borderRadius: BorderRadius.circular(10),
@@ -3924,14 +4713,12 @@ class _ErrorCard extends StatelessWidget {
             style: TextStyle(fontSize: 14, fontWeight: FontWeight.w700,
                 color: _kDark)),
         const SizedBox(height: 6),
-        Text(error, style: const TextStyle(
-            color: _kSubtle, fontSize: 11),
+        Text(error, style: const TextStyle(color: _kSubtle, fontSize: 11),
             textAlign: TextAlign.center, maxLines: 4,
             overflow: TextOverflow.ellipsis),
         const SizedBox(height: 14),
         ElevatedButton.icon(
-          style: ElevatedButton.styleFrom(
-              backgroundColor: _kPrimary),
+          style: ElevatedButton.styleFrom(backgroundColor: _kPrimary),
           onPressed: onRetry,
           icon: const Icon(Icons.refresh, color: Colors.white, size: 16),
           label: const Text('पुनः प्रयास',
@@ -3940,19 +4727,4 @@ class _ErrorCard extends StatelessWidget {
       ]),
     ),
   );
-}
-
-// ── Rank color (shared, mirrors manak_district_page.dart) ────────────────────
-Color _rankColor(String rank) {
-  const m = {
-    'SP':             Color(0xFF6A1B9A),
-    'ASP':            Color(0xFF1565C0),
-    'DSP':            Color(0xFF1A5276),
-    'Inspector':      Color(0xFF2E7D32),
-    'SI':             Color(0xFF558B2F),
-    'ASI':            Color(0xFF8B6914),
-    'Head Constable': Color(0xFFB8860B),
-    'Constable':      Color(0xFF6D4C41),
-  };
-  return m[rank] ?? _kPrimary;
 }

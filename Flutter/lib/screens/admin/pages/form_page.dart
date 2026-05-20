@@ -2939,44 +2939,267 @@ class _CenterDialogState extends State<_CenterDialog> {
                     icon:const Icon(Icons.close,color:Colors.white60,size:20),
                     padding:EdgeInsets.zero,constraints:const BoxConstraints()),
               ])),
-            Flexible(child:SingleChildScrollView(padding:const EdgeInsets.all(16),child:Column(crossAxisAlignment:CrossAxisAlignment.start,children:[
-              _ff(_nameCtrl,'Center का नाम *',Icons.location_on_outlined),
-              _ff(_addressCtrl,'पता',Icons.map_outlined),
-              Row(children:[Expanded(child:_ff(_thanaCtrl,'थाना',Icons.local_police_outlined)),const SizedBox(width:10),Expanded(child:_ff(_busCtrl,'Bus No',Icons.directions_bus_outlined))]),
-              const SizedBox(height:4),
-              const Text('बूथ संख्या *',style:TextStyle(color:_kDark,fontSize:13,fontWeight:FontWeight.w800)),
-              const SizedBox(height:8),
-              Row(children:[
-                _sb(Icons.remove,(){final v=int.tryParse(_boothCtrl.text)??1;if(v>1)setState(()=>_boothCtrl.text='${v-1}');}),
-                const SizedBox(width:10),
-                Expanded(child:Container(height:48,
-                  decoration:BoxDecoration(color:Colors.white,borderRadius:BorderRadius.circular(10),
-                      border:Border.all(color:_typeColor.withOpacity(0.6),width:1.5)),
-                  child:TextField(controller:_boothCtrl,keyboardType:TextInputType.number,
-                    inputFormatters:[FilteringTextInputFormatter.digitsOnly,LengthLimitingTextInputFormatter(2)],
-                    textAlign:TextAlign.center,style:TextStyle(color:_typeColor,fontSize:20,fontWeight:FontWeight.w900),
-                    decoration:const InputDecoration(border:InputBorder.none,isDense:true,contentPadding:EdgeInsets.symmetric(vertical:12))))),
-                const SizedBox(width:10),
-                _sb(Icons.add,(){final v=int.tryParse(_boothCtrl.text)??1;if(v<15)setState(()=>_boothCtrl.text='${v+1}');}),
-              ]),
-              const SizedBox(height:6),
-              Center(child:Text('(1 से 15 तक) — 1 center = 1 manak set',
-                  style:TextStyle(color:_kSubtle.withOpacity(0.7),fontSize:10))),
-              const SizedBox(height:14),
-              const Text('Center Type / संवेदनशीलता',style:TextStyle(color:_kDark,fontSize:13,fontWeight:FontWeight.w700)),
-              const SizedBox(height:10),
-              Row(children:['A++','A','B','C'].map((t){
-                final sel=_type==t;
-                final c=switch(t){'A++'=>const Color(0xFF6A1B9A),'A'=>const Color(0xFFC62828),'B'=>const Color(0xFFE65100),_=>const Color(0xFF1A5276)};
-                return Expanded(child:GestureDetector(onTap:()=>setState(()=>_type=t),child:AnimatedContainer(
-                  duration:const Duration(milliseconds:150),
-                  margin:EdgeInsets.only(right:t=='C'?0:8),padding:const EdgeInsets.symmetric(vertical:10),
-                  decoration:BoxDecoration(color:sel?c:Colors.white,borderRadius:BorderRadius.circular(10),border:Border.all(color:c,width:sel?2:1)),
-                  child:Column(children:[Text(t,style:TextStyle(color:sel?Colors.white:c,fontWeight:FontWeight.w900,fontSize:14)),
-                    Text(switch(t){'A++'=> 'अति-अति','A'=>'अति','B'=>'संवेदनशील',_=>'सामान्य'},
-                        style:TextStyle(color:sel?Colors.white70:c.withOpacity(0.7),fontSize:9))]))));
-              }).toList()),
-            ]))),
+            Flexible(
+              child: SingleChildScrollView(
+                padding: const EdgeInsets.all(16),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+
+                    _ff(
+                      _nameCtrl,
+                      'Center का नाम *',
+                      Icons.location_on_outlined,
+                    ),
+
+                    _ff(
+                      _addressCtrl,
+                      'पता',
+                      Icons.map_outlined,
+                    ),
+
+                    // ─── LATITUDE & LONGITUDE ──────────────────────────
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ff(
+                            _latCtrl,
+                            'Latitude',
+                            Icons.my_location_outlined,
+                            type: const TextInputType.numberWithOptions(
+                              decimal: true,
+                              signed: true,
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        Expanded(
+                          child: _ff(
+                            _lngCtrl,
+                            'Longitude',
+                            Icons.explore_outlined,
+                            type: const TextInputType.numberWithOptions(
+                              decimal: true,
+                              signed: true,
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    // ─── THANA & BUS ───────────────────────────────────
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _ff(
+                            _thanaCtrl,
+                            'थाना',
+                            Icons.local_police_outlined,
+                          ),
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        Expanded(
+                          child: _ff(
+                            _busCtrl,
+                            'Bus No',
+                            Icons.directions_bus_outlined,
+                          ),
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 4),
+
+                    const Text(
+                      'बूथ संख्या *',
+                      style: TextStyle(
+                        color: _kDark,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+
+                    const SizedBox(height: 8),
+
+                    Row(
+                      children: [
+
+                        // ─── MINUS BUTTON ─────────────────────────────
+                        _sb(
+                          Icons.remove,
+                          () {
+                            final v = int.tryParse(_boothCtrl.text) ?? 1;
+
+                            if (v > 1) {
+                              setState(() {
+                                _boothCtrl.text = '${v - 1}';
+                              });
+                            }
+                          },
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        // ─── BOOTH COUNT FIELD ───────────────────────
+                        Expanded(
+                          child: Container(
+                            height: 48,
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: _typeColor.withOpacity(0.6),
+                                width: 1.5,
+                              ),
+                            ),
+
+                            child: TextField(
+                              controller: _boothCtrl,
+                              keyboardType: TextInputType.number,
+
+                              inputFormatters: [
+                                FilteringTextInputFormatter.digitsOnly,
+                                LengthLimitingTextInputFormatter(2),
+                              ],
+
+                              textAlign: TextAlign.center,
+
+                              style: TextStyle(
+                                color: _typeColor,
+                                fontSize: 20,
+                                fontWeight: FontWeight.w900,
+                              ),
+
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.symmetric(
+                                  vertical: 12,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(width: 10),
+
+                        // ─── PLUS BUTTON ──────────────────────────────
+                        _sb(
+                          Icons.add,
+                          () {
+                            final v = int.tryParse(_boothCtrl.text) ?? 1;
+
+                            if (v < 15) {
+                              setState(() {
+                                _boothCtrl.text = '${v + 1}';
+                              });
+                            }
+                          },
+                        ),
+                      ],
+                    ),
+
+                    const SizedBox(height: 6),
+
+                    Center(
+                      child: Text(
+                        '(1 से 15 तक) — 1 center = 1 manak set',
+                        style: TextStyle(
+                          color: _kSubtle.withOpacity(0.7),
+                          fontSize: 10,
+                        ),
+                      ),
+                    ),
+
+                    const SizedBox(height: 14),
+
+                    const Text(
+                      'Center Type / संवेदनशीलता',
+                      style: TextStyle(
+                        color: _kDark,
+                        fontSize: 13,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+
+                    const SizedBox(height: 10),
+
+                    Row(
+                      children: ['A++', 'A', 'B', 'C'].map((t) {
+
+                        final sel = _type == t;
+
+                        final c = switch (t) {
+                          'A++' => const Color(0xFF6A1B9A),
+                          'A'   => const Color(0xFFC62828),
+                          'B'   => const Color(0xFFE65100),
+                          _     => const Color(0xFF1A5276),
+                        };
+
+                        return Expanded(
+                          child: GestureDetector(
+                            onTap: () => setState(() => _type = t),
+
+                            child: AnimatedContainer(
+                              duration: const Duration(milliseconds: 150),
+
+                              margin: EdgeInsets.only(
+                                right: t == 'C' ? 0 : 8,
+                              ),
+
+                              padding: const EdgeInsets.symmetric(vertical: 10),
+
+                              decoration: BoxDecoration(
+                                color: sel ? c : Colors.white,
+                                borderRadius: BorderRadius.circular(10),
+                                border: Border.all(
+                                  color: c,
+                                  width: sel ? 2 : 1,
+                                ),
+                              ),
+
+                              child: Column(
+                                children: [
+
+                                  Text(
+                                    t,
+                                    style: TextStyle(
+                                      color: sel ? Colors.white : c,
+                                      fontWeight: FontWeight.w900,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+
+                                  Text(
+                                    switch (t) {
+                                      'A++' => 'अति-अति',
+                                      'A'   => 'अति',
+                                      'B'   => 'संवेदनशील',
+                                      _     => 'सामान्य',
+                                    },
+
+                                    style: TextStyle(
+                                      color: sel
+                                          ? Colors.white70
+                                          : c.withOpacity(0.7),
+                                      fontSize: 9,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                        );
+                      }).toList(),
+                    ),
+                  ],
+                ),
+              ),
+            ),
             Padding(padding:const EdgeInsets.fromLTRB(16,8,16,16),child:Row(children:[
               Expanded(child:OutlinedButton(onPressed:_saving?null:()=>Navigator.pop(context),
                 style:OutlinedButton.styleFrom(foregroundColor:_kSubtle,side:const BorderSide(color:_kBorder),
@@ -2991,17 +3214,83 @@ class _CenterDialogState extends State<_CenterDialog> {
             ])),
           ]))));
   }
-  Widget _sb(IconData icon,VoidCallback onTap)=>GestureDetector(onTap:onTap,child:Container(width:48,height:48,
-    decoration:BoxDecoration(color:_typeColor.withOpacity(0.1),borderRadius:BorderRadius.circular(10),
-        border:Border.all(color:_typeColor.withOpacity(0.4))),child:Icon(icon,color:_typeColor,size:22)));
-  Widget _ff(TextEditingController ctrl,String label,IconData icon)=>Padding(padding:const EdgeInsets.only(bottom:10),
-    child:TextField(controller:ctrl,style:const TextStyle(color:_kDark,fontSize:13),
-      decoration:InputDecoration(labelText:label,labelStyle:const TextStyle(color:_kSubtle,fontSize:12),
-        prefixIcon:Icon(icon,size:18,color:_typeColor),filled:true,fillColor:Colors.white,isDense:true,
-        contentPadding:const EdgeInsets.symmetric(horizontal:12,vertical:11),
-        border:OutlineInputBorder(borderRadius:BorderRadius.circular(10),borderSide:const BorderSide(color:_kBorder)),
-        enabledBorder:OutlineInputBorder(borderRadius:BorderRadius.circular(10),borderSide:const BorderSide(color:_kBorder)),
-        focusedBorder:OutlineInputBorder(borderRadius:BorderRadius.circular(10),borderSide:BorderSide(color:_typeColor,width:2)))));
+  Widget _ff(
+    TextEditingController ctrl,
+    String label,
+    IconData icon, {
+    TextInputType? type,
+  }) =>
+      Padding(
+        padding: const EdgeInsets.only(bottom: 8),
+        child: TextField(
+          controller: ctrl,
+          keyboardType: type,
+          style: const TextStyle(
+            color: _kDark,
+            fontSize: 13,
+          ),
+          decoration: InputDecoration(
+            labelText: label,
+            labelStyle: const TextStyle(
+              color: _kSubtle,
+              fontSize: 12,
+            ),
+            prefixIcon: Icon(
+              icon,
+              size: 18,
+              color: _typeColor,
+            ),
+            filled: true,
+            fillColor: Colors.white,
+            isDense: true,
+            contentPadding: const EdgeInsets.symmetric(
+              horizontal: 12,
+              vertical: 11,
+            ),
+            border: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: _kBorder),
+            ),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: const BorderSide(color: _kBorder),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(10),
+              borderSide: BorderSide(
+                color: _typeColor,
+                width: 2,
+              ),
+            ),
+          ),
+        ),
+      );
+
+ Widget _sb(
+    IconData icon,
+    VoidCallback onTap,
+  ) {
+    return Material(
+      color: _typeColor,
+      borderRadius: BorderRadius.circular(10),
+
+      child: InkWell(
+        borderRadius: BorderRadius.circular(10),
+        onTap: onTap,
+
+        child: SizedBox(
+          width: 44,
+          height: 48,
+
+          child: Icon(
+            icon,
+            color: Colors.white,
+            size: 20,
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ── Shared helpers ────────────────────────────────────────────────────────────
